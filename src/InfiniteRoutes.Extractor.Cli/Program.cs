@@ -13,6 +13,8 @@ const string Usage = """
       ir-extract scan <folder>           Find and validate every supported ROM in a folder
       ir-extract library                 Show the player's ROM library (roms.pkir)
       ir-extract extract <rom>           Validate, then extract assets into the local cache
+      ir-extract bmd <rom> <narc> <i> <outdir>      Export a self-textured BMD0 model to glTF
+      ir-extract map <rom> <chunk> <area> <outdir>  Export a Black/White map chunk to glTF
       ir-extract text <rom> <narc> <i>   Decode a Gen 5 message file from a NARC
       ir-extract sprite <rom> <narc> <i> <pal-i> <width> <out.png>  Render an NCGR with an NCLR from the same NARC
       ir-extract hex <rom> <narc> <i> [n]  Hex dump the first n bytes (default 256) of a NARC member
@@ -40,6 +42,8 @@ try
         "scan" when args.Length >= 2 => Scan(args[1]),
         "library" => Library(),
         "extract" when args.Length >= 2 => Extract(args[1]),
+        "bmd" when args.Length >= 5 => BmdExport(args[1], args[2], int.Parse(args[3]), args[4]),
+        "map" when args.Length >= 5 => MapExport(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]),
         "text" when args.Length >= 4 => Text(args[1], args[2], int.Parse(args[3])),
         "sprite" when args.Length >= 7 => Sprite(args[1], args[2], int.Parse(args[3]), int.Parse(args[4]), int.Parse(args[5]), args[6]),
         "hex" when args.Length >= 4 => Hex(args[1], args[2], int.Parse(args[3]), args.Length >= 5 ? int.Parse(args[4]) : 256),
@@ -130,6 +134,83 @@ int Extract(string path)
         }));
     Console.Error.WriteLine();
     Console.WriteLine($"Extracted to {dir} in {sw.Elapsed.TotalSeconds:F1}s");
+    return 0;
+}
+
+int BmdExport(string rom, string narcPath, int index, string outDir)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    var bytes = Lz.DecompressIfNeeded(Narc.Parse(fs.ReadFile(narcPath)).Read(index));
+    var model = InfiniteRoutes.Extractor.Nitro3D.Nsbmd.Decode(bytes);
+    var tex = model.Textures;
+    var all = model.Meshes.SelectMany(m => m.Vertices).Select(v => v.Position).ToList();
+    Console.WriteLine($"{narcPath}[{index}] '{model.Name}': {model.Materials.Count} materials, {all.Count / 3} triangles, bounds {all.Aggregate(System.Numerics.Vector3.Min)} .. {all.Aggregate(System.Numerics.Vector3.Max)}, {tex?.Textures.Count ?? 0} textures");
+    var texDir = Path.Combine(outDir, "textures");
+    Directory.CreateDirectory(texDir);
+    string? Uri(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m)
+    {
+        if (tex is null || m.Texture is null || !tex.Textures.TryGetValue(m.Texture, out var t)) return null;
+        var file = $"{m.Texture}__{m.Palette}.png";
+        InfiniteRoutes.Extractor.Graphics.Png.Save(tex.Decode(t, m.Palette), Path.Combine(texDir, file));
+        return "textures/" + file;
+    }
+    (int, int) Size(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m) => tex is not null && m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) ? (t.Width, t.Height) : (1, 1);
+    bool Alpha(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m) => tex is not null && m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) && t.HasAlpha;
+    InfiniteRoutes.Extractor.Nitro3D.Gltf.Save(InfiniteRoutes.Extractor.Nitro3D.Gltf.Build(model, 1f / 16, System.Numerics.Vector3.Zero, Uri, Size, Alpha),
+        Path.Combine(outDir, $"model{index}.gltf"));
+    return 0;
+}
+
+int MapExport(string rom, int chunk, int area, string outDir)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    var map = InfiniteRoutes.Extractor.Gen5.Gen5Map.Parse(Narc.Parse(fs.ReadFile("a/0/0/8")).Read(chunk));
+    var areaTable = fs.ReadFile("a/0/1/3");
+    var texSet = System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(areaTable.AsSpan(area * 10 + 2));
+    var tex = InfiniteRoutes.Extractor.Nitro3D.Tex0.FromFile(Narc.Parse(fs.ReadFile("a/0/1/4")).Read(texSet))!;
+    var model = InfiniteRoutes.Extractor.Nitro3D.Nsbmd.Decode(map.Model);
+
+    var all = model.Meshes.SelectMany(m => m.Vertices).Select(v => v.Position).ToList();
+    var min = all.Aggregate(System.Numerics.Vector3.Min);
+    var max = all.Aggregate(System.Numerics.Vector3.Max);
+    Console.WriteLine($"chunk {chunk} ({map.Magic}): model '{model.Name}', {model.Materials.Count} materials, {model.Meshes.Count} meshes, {all.Count / 3} triangles");
+    Console.WriteLine($"bounds {min} .. {max}; texture set {texSet} ({tex.Textures.Count} textures, {tex.PaletteNames.Count} palettes); {map.Buildings.Count} buildings; collision {(map.Collision is null ? "none" : "32x32")}");
+
+    var texDir = Path.Combine(outDir, "textures");
+    Directory.CreateDirectory(texDir);
+    var missing = new HashSet<string>();
+    string? Uri(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m)
+    {
+        if (m.Texture is null || !tex.Textures.TryGetValue(m.Texture, out var t)) { if (m.Texture is not null) missing.Add(m.Texture); return null; }
+        var file = $"{m.Texture}__{m.Palette}.png";
+        var path = Path.Combine(texDir, file);
+        if (!File.Exists(path)) InfiniteRoutes.Extractor.Graphics.Png.Save(tex.Decode(t, m.Palette), path);
+        return "textures/" + file;
+    }
+    (int, int) Size(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m) => m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) ? (t.Width, t.Height) : (1, 1);
+    bool Alpha(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m) => m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) && t.HasAlpha;
+
+    var gltf = InfiniteRoutes.Extractor.Nitro3D.Gltf.Build(model, 1f / 16, System.Numerics.Vector3.Zero, Uri, Size, Alpha);
+    InfiniteRoutes.Extractor.Nitro3D.Gltf.Save(gltf, Path.Combine(outDir, $"chunk{chunk}.gltf"));
+    if (missing.Count > 0) Console.WriteLine($"missing textures: {string.Join(", ", missing)}");
+
+    if (map.Collision is not null)
+    {
+        var img = new InfiniteRoutes.Extractor.Graphics.Rgba(32, 32);
+        var seen = new SortedDictionary<string, int>();
+        for (var y = 0; y < 32; y++)
+        for (var x = 0; x < 32; x++)
+        {
+            var t = map.Tile(x, y);
+            var key = $"{t.Terrain:X4}/{t.Behaviour:X4}/{t.Collision:X4}/{t.Flags:X4}";
+            seen[key] = seen.GetValueOrDefault(key) + 1;
+            img.Set(x, y, map.IsBlocked(x, y) ? 0x802020FFu : 0xD0E0C0FFu);
+        }
+        InfiniteRoutes.Extractor.Graphics.Png.Save(img, Path.Combine(outDir, $"chunk{chunk}-collision.png"));
+        Console.WriteLine("tile values: " + string.Join("  ", seen.Select(kv => $"{kv.Key}x{kv.Value}")));
+    }
+    foreach (var bld in map.Buildings.Take(5))
+        Console.WriteLine($"  building {bld}");
     return 0;
 }
 

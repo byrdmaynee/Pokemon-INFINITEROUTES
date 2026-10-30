@@ -11,6 +11,23 @@ public static class Gen5Layout
     public const string BattleSprites = "a/0/0/4";
     public const string Personal = "a/0/1/6";
 
+    public const string MapChunks = "a/0/0/8";
+    public const string MapMatrices = "a/0/0/9";
+    public const string ZoneHeaders = "a/0/1/2";
+    /// <summary>Plain table (not a NARC): 10 bytes per area — u16 building pack, u16 texture set, …</summary>
+    public const string AreaTable = "a/0/1/3";
+    public const string MapTextures = "a/0/1/4";
+    /// <summary>Outdoor building packs ("AB"): N metadata entries followed by N BMD0 models.</summary>
+    public const string BuildingPacks = "a/2/2/9";
+    /// <summary>BTX0 per building pack (same index): the textures the pack's models use.</summary>
+    public const string BuildingTextures = "a/1/7/6";
+    public const string BattleStages = "a/0/1/1";
+    public const string OverworldSprites = "a/0/4/9";
+
+    /// <summary>The overworld matrix (all of Unova's outdoor map).</summary>
+    public const int OverworldMatrix = 0;
+    public const int ZoneHeaderSize = 48;
+
     /// <summary>Message file indices inside <see cref="SystemText"/>.</summary>
     public static class Text
     {

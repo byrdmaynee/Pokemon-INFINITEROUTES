@@ -15,7 +15,7 @@ public partial class MainMenu : MarginContainer
 
         var buttons = Ui.VBox(10,
             MenuButton("Play Online", () => Main.Instance.Push(() => new LoginScreen())),
-            MenuButton("Offline Test World", () => Main.Instance.Toast("The offline test world arrives later in Milestone 1.")),
+            MenuButton("Offline Test World", () => Main.Instance.Push(() => new World.OverworldScreen())),
             MenuButton("Pokédex Viewer", () => Main.Instance.Push(() => new PokedexScreen())),
             MenuButton("Settings", () => Main.Instance.Push(() => new SettingsScreen())),
             MenuButton("Servers", () => Main.Instance.Push(() => new ServersScreen())),

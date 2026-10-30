@@ -12,7 +12,7 @@ public sealed record ExtractionProgress(string Step, double Fraction);
 
 /// <summary>
 /// Extracts what the client needs from a Black/White ROM into the local cache:
-/// text tables, species data and battle sprites (M1a). Writes into a temporary folder and
+/// text tables, species data and battle sprites (M1a), and the overworld maps (M1b). Writes into a temporary folder and
 /// swaps it in at the end, so an interrupted run never leaves a half-built cache.
 /// </summary>
 public static class Gen5Extractor
@@ -67,7 +67,7 @@ public static class Gen5Extractor
             {
                 ct.ThrowIfCancellationRequested();
                 if (id % 10 == 0)
-                    progress?.Report(new($"Battle sprites ({id}/{Gen5Layout.NationalDexCount})", 0.1 + 0.88 * id / Gen5Layout.NationalDexCount));
+                    progress?.Report(new($"Battle sprites ({id}/{Gen5Layout.NationalDexCount})", 0.1 + 0.3 * id / Gen5Layout.NationalDexCount));
 
                 var b = id * Gen5Layout.Sprite.FilesPerSpecies;
                 var normal = Nclr.Parse(Lz.DecompressIfNeeded(sprites.Read(b + Gen5Layout.Sprite.Palette)));
@@ -81,6 +81,9 @@ public static class Gen5Extractor
                 Png.Save(front.RenderGen5Battler(shiny), Path.Combine(spriteDir, "front-shiny", file));
                 Png.Save(back.RenderGen5Battler(shiny), Path.Combine(spriteDir, "back-shiny", file));
             }
+
+            Gen5WorldExtractor.Export(fs, tables["locations"], Directory.CreateDirectory(Path.Combine(temp, "maps")).FullName,
+                progress, 0.4, 0.58, ct);
         }
 
         ExtractionCache.WriteStamp(temp, new ExtractionStamp(ExtractionCache.ExtractorVersion, game.Id, gameCode, sha1, DateTime.UtcNow));
