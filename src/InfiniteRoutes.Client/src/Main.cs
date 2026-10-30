@@ -1,54 +1,104 @@
 using Godot;
 using InfiniteRoutes.Client.Ui;
-using InfiniteRoutes.Core;
-using InfiniteRoutes.Core.Config;
 
 namespace InfiniteRoutes.Client;
 
-/// <summary>Root node: loads client state and swaps between top-level screens.</summary>
+/// <summary>
+/// Root node. Owns the animated background, the screen stack (Esc/Back pops it) and toasts.
+/// Screens are rebuilt from factories when navigated back to, so they always show fresh state.
+/// </summary>
 public partial class Main : Control
 {
+    public static Main Instance { get; private set; } = null!;
+
+    readonly Stack<Func<Control>> _history = new();
+    Control _screenHost = null!;
+    Label _toast = null!;
+    Tween? _toastTween;
+
     public override void _Ready()
     {
-        try
+        Instance = this;
+
+        var background = new MenuBackground();
+        AddChild(background);
+        background.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+
+        _screenHost = new Control();
+        AddChild(_screenHost);
+        _screenHost.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+
+        _toast = Ui.Ui.Text("", 17, Ui.Ui.Accent);
+        _toast.HorizontalAlignment = HorizontalAlignment.Center;
+        _toast.Modulate = Colors.Transparent;
+        _toast.AddThemeStyleboxOverride("normal", new StyleBoxFlat
         {
-            ClientServices.Initialize();
-        }
-        catch (PkirException e)
-        {
-            ShowScreen(BrokenConfigScreen(e.Message));
+            BgColor = new Color(0.05f, 0.07f, 0.11f, 0.92f),
+            CornerRadiusTopLeft = 8, CornerRadiusTopRight = 8, CornerRadiusBottomLeft = 8, CornerRadiusBottomRight = 8,
+            ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 8, ContentMarginBottom = 8,
+        });
+        AddChild(_toast);
+        _toast.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterBottom);
+        _toast.GrowHorizontal = GrowDirection.Both;
+        _toast.GrowVertical = GrowDirection.Begin;
+        _toast.OffsetBottom = -96;
+
+        ResetTo(() => new LoadingScreen(OnLoaded));
+        DebugCapture.StartIfRequested(this);
+    }
+
+    void OnLoaded() =>
+        ResetTo(ClientServices.Library.WizardCompleted
+            ? () => new MainMenu()
+            : () => new FirstRunWizard(() => ResetTo(() => new MainMenu())));
+
+    /// <summary>Opens a screen on top of the current one; Back/Esc returns.</summary>
+    public void Push(Func<Control> screen)
+    {
+        _history.Push(screen);
+        Show(screen());
+    }
+
+    /// <summary>Clears history and shows a screen (e.g. after loading or finishing setup).</summary>
+    public void ResetTo(Func<Control> screen)
+    {
+        _history.Clear();
+        Push(screen);
+    }
+
+    public void Back()
+    {
+        if (_history.Count <= 1)
             return;
+        _history.Pop();
+        Show(_history.Peek()());
+    }
+
+    public bool CanGoBack => _history.Count > 1;
+
+    public void Toast(string message)
+    {
+        _toast.Text = message;
+        _toastTween?.Kill();
+        _toast.Modulate = Colors.White;
+        _toastTween = CreateTween();
+        _toastTween.TweenInterval(2.2);
+        _toastTween.TweenProperty(_toast, "modulate", Colors.Transparent, 0.6);
+    }
+
+    public override void _UnhandledInput(InputEvent e)
+    {
+        if (e.IsActionPressed("ui_cancel") && CanGoBack)
+        {
+            Back();
+            GetViewport().SetInputAsHandled();
         }
-
-        if (ClientServices.Library.WizardCompleted)
-            ShowHome();
-        else
-            ShowScreen(new FirstRunWizard(ShowHome));
     }
 
-    void ShowHome() => ShowScreen(new HomeScreen(ShowScreen, () => ShowHome()));
-
-    void ShowScreen(Control screen)
+    void Show(Control screen)
     {
-        Ui.Ui.ClearChildren(this);
-        AddChild(screen);
+        Ui.Ui.ClearChildren(_screenHost);
+        _screenHost.AddChild(screen);
         screen.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-    }
-
-    Control BrokenConfigScreen(string error)
-    {
-        var box = Ui.Ui.VBox(16,
-            Ui.Ui.Text("Your ROM library settings couldn't be read", 26, Ui.Ui.Bad),
-            Ui.Ui.Text($"File: {AppPaths.RomLibraryFile}", 14, Ui.Ui.Muted, wrap: true),
-            Ui.Ui.Text(error, 14, wrap: true),
-            Ui.Ui.Text("Fix the file in a text editor and restart, or start over. Starting over keeps a backup of the old file.", 16, wrap: true),
-            Ui.Ui.HBox(8,
-                Ui.Ui.Button("Start over", () =>
-                {
-                    ClientServices.BackUpBrokenLibrary();
-                    _Ready();
-                }),
-                Ui.Ui.Button("Quit", () => GetTree().Quit())));
-        return Ui.Ui.Margin(box, 48);
     }
 }

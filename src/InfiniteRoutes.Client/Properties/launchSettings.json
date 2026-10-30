@@ -1,0 +1,18 @@
+{
+  "profiles": {
+    "Run game (Godot)": {
+      "commandName": "Executable",
+      "executablePath": "%GODOT%",
+      "commandLineArgs": "--path . --verbose",
+      "workingDirectory": ".",
+      "nativeDebugging": false
+    },
+    "Open in Godot editor": {
+      "commandName": "Executable",
+      "executablePath": "%GODOT%",
+      "commandLineArgs": "--path . --editor",
+      "workingDirectory": ".",
+      "nativeDebugging": false
+    }
+  }
+}

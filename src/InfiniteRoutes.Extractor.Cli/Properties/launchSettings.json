@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "help": {
+      "commandName": "Project",
+      "commandLineArgs": "help"
+    },
+    "library": {
+      "commandName": "Project",
+      "commandLineArgs": "library"
+    },
+    "scan ROM folder": {
+      "commandName": "Project",
+      "commandLineArgs": "scan \"I:\\ROMS\""
+    }
+  }
+}
