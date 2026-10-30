@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "notes": [
+    "Games are identified by the first 3 characters of the cartridge game code; the 4th is the region.",
+    "Supported region codes: E = USA, P = Europe (English), O = international English (Gen 5).",
+    "knownDumps lists SHA-1s of verified clean dumps (from the No-Intro DAT). While a game's list is empty, any dump that passes the header and structure checks is accepted as 'valid, not yet verified'. Once a list has entries for a region, other dumps of that region are rejected as unknown dumps.",
+    "requiredFiles are NitroFS paths that must exist and be valid NARC archives; they catch ROM hacks and broken dumps early."
+  ],
+  "regions": [
+    { "id": "unova",       "name": "Unova",          "anyOf": ["black", "white"],         "requiredToPlay": true,  "inBaseGame": true },
+    { "id": "sinnoh",      "name": "Sinnoh",         "anyOf": ["platinum"],               "requiredToPlay": false, "inBaseGame": true },
+    { "id": "johto_kanto", "name": "Johto & Kanto",  "anyOf": ["heartgold", "soulsilver"], "requiredToPlay": false, "inBaseGame": true },
+    { "id": "unova2",      "name": "Unova (B2W2)",   "anyOf": ["black2", "white2"],       "requiredToPlay": false, "inBaseGame": false },
+    { "id": "classic_sinnoh", "name": "Classic Sinnoh (D/P)", "anyOf": ["diamond", "pearl"], "requiredToPlay": false, "inBaseGame": false }
+  ],
+  "games": [
+    {
+      "id": "black", "name": "Pokémon Black Version", "generation": 5, "baseCode": "IRB",
+      "regionCodes": ["O"], "profile": "gen5-bw", "requiredFiles": ["a/0/1/6"], "knownDumps": []
+    },
+    {
+      "id": "white", "name": "Pokémon White Version", "generation": 5, "baseCode": "IRA",
+      "regionCodes": ["O"], "profile": "gen5-bw", "requiredFiles": ["a/0/1/6"], "knownDumps": []
+    },
+    {
+      "id": "platinum", "name": "Pokémon Platinum Version", "generation": 4, "baseCode": "CPU",
+      "regionCodes": ["E", "P"], "profile": "gen4-pt", "requiredFiles": ["poketool/personal/pl_personal.narc"], "knownDumps": []
+    },
+    {
+      "id": "heartgold", "name": "Pokémon HeartGold Version", "generation": 4, "baseCode": "IPK",
+      "regionCodes": ["E", "P"], "profile": "gen4-hgss", "requiredFiles": ["a/0/0/2"], "knownDumps": []
+    },
+    {
+      "id": "soulsilver", "name": "Pokémon SoulSilver Version", "generation": 4, "baseCode": "IPG",
+      "regionCodes": ["E", "P"], "profile": "gen4-hgss", "requiredFiles": ["a/0/0/2"], "knownDumps": []
+    },
+    {
+      "id": "black2", "name": "Pokémon Black Version 2", "generation": 5, "baseCode": "IRE",
+      "regionCodes": ["O"], "profile": "gen5-b2w2", "requiredFiles": ["a/0/1/6"], "knownDumps": []
+    },
+    {
+      "id": "white2", "name": "Pokémon White Version 2", "generation": 5, "baseCode": "IRD",
+      "regionCodes": ["O"], "profile": "gen5-b2w2", "requiredFiles": ["a/0/1/6"], "knownDumps": []
+    },
+    {
+      "id": "diamond", "name": "Pokémon Diamond Version", "generation": 4, "baseCode": "ADA",
+      "regionCodes": ["E", "P"], "profile": "gen4-dp", "requiredFiles": ["poketool/personal/personal.narc"], "knownDumps": []
+    },
+    {
+      "id": "pearl", "name": "Pokémon Pearl Version", "generation": 4, "baseCode": "APA",
+      "regionCodes": ["E", "P"], "profile": "gen4-dp", "requiredFiles": ["poketool/personal/personal.narc"], "knownDumps": []
+    }
+  ]
+}

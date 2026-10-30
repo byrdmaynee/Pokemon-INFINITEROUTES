@@ -1,0 +1,25 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+TestResults/
+
+# Godot
+.godot/
+*.translation
+export_presets.cfg
+/build/
+
+# Never commit game data (BUILD_SPEC §17)
+*.nds
+*.srl
+*.sav
+*.dsv
+/cache/
+/datapack/
+
+# Local config & secrets
+*.pkir.tmp
+*.bak
+.env

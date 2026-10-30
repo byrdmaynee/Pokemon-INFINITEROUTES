@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/InfiniteRoutes.Client/InfiniteRoutes.Client.csproj">
+      <BuildType Project="Debug" />
+    </Project>
+    <Project Path="src/InfiniteRoutes.Core/InfiniteRoutes.Core.csproj" />
+    <Project Path="src/InfiniteRoutes.Extractor.Cli/InfiniteRoutes.Extractor.Cli.csproj" />
+    <Project Path="src/InfiniteRoutes.Extractor/InfiniteRoutes.Extractor.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/InfiniteRoutes.Tests/InfiniteRoutes.Tests.csproj" />
+  </Folder>
+</Solution>
