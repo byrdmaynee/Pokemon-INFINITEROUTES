@@ -233,7 +233,7 @@ int MapExport(string rom, int chunk, int area, string outDir)
         InfiniteRoutes.Extractor.Graphics.Png.Save(img, Path.Combine(outDir, $"chunk{chunk}-collision.png"));
         Console.WriteLine("tile values: " + string.Join("  ", seen.Select(kv => $"{kv.Key}x{kv.Value}")));
     }
-    foreach (var bld in map.Buildings.Take(5))
+    foreach (var bld in map.Buildings)
         Console.WriteLine($"  building {bld}");
     return 0;
 }

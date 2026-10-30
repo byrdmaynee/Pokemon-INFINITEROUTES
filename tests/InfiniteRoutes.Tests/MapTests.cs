@@ -157,4 +157,74 @@ public class MapTests
         Assert.Equal(3, CharacterSheet.Column(run: true, step: 0));
         Assert.Equal(CharacterSheet.Columns - 1, CharacterSheet.Column(run: true, step: 2));
     }
+
+    [Fact]
+    public void Zone_events_yield_warps_after_furniture_and_npcs()
+    {
+        // 1 furniture, 1 NPC, 2 warps: the Nuvema door and the house's 3-wide exit mat.
+        var file = new byte[8 + Gen5Events.FurnitureSize + Gen5Events.NpcSize + 2 * Gen5Events.WarpSize];
+        file[4] = 1; file[5] = 1; file[6] = 2;
+        var o = 8 + Gen5Events.FurnitureSize + Gen5Events.NpcSize;
+        void Warp(int at, int zone, int dir, int trans, int x, int z, int w, int h)
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(at), (ushort)zone);
+            file[at + 4] = (byte)dir;
+            file[at + 5] = (byte)trans;
+            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(at + 8), (ushort)x);
+            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(at + 12), (ushort)z);
+            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(at + 14), (ushort)w);
+            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(at + 16), (ushort)h);
+        }
+        Warp(o, 390, 2, 3, 782 * 16 + 8, 748 * 16 + 8, 1, 1);
+        Warp(o + Gen5Events.WarpSize, 389, 1, 1, 5 * 16 + 8, 10 * 16 + 8, 3, 1);
+
+        var warps = Gen5Events.ParseWarps(file);
+
+        Assert.Equal(2, warps.Count);
+        Assert.Equal((390, 782, 748, 2, 3), (warps[0].TargetZone, warps[0].TileX, warps[0].TileY, warps[0].Direction, warps[0].Transition));
+        Assert.True(warps[0].OnGrid);
+        Assert.Equal((5, 10, 3, 1), (warps[1].TileX, warps[1].TileY, warps[1].Width, warps[1].Depth));
+    }
+
+    [Fact]
+    public void Truncated_event_file_is_rejected()
+    {
+        var file = new byte[8];
+        file[6] = 1;
+        Assert.Throws<InvalidDataException>(() => Gen5Events.ParseWarps(file));
+    }
+
+    [Fact]
+    public void Warp_rectangle_covers_its_width_and_height()
+    {
+        var mat = new WarpInfo(5, 10, 3, 1, 389, 0, Facing.Up, WarpKind.Mat);
+        Assert.True(mat.Contains(5, 10));
+        Assert.True(mat.Contains(7, 10));
+        Assert.False(mat.Contains(8, 10));
+        Assert.False(mat.Contains(6, 11));
+        Assert.True(new WarpInfo(1, 1, 0, 0, 2, 0, null, WarpKind.Door).Contains(1, 1));
+    }
+
+    [Fact]
+    public void Gltf_keeps_winding_under_a_mirroring_transform()
+    {
+        var mesh = new NitroMesh(0);
+        foreach (var p in new[] { Vector3.Zero, Vector3.UnitX, Vector3.UnitZ })
+            mesh.Vertices.Add(new NitroVertex { Position = p, Color = Vector4.One });
+        var model = new NitroModel
+        {
+            Name = "t",
+            Materials = [new NitroMaterial("m", null, null, false, false, false, false, 31, true, true, Vector3.One)],
+            Meshes = [mesh],
+        };
+        var gltf = Gltf.Build("t", [new GltfPart(model, Matrix4x4.CreateScale(1, 1, -1))], _ => null, _ => (1, 1), _ => false);
+
+        var buffer = Convert.FromBase64String(((string)gltf["buffers"]![0]!["uri"]!).Split(',')[1]);
+        var pos = Enumerable.Range(0, 3).Select(i => new Vector3(
+            BitConverter.ToSingle(buffer, i * 12), BitConverter.ToSingle(buffer, i * 12 + 4), BitConverter.ToSingle(buffer, i * 12 + 8))).ToArray();
+        // Corners 1 and 2 swap, so the mirrored triangle's normal points the same way (down) as the original's.
+        Assert.Equal(new Vector3(0, 0, 0), pos[0]);
+        Assert.Equal(new Vector3(0, 0, -1), pos[1]);
+        Assert.Equal(new Vector3(1, 0, 0), pos[2]);
+    }
 }

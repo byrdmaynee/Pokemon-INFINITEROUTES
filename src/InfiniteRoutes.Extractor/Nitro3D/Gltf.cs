@@ -66,11 +66,13 @@ public static class Gltf
             var pos = new byte[n * 12];
             var uv = new byte[n * 8];
             var col = new byte[n * 16];
+            // A mirroring transform flips triangle winding; swap two corners of each triangle to restore it.
+            var mirrored = transform.GetDeterminant() < 0;
             var min = new Vector3(float.MaxValue);
             var max = new Vector3(float.MinValue);
             for (var i = 0; i < n; i++)
             {
-                var v = mesh.Vertices[i];
+                var v = mesh.Vertices[mirrored && i % 3 != 0 ? i - i % 3 + 3 - i % 3 : i];
                 var p = Vector3.Transform(v.Position, transform);
                 min = Vector3.Min(min, p);
                 max = Vector3.Max(max, p);

@@ -8,7 +8,7 @@ public sealed record ExtractionStamp(string ExtractorVersion, string GameId, str
 public static class ExtractionCache
 {
     /// <summary>Bump when any converter's output changes; old caches are then rebuilt.</summary>
-    public const string ExtractorVersion = "0.3.3";
+    public const string ExtractorVersion = "0.4.3";
 
     const string StampFile = "extraction.json";
 
@@ -46,5 +46,6 @@ public static class Json
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
     };
 }

@@ -26,13 +26,23 @@ public sealed class GameAssets
         JsonSerializer.Deserialize<List<string>>(File.ReadAllText(Path.Combine(Directory, "text", table + ".json")), Json.Indented)
         ?? [];
 
-    public WorldIndex? LoadOverworld()
+    /// <summary>An exported map by key (<see cref="Gen5WorldExtractor.OverworldKey"/> for Unova's overworld); null if missing.</summary>
+    public WorldIndex? LoadMap(string key)
     {
-        var path = Path.Combine(Directory, "maps", "overworld.json");
+        var path = Path.Combine(Directory, "maps", key + ".json");
         return File.Exists(path) ? JsonSerializer.Deserialize<WorldIndex>(File.ReadAllText(path), Json.Indented) : null;
     }
 
-    public string ChunkModelPath(int chunk) => Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.gltf");
+    public WorldIndex? LoadOverworld() => LoadMap(Gen5WorldExtractor.OverworldKey);
+
+    public IReadOnlyList<ZoneInfo> LoadZones()
+    {
+        var path = Path.Combine(Directory, "maps", "zones.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<List<ZoneInfo>>(File.ReadAllText(path), Json.Indented) ?? [] : [];
+    }
+
+    public string ChunkModelPath(WorldCell cell) =>
+        Path.Combine(Directory, "maps", "chunks", Gen5WorldExtractor.ChunkFileName(cell.Chunk, cell.Area) + ".gltf");
 
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 
