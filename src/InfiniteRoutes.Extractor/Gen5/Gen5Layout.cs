@@ -22,6 +22,7 @@ public static class Gen5Layout
     /// <summary>BTX0 per building pack (same index): the textures the pack's models use.</summary>
     public const string BuildingTextures = "a/1/7/6";
     public const string BattleStages = "a/0/1/1";
+    /// <summary>Overworld character models (BMD0) and textures (BTX0).</summary>
     public const string OverworldSprites = "a/0/4/9";
 
     /// <summary>The overworld matrix (all of Unova's outdoor map).</summary>
@@ -48,6 +49,16 @@ public static class Gen5Layout
         public const int Back = 9;
         public const int Palette = 18;
         public const int ShinyPalette = 19;
+    }
+
+    /// <summary>Player characters in <see cref="OverworldSprites"/>: BTX0s of 32 32×32 frames.</summary>
+    public static class Player
+    {
+        public const int Hero = 6;
+        public const int Heroine = 9;
+        /// <summary>Frames 1–12 walk, 13–24 run; three per direction (stand, left foot, right foot) in the order up, down, left, right.</summary>
+        public const int WalkFirst = 1;
+        public const int RunFirst = 13;
     }
 
     public const int NationalDexCount = 649;

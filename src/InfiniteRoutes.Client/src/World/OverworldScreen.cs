@@ -25,12 +25,15 @@ public partial class OverworldScreen : Control
 
     Node3D _world = null!;
     Node3D _player = null!;
+    Sprite3D? _sprite;
     Camera3D _camera = null!;
     Label _hud = null!;
 
     Vector2I _tile;
     Vector2I _dir = Vector2I.Down;
     bool _moving;
+    bool _running;
+    int _steps;
     float _height;
 
     public static bool Available => ClientServices.UnovaAssets?.LoadOverworld() is not null;
@@ -69,7 +72,7 @@ public partial class OverworldScreen : Control
             },
         });
 
-        _player = BuildPlayer();
+        _player = BuildPlayer(assets.OverworldSpritePath(PlayerCharacter), out _sprite);
         _world.AddChild(_player);
         _camera = new Camera3D { Fov = 32, Current = true };
         _world.AddChild(_camera);
@@ -108,10 +111,32 @@ public partial class OverworldScreen : Control
         _moving = false;
     }
 
-    static Node3D BuildPlayer()
+    const string PlayerCharacter = "hero";
+
+    static Node3D BuildPlayer(string spritePath, out Sprite3D? sprite)
     {
-        // Placeholder body until overworld character sprites are extracted.
         var root = new Node3D();
+        sprite = null;
+        if (File.Exists(spritePath) && Image.LoadFromFile(spritePath) is { } image)
+        {
+            // 32 px frames on a 16 px tile grid: 1/16 world units per pixel, feet on the ground.
+            sprite = new Sprite3D
+            {
+                Texture = ImageTexture.CreateFromImage(image),
+                Hframes = CharacterSheet.Columns,
+                Vframes = CharacterSheet.Rows,
+                PixelSize = 1f / 16,
+                Offset = new Vector2(0, CharacterSheet.FrameSize / 2f - 2),
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
+                TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
+                AlphaCut = SpriteBase3D.AlphaCutMode.Discard,
+                Shaded = false,
+            };
+            root.AddChild(sprite);
+            return root;
+        }
+
+        // Fallback body for caches extracted before player sprites existed.
         var body = new MeshInstance3D
         {
             Mesh = new CapsuleMesh { Radius = 0.3f, Height = 1.2f },
@@ -152,6 +177,7 @@ public partial class OverworldScreen : Control
             return;
         if (!_moving)
         {
+            var wasRunning = _running;
             var input = Vector2I.Zero;
             if (Input.IsActionPressed("ui_up") || Input.IsPhysicalKeyPressed(Key.W)) input = Vector2I.Up;
             else if (Input.IsActionPressed("ui_down") || Input.IsPhysicalKeyPressed(Key.S)) input = Vector2I.Down;
@@ -159,6 +185,11 @@ public partial class OverworldScreen : Control
             else if (Input.IsActionPressed("ui_right") || Input.IsPhysicalKeyPressed(Key.D)) input = Vector2I.Right;
             if (input != Vector2I.Zero)
                 TryStep(input, Input.IsKeyPressed(Key.Shift));
+            else if (wasRunning)
+            {
+                _running = false;
+                ShowFrame(0);
+            }
         }
         UpdateCamera(snap: false, (float)delta);
     }
@@ -169,23 +200,40 @@ public partial class OverworldScreen : Control
         if (_moving)
             return false;
         _dir = dir;
-        _player.Rotation = new Vector3(0, Mathf.Atan2(dir.X, dir.Y), 0);
+        _running = run;
         var target = _tile + dir;
+        if (_sprite is null)
+            _player.Rotation = new Vector3(0, Mathf.Atan2(dir.X, dir.Y), 0);
         if (IsBlocked(target))
+        {
+            ShowFrame(0);
             return false;
+        }
 
         _moving = true;
         _tile = target;
         StreamChunks();
         _height = GroundHeight(_tile, _height);
+        var seconds = run ? RunSeconds : WalkSeconds;
         var tween = CreateTween();
-        tween.TweenProperty(_player, "position", TileCenter(_tile, _height), run ? RunSeconds : WalkSeconds);
+        tween.TweenProperty(_player, "position", TileCenter(_tile, _height), seconds);
+        // Alternate feet each step: foot frame for the first half, standing frame for the second.
+        ShowFrame(1 + _steps++ % 2);
+        tween.Parallel().TweenCallback(Callable.From(() => ShowFrame(0))).SetDelay(seconds / 2);
         tween.Finished += () =>
         {
             _moving = false;
             UpdateHud();
         };
         return true;
+    }
+
+    void ShowFrame(int step)
+    {
+        if (_sprite is null)
+            return;
+        var facing = _dir == Vector2I.Up ? Facing.Up : _dir == Vector2I.Left ? Facing.Left : _dir == Vector2I.Right ? Facing.Right : Facing.Down;
+        _sprite.Frame = (int)facing * CharacterSheet.Columns + CharacterSheet.Column(_running, step);
     }
 
     public Vector2I PlayerTile => _tile;

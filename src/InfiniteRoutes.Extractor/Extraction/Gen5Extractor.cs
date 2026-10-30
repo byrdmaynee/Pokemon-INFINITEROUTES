@@ -3,6 +3,7 @@ using InfiniteRoutes.Core.Data;
 using InfiniteRoutes.Extractor.Gen5;
 using InfiniteRoutes.Extractor.Graphics;
 using InfiniteRoutes.Extractor.Nds;
+using InfiniteRoutes.Extractor.Nitro3D;
 using InfiniteRoutes.Extractor.Roms;
 using InfiniteRoutes.Extractor.Text;
 
@@ -12,7 +13,7 @@ public sealed record ExtractionProgress(string Step, double Fraction);
 
 /// <summary>
 /// Extracts what the client needs from a Black/White ROM into the local cache:
-/// text tables, species data and battle sprites (M1a), and the overworld maps (M1b). Writes into a temporary folder and
+/// text tables, species data and battle sprites (M1a), and the overworld maps and player sprites (M1b). Writes into a temporary folder and
 /// swaps it in at the end, so an interrupted run never leaves a half-built cache.
 /// </summary>
 public static class Gen5Extractor
@@ -81,6 +82,13 @@ public static class Gen5Extractor
                 Png.Save(front.RenderGen5Battler(shiny), Path.Combine(spriteDir, "front-shiny", file));
                 Png.Save(back.RenderGen5Battler(shiny), Path.Combine(spriteDir, "back-shiny", file));
             }
+
+            progress?.Report(new("Overworld characters", 0.4));
+            var characters = Narc.Parse(fs.ReadFile(Gen5Layout.OverworldSprites));
+            var characterDir = Directory.CreateDirectory(Path.Combine(temp, "sprites", "overworld")).FullName;
+            foreach (var (name, index) in new[] { ("hero", Gen5Layout.Player.Hero), ("heroine", Gen5Layout.Player.Heroine) })
+                if (Tex0.FromFile(Lz.DecompressIfNeeded(characters.Read(index))) is { } tex)
+                    Png.Save(CharacterSheet.FromGen5Player(tex), Path.Combine(characterDir, name + ".png"));
 
             Gen5WorldExtractor.Export(fs, tables["locations"], Directory.CreateDirectory(Path.Combine(temp, "maps")).FullName,
                 progress, 0.4, 0.58, ct);

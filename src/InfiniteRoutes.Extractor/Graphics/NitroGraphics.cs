@@ -17,6 +17,17 @@ public sealed class Rgba(int width, int height)
         Pixels[i + 2] = (byte)(rgba >> 8);
         Pixels[i + 3] = (byte)rgba;
     }
+
+    /// <summary>Copies <paramref name="src"/> into this image with its top-left corner at (x, y).</summary>
+    public void Blit(Rgba src, int x, int y)
+    {
+        for (var row = 0; row < src.Height && y + row < Height; row++)
+        {
+            var w = Math.Min(src.Width, Width - x);
+            if (w > 0 && y + row >= 0)
+                Array.Copy(src.Pixels, row * src.Width * 4, Pixels, ((y + row) * Width + x) * 4, w * 4);
+        }
+    }
 }
 
 /// <summary>Palette from an NCLR ("RLCN") file: BGR555 colours, 16 per palette for 4bpp.</summary>

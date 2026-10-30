@@ -53,7 +53,7 @@ The first run shows the setup wizard; after that the client opens on the main me
 dotnet run --project src/InfiniteRoutes.Extractor.Cli -- validate "path/to/game.nds"
 ```
 
-Other commands: `info`, `ls`, `narc`, `scan`, `library`, `extract`, `text`, `sprite`, `hex`, `bmd`, `map` (run with no arguments for help).
+Other commands: `info`, `ls`, `narc`, `scan`, `library`, `extract`, `text`, `sprite`, `hex`, `bmd`, `btx`, `map` (run with no arguments for help).
 
 ### Verifying dumps
 

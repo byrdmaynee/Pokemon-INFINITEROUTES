@@ -15,6 +15,7 @@ const string Usage = """
       ir-extract extract <rom>           Validate, then extract assets into the local cache
       ir-extract bmd <rom> <narc> <i> <outdir>      Export a self-textured BMD0 model to glTF
       ir-extract map <rom> <chunk> <area> <outdir>  Export a Black/White map chunk to glTF
+      ir-extract btx <rom> <narc> <i> <outdir>      Dump every texture in a BTX0/BMD0 as PNG
       ir-extract text <rom> <narc> <i>   Decode a Gen 5 message file from a NARC
       ir-extract sprite <rom> <narc> <i> <pal-i> <width> <out.png>  Render an NCGR with an NCLR from the same NARC
       ir-extract hex <rom> <narc> <i> [n]  Hex dump the first n bytes (default 256) of a NARC member
@@ -43,6 +44,7 @@ try
         "library" => Library(),
         "extract" when args.Length >= 2 => Extract(args[1]),
         "bmd" when args.Length >= 5 => BmdExport(args[1], args[2], int.Parse(args[3]), args[4]),
+        "btx" when args.Length >= 5 => BtxExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "map" when args.Length >= 5 => MapExport(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]),
         "text" when args.Length >= 4 => Text(args[1], args[2], int.Parse(args[3])),
         "sprite" when args.Length >= 7 => Sprite(args[1], args[2], int.Parse(args[3]), int.Parse(args[4]), int.Parse(args[5]), args[6]),
@@ -158,6 +160,28 @@ int BmdExport(string rom, string narcPath, int index, string outDir)
     bool Alpha(InfiniteRoutes.Extractor.Nitro3D.NitroMaterial m) => tex is not null && m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) && t.HasAlpha;
     InfiniteRoutes.Extractor.Nitro3D.Gltf.Save(InfiniteRoutes.Extractor.Nitro3D.Gltf.Build(model, 1f / 16, System.Numerics.Vector3.Zero, Uri, Size, Alpha),
         Path.Combine(outDir, $"model{index}.gltf"));
+    return 0;
+}
+
+int BtxExport(string rom, string narcPath, int index, string outDir)
+{
+    var tex = InfiniteRoutes.Extractor.Nitro3D.Tex0.FromFile(Lz.DecompressIfNeeded(NarcMember(rom, narcPath, index)))
+        ?? throw new InvalidDataException("No TEX0 block.");
+    Directory.CreateDirectory(outDir);
+    var palette = tex.PaletteNames.FirstOrDefault();
+    Console.WriteLine($"{tex.Textures.Count} textures; palettes: {string.Join(", ", tex.PaletteNames)}");
+    var all = tex.Textures.Values.ToList();
+    var sheet = new InfiniteRoutes.Extractor.Graphics.Rgba(all.Sum(t => t.Width), all.Max(t => t.Height));
+    var x = 0;
+    foreach (var t in all)
+    {
+        Console.WriteLine($"  {t.Name,-16} {t.Width}x{t.Height} format {t.Format}{(t.Color0Transparent ? " c0-transparent" : "")}");
+        var img = tex.Decode(t, palette);
+        InfiniteRoutes.Extractor.Graphics.Png.Save(img, Path.Combine(outDir, $"{t.Name}.png"));
+        sheet.Blit(img, x, 0);
+        x += t.Width;
+    }
+    InfiniteRoutes.Extractor.Graphics.Png.Save(sheet, Path.Combine(outDir, "_sheet.png"));
     return 0;
 }
 

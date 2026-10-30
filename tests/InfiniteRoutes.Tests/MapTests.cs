@@ -1,7 +1,9 @@
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Text;
+using InfiniteRoutes.Extractor.Extraction;
 using InfiniteRoutes.Extractor.Gen5;
+using InfiniteRoutes.Extractor.Graphics;
 using InfiniteRoutes.Extractor.Nitro3D;
 
 namespace InfiniteRoutes.Tests;
@@ -131,5 +133,28 @@ public class MapTests
         Assert.Equal(33648, (int)sampler["wrapT"]!);   // mirrored repeat
         Assert.Equal("textures/tex.png", (string)gltf["images"]![0]!["uri"]!);
         Assert.False((bool)gltf["materials"]![0]!["doubleSided"]!);
+    }
+
+    [Fact]
+    public void Blit_copies_and_clips_to_the_destination()
+    {
+        var src = new Rgba(2, 2);
+        for (var i = 0; i < 4; i++)
+            src.Set(i % 2, i / 2, 0x11223344u + (uint)i);
+        var dst = new Rgba(3, 3);
+        dst.Blit(src, 2, 1);
+
+        Assert.Equal(0x44, dst.Pixels[(1 * 3 + 2) * 4 + 3]);   // (0,0) of src
+        Assert.Equal(0x46, dst.Pixels[(2 * 3 + 2) * 4 + 3]);   // (0,1) of src; column 1 clipped
+        Assert.Equal(0, dst.Pixels[0]);
+    }
+
+    [Fact]
+    public void Character_sheet_puts_walk_then_run_columns()
+    {
+        Assert.Equal(0, CharacterSheet.Column(run: false, step: 0));
+        Assert.Equal(2, CharacterSheet.Column(run: false, step: 2));
+        Assert.Equal(3, CharacterSheet.Column(run: true, step: 0));
+        Assert.Equal(CharacterSheet.Columns - 1, CharacterSheet.Column(run: true, step: 2));
     }
 }

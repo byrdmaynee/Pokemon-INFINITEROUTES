@@ -36,6 +36,9 @@ public sealed class GameAssets
 
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 
+    /// <summary>A <see cref="CharacterSheet"/> PNG; <paramref name="name"/> is "hero" or "heroine".</summary>
+    public string OverworldSpritePath(string name) => Path.Combine(Directory, "sprites", "overworld", name + ".png");
+
     /// <param name="view">front, back, front-shiny or back-shiny.</param>
     public string BattleSpritePath(int speciesId, string view) =>
         Path.Combine(Directory, "sprites", "battle", view, $"{speciesId:D3}.png");
