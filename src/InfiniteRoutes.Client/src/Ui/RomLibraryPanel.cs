@@ -1,4 +1,5 @@
 using Godot;
+using InfiniteRoutes.Extractor.Extraction;
 using InfiniteRoutes.Extractor.Roms;
 
 namespace InfiniteRoutes.Client.Ui;
@@ -16,6 +17,7 @@ public partial class RomLibraryPanel : VBoxContainer
         public required Label Details;
         public required ProgressBar Progress;
         public required Button[] Buttons;
+        public required Button Extract;
     }
 
     readonly Dictionary<string, Row> _rows = new();
@@ -80,9 +82,7 @@ public partial class RomLibraryPanel : VBoxContainer
 
         var browse = Ui.Button("Browse…", () => PickFile(game.Id), 14);
         var recheck = Ui.Button("Re-validate", () => Validate(game.Id, Library[game.Id].Path!), 14);
-        var extract = Ui.Button("Re-extract", () => { }, 14);
-        extract.Disabled = true;
-        extract.TooltipText = "Asset extraction arrives in Milestone 1.";
+        var extract = Ui.Button("Re-extract", () => Extract(game.Id), 14);
         var remove = Ui.Button("Remove", () => RemoveRom(game.Id), 14);
 
         _rows[game.Id] = new Row
@@ -92,6 +92,7 @@ public partial class RomLibraryPanel : VBoxContainer
             Details = details,
             Progress = progress,
             Buttons = [browse, recheck, remove],
+            Extract = extract,
         };
 
         var panel = new PanelContainer();
@@ -115,6 +116,12 @@ public partial class RomLibraryPanel : VBoxContainer
             row.Buttons[0].Disabled = busy || _scanning;
             row.Buttons[1].Disabled = busy || _scanning || entry.Path is null;
             row.Buttons[2].Disabled = busy || _scanning || entry.Path is null;
+            var canExtract = ClientServices.CanExtract(entry);
+            row.Extract.Disabled = busy || _scanning || !canExtract;
+            row.Extract.Text = canExtract && !ClientServices.IsExtracted(entry) ? "Extract" : "Re-extract";
+            row.Extract.TooltipText = canExtract
+                ? "Read graphics and data from this ROM into the local cache."
+                : RomStatusText.IsUsable(entry.Status) ? "Extraction for this game isn't available yet." : "";
         }
 
         foreach (var region in Library.Regions())
@@ -251,6 +258,42 @@ public partial class RomLibraryPanel : VBoxContainer
             : $"Found {results.Count} file(s). Added: {(added.Count > 0 ? string.Join(", ", added) : "none")}."
               + (skipped > 0 ? $" {skipped} skipped (already assigned, unsupported, or invalid)." : "");
         Commit();
+    }
+
+    async void Extract(string gameId)
+    {
+        if (!_busy.Add(gameId))
+            return;
+        var row = _rows[gameId];
+        row.Progress.Value = 0;
+        Refresh();
+        row.Status.Text = "Extracting…";
+
+        var progress = new Progress<ExtractionProgress>(p =>
+        {
+            row.Progress.Value = p.Fraction * 100;
+            row.Details.Text = p.Step;
+            row.Details.Visible = true;
+        });
+        string? error = null;
+        try
+        {
+            await ClientServices.ExtractAsync(Library[gameId], progress);
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            error = e.Message;
+        }
+        if (!IsInstanceValid(this))
+            return;
+
+        _busy.Remove(gameId);
+        ClientServices.RefreshAssets();
+        _scanStatus.Text = error is null
+            ? $"Extracted {Library.Manifest.FindById(gameId)!.Name}."
+            : $"Extraction failed: {error}";
+        Refresh();
+        LibraryChanged?.Invoke();
     }
 
     void RemoveRom(string gameId)

@@ -14,4 +14,8 @@
     <EmbeddedResource Include="..\..\data\rom_manifest.json" LogicalName="InfiniteRoutes.rom_manifest.json" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="System.IO.Hashing" Version="10.0.14" />
+  </ItemGroup>
+
 </Project>

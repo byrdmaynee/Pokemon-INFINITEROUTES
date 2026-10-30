@@ -50,7 +50,8 @@ public partial class Main : Control
     void OnLoaded() =>
         ResetTo(ClientServices.Library.WizardCompleted
             ? () => new MainMenu()
-            : () => new FirstRunWizard(() => ResetTo(() => new MainMenu())));
+            // After setup, load again so the new ROMs get extracted before the menu opens.
+            : () => new FirstRunWizard(() => ResetTo(() => new LoadingScreen(OnLoaded))));
 
     /// <summary>Opens a screen on top of the current one; Back/Esc returns.</summary>
     public void Push(Func<Control> screen)
@@ -75,6 +76,8 @@ public partial class Main : Control
     }
 
     public bool CanGoBack => _history.Count > 1;
+
+    public Control? CurrentScreen => _screenHost.GetChildCount() > 0 ? _screenHost.GetChild<Control>(0) : null;
 
     public void Toast(string message)
     {

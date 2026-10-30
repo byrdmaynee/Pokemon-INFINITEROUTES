@@ -1,6 +1,7 @@
 using Godot;
 using InfiniteRoutes.Core;
 using InfiniteRoutes.Core.Config;
+using InfiniteRoutes.Extractor.Extraction;
 using InfiniteRoutes.Extractor.Roms;
 
 namespace InfiniteRoutes.Client.Ui;
@@ -74,6 +75,29 @@ public partial class LoadingScreen : CenterContainer
         }
         if (toCheck.Count > 0)
             ClientServices.SaveLibrary();
+
+        foreach (var entry in ClientServices.PendingExtractions().ToList())
+        {
+            var name = ClientServices.Manifest.FindById(entry.GameId)!.Name;
+            var progress = new Progress<ExtractionProgress>(p =>
+            {
+                _step.Text = $"Extracting from {name}: {p.Step}…";
+                _bar.Value = p.Fraction * 100;
+            });
+            try
+            {
+                await ClientServices.ExtractAsync(entry, progress);
+            }
+            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+            {
+                GD.PushError($"Extraction failed for {name}: {e}");
+                _step.Text = $"Couldn't extract {name}: {e.Message}";
+                await ToSignal(GetTree().CreateTimer(3), SceneTreeTimer.SignalName.Timeout);
+            }
+            if (!IsInstanceValid(this))
+                return;
+        }
+        ClientServices.RefreshAssets();
 
         SetStep("Ready", 100);
         var elapsed = (Time.GetTicksMsec() - started) / 1000.0;

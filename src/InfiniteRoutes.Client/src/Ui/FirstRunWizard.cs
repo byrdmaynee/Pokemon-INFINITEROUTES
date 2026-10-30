@@ -128,8 +128,8 @@ public partial class FirstRunWizard : MarginContainer
                 r.Available ? $"✓  {r.Region.Name}" : $"🔒  {r.Region.Name} — add its game in Settings → ROM Library to unlock",
                 18, r.Available ? Ui.Good : Ui.Muted));
         box.AddChild(Ui.Text(
-            "In the full game the next step extracts graphics, maps and music from your ROMs into a local cache. " +
-            "That arrives in Milestone 1.",
+            "When you press Finish, the game reads graphics and data from your ROMs into a local cache on this " +
+            "computer. This takes a few seconds and only happens once per ROM.",
             15, Ui.Muted, wrap: true));
         return box;
     }

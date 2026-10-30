@@ -32,7 +32,9 @@ public static class DebugCapture
 
         await Wait(0.3);
         Save("01-loading");
-        await Wait(2.0);
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
         Save("02-after-loading");
 
         if (ClientServices.Library.WizardCompleted)
@@ -46,6 +48,7 @@ public static class DebugCapture
                          ("05-settings", () => new SettingsScreen()),
                          ("06-servers", () => new ServersScreen()),
                          ("07-credits", () => new CreditsScreen()),
+                         ("08-pokedex", () => new PokedexScreen()),
                      })
             {
                 main.Push(screen);

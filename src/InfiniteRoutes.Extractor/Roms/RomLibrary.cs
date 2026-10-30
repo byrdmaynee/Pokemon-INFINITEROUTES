@@ -13,6 +13,9 @@ public sealed class RomLibraryEntry
     public string? Sha1 { get; set; }
     public bool HashVerified { get; set; }
 
+    /// <summary>Full 4-character cartridge code, e.g. IRAO. Part of the extraction cache path.</summary>
+    public string? GameCode { get; set; }
+
     /// <summary>Path + size + last-write time when last validated. A mismatch means "check again".</summary>
     public string? Fingerprint { get; set; }
 
@@ -53,13 +56,14 @@ public sealed class RomLibrary
         e.Message = result.Message;
         e.Sha1 = result.Sha1;
         e.HashVerified = result.HashVerified;
+        e.GameCode = result.Header?.GameCode;
         e.Fingerprint = Fingerprint(path);
     }
 
     public void Remove(string gameId)
     {
         var e = _entries[gameId];
-        e.Path = e.Sha1 = e.Fingerprint = null;
+        e.Path = e.Sha1 = e.Fingerprint = e.GameCode = null;
         e.Status = RomStatus.Missing;
         e.Message = "";
         e.HashVerified = false;
@@ -142,6 +146,7 @@ public sealed class RomLibrary
             }
 
             e.Sha1 = t.GetString("sha1");
+            e.GameCode = t.GetString("game_code");
             e.HashVerified = t.GetBool("verified") ?? false;
             e.Fingerprint = t.GetString("fingerprint");
             var stored = Enum.TryParse<RomStatus>(t.GetString("status"), out var s) ? s : RomStatus.Unchecked;
@@ -155,6 +160,12 @@ public sealed class RomLibrary
             {
                 e.Status = RomStatus.Unchecked;
                 e.Message = "The file changed since it was last checked.";
+            }
+            else if (stored == RomStatus.Valid && e.GameCode is null)
+            {
+                // Written by an older client that didn't record the game code; one re-check fills it in.
+                e.Status = RomStatus.Unchecked;
+                e.Message = "Needs a quick re-check.";
             }
             else
             {
@@ -184,6 +195,8 @@ public sealed class RomLibrary
             sb.AppendLine($"message = {Pkir.Quote(e.Message)}");
             if (e.Sha1 is not null)
                 sb.AppendLine($"sha1 = {Pkir.Quote(e.Sha1)}");
+            if (e.GameCode is not null)
+                sb.AppendLine($"game_code = {Pkir.Quote(e.GameCode)}");
             sb.AppendLine($"verified = {(e.HashVerified ? "true" : "false")}");
             if (e.Fingerprint is not null)
                 sb.AppendLine($"fingerprint = {Pkir.Quote(e.Fingerprint)}");

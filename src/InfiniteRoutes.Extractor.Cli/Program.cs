@@ -12,7 +12,13 @@ const string Usage = """
       ir-extract narc <rom> <path>       List the files inside a NARC archive in the ROM
       ir-extract scan <folder>           Find and validate every supported ROM in a folder
       ir-extract library                 Show the player's ROM library (roms.pkir)
+      ir-extract extract <rom>           Validate, then extract assets into the local cache
+      ir-extract text <rom> <narc> <i>   Decode a Gen 5 message file from a NARC
+      ir-extract sprite <rom> <narc> <i> <pal-i> <width> <out.png>  Render an NCGR with an NCLR from the same NARC
+      ir-extract hex <rom> <narc> <i> [n]  Hex dump the first n bytes (default 256) of a NARC member
     """;
+
+Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
 {
@@ -33,6 +39,10 @@ try
         "narc" when args.Length >= 3 => NarcList(args[1], args[2]),
         "scan" when args.Length >= 2 => Scan(args[1]),
         "library" => Library(),
+        "extract" when args.Length >= 2 => Extract(args[1]),
+        "text" when args.Length >= 4 => Text(args[1], args[2], int.Parse(args[3])),
+        "sprite" when args.Length >= 7 => Sprite(args[1], args[2], int.Parse(args[3]), int.Parse(args[4]), int.Parse(args[5]), args[6]),
+        "hex" when args.Length >= 4 => Hex(args[1], args[2], int.Parse(args[3]), args.Length >= 5 ? int.Parse(args[4]) : 256),
         _ => Fail($"Unknown command or missing arguments.\n\n{Usage}"),
     };
 }
@@ -103,6 +113,71 @@ int NarcList(string path, string narcPath)
     return 0;
 }
 
+int Extract(string path)
+{
+    var r = validator.Validate(path);
+    if (r.Status != RomStatus.Valid)
+        return Fail($"{r.Label}: {r.Message}");
+    if (!InfiniteRoutes.Extractor.Extraction.Gen5Extractor.Supports(r.Game!))
+        return Fail($"Extraction for {r.Game!.Name} isn't available yet (Black/White only in M1a).");
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var last = "";
+    var dir = InfiniteRoutes.Extractor.Extraction.Gen5Extractor.Extract(path, r.Game!, r.Header!.GameCode, r.Sha1!,
+        new InlineProgress<InfiniteRoutes.Extractor.Extraction.ExtractionProgress>(p =>
+        {
+            if (p.Step != last) Console.Error.Write((char)13 + p.Step.PadRight(50));
+            last = p.Step;
+        }));
+    Console.Error.WriteLine();
+    Console.WriteLine($"Extracted to {dir} in {sw.Elapsed.TotalSeconds:F1}s");
+    return 0;
+}
+
+byte[] NarcMember(string rom, string narcPath, int index)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    return Narc.Parse(fs.ReadFile(narcPath)).Read(index);
+}
+
+int Text(string rom, string narcPath, int index)
+{
+    var lines = InfiniteRoutes.Extractor.Text.Gen5Text.Decode(NarcMember(rom, narcPath, index));
+    for (var i = 0; i < lines.Count; i++)
+        Console.WriteLine($"[{i,4}] {lines[i].Replace("\n", "⏎").Replace("\r", "⤵").Replace("\f", "⏏")}");
+    return 0;
+}
+
+int Sprite(string rom, string narcPath, int index, int paletteIndex, int width, string output)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    var narc = Narc.Parse(fs.ReadFile(narcPath));
+    var ncgr = InfiniteRoutes.Extractor.Graphics.Ncgr.Parse(Lz.DecompressIfNeeded(narc.Read(index)));
+    var nclr = InfiniteRoutes.Extractor.Graphics.Nclr.Parse(Lz.DecompressIfNeeded(narc.Read(paletteIndex)));
+    Console.WriteLine($"{ncgr.BitsPerPixel}bpp, {ncgr.Indices.Length} px, tiles {ncgr.TilesWide}x{ncgr.TilesHigh}, {(ncgr.Tiled ? "tiled" : "linear")}; palette {nclr.Colors.Length} colours");
+    InfiniteRoutes.Extractor.Graphics.Png.Save(width == 0 ? ncgr.RenderGen5Battler(nclr) : ncgr.Render(nclr, width), output);
+    Console.WriteLine($"Wrote {output}");
+    return 0;
+}
+
+int Hex(string rom, string narcPath, int index, int count)
+{
+    var data = NarcMember(rom, narcPath, index);
+    if (Lz.IsCompressed(data))
+    {
+        Console.WriteLine($"{narcPath}[{index}]: {data.Length:N0} bytes, LZ{data[0]:X2}-compressed; showing decompressed");
+        data = Lz.Decompress(data);
+    }
+    Console.WriteLine($"{narcPath}[{index}]: {data.Length:N0} bytes");
+    for (var off = 0; off < Math.Min(count, data.Length); off += 16)
+    {
+        var row = data.AsSpan(off, Math.Min(16, data.Length - off));
+        var hex = string.Join(" ", row.ToArray().Select(b => b.ToString("X2")));
+        var ascii = new string(row.ToArray().Select(b => b is >= 0x20 and < 0x7F ? (char)b : '.').ToArray());
+        Console.WriteLine($"{off:X6}  {hex,-47}  {ascii}");
+    }
+    return 0;
+}
+
 int Scan(string folder)
 {
     var library = new RomLibrary(manifest);
@@ -140,4 +215,9 @@ static int Fail(string message)
 sealed class SyncProgress(Action<double> report) : IProgress<double>
 {
     public void Report(double value) => report(value);
+}
+
+sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T value) => report(value);
 }

@@ -511,7 +511,12 @@ Admins run the server from inside the normal game client. Once a user is authent
 | # | Milestone | Exit criteria |
 |---|---|---|
 | M0 | **Foundations** | Repo, CI, core libs. Extractor reads NDS header/NitroFS/NARC and validates all 9 games. ROM wizard + ROM Library UI work |
-| M1 | **Unova single-player slice** | Extract one Unova town + route (maps, sprites, text, music). Walk around. Wild battles with the full battle UI against a *local* engine instance. **Studio:** map & event editor, play from here |
+| M1 | **Unova single-player slice** | Delivered in phases: |
+| M1a | Data & 2D assets ✅ | LZ10/LZ11, Gen 5 text, species data, battle sprites (normal/shiny, front/back) extracted into the cache; extraction runs at first launch and from the ROM Library; Pokédex Viewer in the client |
+| M1b | Overworld | Map matrix, map models (NSBMD → glTF), collision/permissions, warps; player overworld sprite; walk around one town + route in the client |
+| M1c | Battles | Move/learnset/encounter data; local Gen 5 battle engine (core mechanics first); battle UI with extracted sprites; wild encounters on the route |
+| M1d | Audio | SDAT sequences pre-rendered to OGG with loop points; map and battle music, cries |
+| M1e | Studio | Map & event editor, play from here |
 | M2 | **Online core** | Auth, characters, server-authoritative movement on Unova channels, other players visible, Local/Global/Whisper chat, persistence. **Admin:** Owner bootstrap, roles/permissions, 2FA elevation, Admin Mode (invisible, teleport, spectate), read-only player inspector, announce/kick, audit log |
 | M3 | **Unova complete (PvE)** | Full Unova story via Lua, all encounter types incl. hordes, trainers, gyms, E4, marts, PC, Day Care (no breeding yet), Pokédex. **Studio:** event command lists, dialogue browser, cutscene timeline, data tables, battle sandbox |
 | M4 | **Social + trade + PvP** | Friends, parties, guilds, P2P trade, casual PvP. **Admin:** full player/Pokémon/inventory editing, bulk grants, world panel, moderation panel, undo → **closed alpha** |
