@@ -16,6 +16,11 @@ public static class Gen5Layout
     public const string Moves = "a/0/2/1";
     /// <summary>Wild encounter tables, indexed by the zone header (see <see cref="Gen5Battle.DecodeEncounters"/>).</summary>
     public const string Encounters = "a/1/2/6";
+    /// <summary>Trainer records and their parties, same index (see <see cref="Gen5Battle.DecodeTrainer"/>).</summary>
+    public const string Trainers = "a/0/9/2";
+    public const string TrainerParties = "a/0/9/3";
+    /// <summary>Trainer NPCs run script <c>TrainerScriptBase + trainer id</c>.</summary>
+    public const int TrainerScriptBase = 3000;
 
     public const string MapChunks = "a/0/0/8";
     public const string MapMatrices = "a/0/0/9";
@@ -77,6 +82,8 @@ public static class Gen5Layout
         public const int TypeNames = 199;
         public const int MoveDescriptions = 202;
         public const int MoveNames = 203;
+        public const int TrainerNames = 190;
+        public const int TrainerClassNames = 191;
     }
 
     /// <summary>Battle sprite NARC: 20 files per species, at species × 20.</summary>

@@ -35,6 +35,9 @@ public sealed class GameAssets
     /// <summary>Wild encounter tables indexed by <see cref="ZoneInfo.Encounters"/>.</summary>
     public IReadOnlyList<EncounterTable> LoadEncounters() => LoadData<List<EncounterTable>>("encounters") ?? [];
 
+    /// <summary>Trainers indexed by id (<see cref="NpcInfo.TrainerId"/>).</summary>
+    public IReadOnlyList<TrainerInfo> LoadTrainers() => LoadData<List<TrainerInfo>>("trainers") ?? [];
+
     T? LoadData<T>(string name)
     {
         var path = Path.Combine(Directory, "data", name + ".json");

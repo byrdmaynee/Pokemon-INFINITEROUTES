@@ -46,6 +46,7 @@ public partial class OverworldScreen : Control
     Label _dialogText = null!;
     MeshInstance3D? _overlay;
     BattleScreen? _battle;
+
     PartyMenu? _menu;
     /// <summary>False when the cache has no battle data (extracted before 0.6.0): no encounters then.</summary>
     bool _battles;
@@ -400,10 +401,90 @@ public partial class OverworldScreen : Control
             if (_cellsByPos.TryGetValue(CellOf(_tile), out var cell) && cell.Zone >= 0)
                 _zone = cell.Zone;
             UpdateHud();
-            if (RollEncounter() is { } wild)
+            if (SpottedBy() is { } trainer)
+                Challenge(trainer);
+            else if (RollEncounter() is { } wild)
                 StartBattle(wild);
         };
     }
+
+    /// <summary>An undefeated trainer whose line of sight (straight ahead, up to its sight range, until something blocks it) reaches the player.</summary>
+    NpcActor? SpottedBy()
+    {
+        if (!_battles || !TrainerBattles || OfflineSession.Lead is null)
+            return null;
+        foreach (var npc in Npcs)
+        {
+            if (npc.Moving || npc.Info.Sight <= 0 || TrainerFor(npc) is null)
+                continue;
+            var d = FacingToDir(npc.Facing);
+            for (var k = 1; k <= npc.Info.Sight; k++)
+            {
+                var t = npc.Tile + d * k;
+                if (t == _tile)
+                    return npc;
+                if (IsBlocked(t) || NpcAt(t) is not null)
+                    break;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>The trainer an NPC battles as, if it has one with Pokémon and hasn't been beaten yet.</summary>
+    static Core.Data.TrainerInfo? TrainerFor(NpcActor npc) =>
+        npc.Info.TrainerId is var id and >= 0 && id < OfflineSession.Trainers.Count && !OfflineSession.DefeatedTrainers.Contains(id)
+        && OfflineSession.Trainers[id] is { Pokemon.Count: > 0 } trainer ? trainer : null;
+
+    /// <summary>A trainer saw the player: "!" over its head, it walks up until it's next to the player, then the battle starts.</summary>
+    async void Challenge(NpcActor npc)
+    {
+        _moving = true;
+        ShowFrame(0);
+        npc.Pause(30);
+        var mark = new Label3D
+        {
+            Text = "!", FontSize = 96, PixelSize = 0.012f, Modulate = new Color(1, 0.25f, 0.2f), OutlineSize = 18,
+            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, Position = new Vector3(0, 2.7f, 0),
+        };
+        npc.AddChild(mark);
+        await ToSignal(GetTree().CreateTimer(0.8), SceneTreeTimer.SignalName.Timeout);
+        if (!IsInstanceValid(this) || !IsInstanceValid(npc))
+            return;
+        mark.QueueFree();
+
+        var d = FacingToDir(npc.Facing);
+        while (npc.Tile + d != _tile)
+        {
+            var next = npc.Tile + d;
+            npc.StepTo(next, GroundHeight(next, npc.Position.Y));
+            while (npc.Moving)
+            {
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                if (!IsInstanceValid(this) || !IsInstanceValid(npc))
+                    return;
+            }
+        }
+        _dir = -d;
+        ShowFrame(0);
+        await ToSignal(GetTree().CreateTimer(0.3), SceneTreeTimer.SignalName.Timeout);
+        if (IsInstanceValid(this))
+            StartTrainerBattle(npc);
+    }
+
+    /// <summary>Starts the battle with <paramref name="npc"/>'s trainer team. Public so smoke tests can force one.</summary>
+    public void StartTrainerBattle(NpcActor npc)
+    {
+        if (TrainerFor(npc) is not { } trainer)
+            return;
+        var team = Core.Battle.SingleBattle.TrainerParty(OfflineSession.Data, trainer, OfflineSession.Rng);
+        if (team.Count == 0 || OfflineSession.Lead is null)
+            return;
+
+        OpenBattle(new Core.Battle.SingleBattle(OfflineSession.Data, OfflineSession.Party, OfflineSession.Bag, team, trainer, OfflineSession.Rng));
+    }
+
+    /// <summary>Whether trainers who see the player challenge them (smoke tests turn it off while walking).</summary>
+    public bool TrainerBattles { get; set; } = true;
 
     /// <summary>
     /// After a step into tall grass: the zone's grass rate is the percent chance of a wild Pokémon, picked from the
@@ -423,9 +504,17 @@ public partial class OverworldScreen : Control
     }
 
     /// <summary>Starts a wild battle against <paramref name="wild"/> with the party's lead. Public so smoke tests can force one.</summary>
-    public async void StartBattle(Core.Battle.Pokemon wild)
+    public void StartBattle(Core.Battle.Pokemon wild)
     {
-        if (_battle is not null || OfflineSession.Lead is not { } lead)
+        if (OfflineSession.Lead is null)
+            return;
+
+        OpenBattle(new Core.Battle.SingleBattle(OfflineSession.Data, OfflineSession.Party, OfflineSession.Bag, wild, OfflineSession.Rng));
+    }
+
+    async void OpenBattle(Core.Battle.SingleBattle battle)
+    {
+        if (_battle is not null)
             return;
         _moving = true;
         ShowFrame(0);
@@ -441,7 +530,7 @@ public partial class OverworldScreen : Control
         if (!IsInstanceValid(this))
             return;
 
-        _battle = new BattleScreen(new Core.Battle.WildBattle(OfflineSession.Data, OfflineSession.Party, OfflineSession.Bag, wild, OfflineSession.Rng), _assets);
+        _battle = new BattleScreen(battle, _assets);
         _battle.Finished += EndBattle;
         AddChild(_battle);
         MoveChild(_fade, -1);
@@ -456,8 +545,14 @@ public partial class OverworldScreen : Control
         if (!IsInstanceValid(this))
             return;
         var caught = _battle?.Battle is { Outcome: Core.Battle.BattleOutcome.Caught } b ? b.Foe.Mon : null;
+        if (_battle?.Battle is { Outcome: Core.Battle.BattleOutcome.Won, Trainer: { } beaten } won)
+        {
+            OfflineSession.DefeatedTrainers.Add(beaten.Id);
+            OfflineSession.Money += won.PrizeMoney;
+        }
         _battle?.QueueFree();
         _battle = null;
+
         if (caught is not null)
             ShowMessage(OfflineSession.Keep(caught));
         if ((Core.Battle.BattleOutcome)outcome == Core.Battle.BattleOutcome.Lost)
@@ -581,6 +676,16 @@ public partial class OverworldScreen : Control
         npc.Facing = DirToFacing(-_dir);
         npc.Pause(2);
         ShowFrame(0);
+        if (_battles && TrainerFor(npc) is not null)
+        {
+            StartTrainerBattle(npc);
+            return true;
+        }
+        if (_battles && npc.Info.TrainerId >= 0 && npc.Info.TrainerId < OfflineSession.Trainers.Count)
+        {
+            ShowMessage($"{OfflineSession.Trainers[npc.Info.TrainerId].Title}: …\n[beaten — their lines arrive with the script engine]");
+            return true;
+        }
         if (npc.Info.Script == NurseScript && _battles)
         {
             OfflineSession.HealParty();

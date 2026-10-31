@@ -6,7 +6,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Before you start
 
 - [ ] Launch the client after pulling: the loading screen re-extracts your Black/White ROM once
-      (extractor 0.6.0, ~20 s, ~245 MB in the cache). Later launches skip it.
+      (extractor 0.7.0, ~20 s, ~245 MB in the cache). Later launches skip it.
 - [ ] Opening two clients at once: the second waits for the first's extraction, then starts without
       extracting again.
 - [ ] With no ROM extracted, the screen says to re-extract in Settings → ROM Library instead of crashing.
@@ -121,10 +121,27 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Pokémon Center (e.g. Accumula Town): talk to the nurse in the middle of the counter → "Your
       Pokémon have been restored to full health" and HP, PP and status are all restored.
 
+## Trainers
+
+- [ ] On Route 2, walking into a trainer's line of sight (straight ahead of where they face, a few tiles,
+      not through trees or other people): a red "!" over their head, they walk up to you, and the battle
+      starts with "You are challenged by Youngster Jimmy!" (names and classes come from your ROM).
+- [ ] Talking to a trainer you haven't beaten starts the battle too.
+- [ ] Their Pokémon say "The foe's …"; after one faints the next drops in ("… sent out …!"), with its own
+      info box. Teams match the games (Jimmy: Patrat Lv7).
+- [ ] Run says "No! There's no running from a Trainer battle!"; a Poké Ball is blocked ("Don't be a
+      thief!") and used up.
+- [ ] Winning: "You defeated …!" and "You got ₽… for winning!"; the money shows in the X menu. EXP is
+      higher than from wild Pokémon of the same level.
+- [ ] A beaten trainer never challenges again; talking to them shows a placeholder line.
+- [ ] Losing to a trainer blacks out like a wild battle.
+
 ## Things that are expected to be missing (not bugs yet)
 
 - Frame-swap animations (swaying flowers, blinking lights) and animated objects are still static.
-- In battle: no trainers, nicknames, abilities, held items, weather or move animations; moves with
+- Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
+  trainers fight as single battles.
+- In battle: no nicknames, abilities, held items, weather or move animations; moves with
   special effects beyond damage, status and stat changes just deal damage. A fifth move is skipped with a
   message instead of asking which to forget. The battle background is a placeholder.
 - Other Pokémon Center staff and shop clerks only show their script number. No PC to move Pokémon around.

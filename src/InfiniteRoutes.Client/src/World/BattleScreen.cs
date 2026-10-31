@@ -9,7 +9,7 @@ namespace InfiniteRoutes.Client.World;
 /// A wild battle drawn over the overworld: the wild Pokémon on the far platform, the player's from behind on the
 /// near one, info boxes with HP (and EXP for the player's), a message box, and the Fight / Bag / Pokémon / Run
 /// menu. Bag throws Poké Balls or uses medicine; Pokémon switches (and picks the next one when the lead faints).
-/// Turns run in <see cref="WildBattle"/>; this screen plays back its events in order.
+/// Turns run in <see cref="SingleBattle"/>; this screen plays back its events in order.
 /// </summary>
 public partial class BattleScreen : Control
 {
@@ -19,7 +19,7 @@ public partial class BattleScreen : Control
     [Signal]
     public delegate void FinishedEventHandler(int outcome);
 
-    readonly WildBattle _battle;
+    readonly SingleBattle _battle;
     readonly GameAssets _assets;
     readonly IReadOnlyList<string> _typeNames;
 
@@ -34,7 +34,7 @@ public partial class BattleScreen : Control
     bool _busy;
     bool _skip;
 
-    public WildBattle Battle => _battle;
+    public SingleBattle Battle => _battle;
 
     /// <summary>True while events are playing back (the menu is hidden).</summary>
     public bool Busy => _busy;
@@ -42,7 +42,7 @@ public partial class BattleScreen : Control
     // Godot needs a parameterless constructor to recreate script instances.
     public BattleScreen() : this(null!, null!) { }
 
-    public BattleScreen(WildBattle battle, GameAssets assets)
+    public BattleScreen(SingleBattle battle, GameAssets assets)
     {
         _battle = battle;
         _assets = assets;
@@ -371,6 +371,9 @@ public partial class BattleScreen : Control
                 case LevelUpEvent up when _playerBox.Shows(_battle.Party[up.PartyIndex]):
                     _playerBox.Refresh();
                     break;
+                case SwitchEvent { Side: BattleSide.Foe } sw:
+                    await SendOutFoe(_battle.FoeParty[sw.PartyIndex]);
+                    break;
                 case SwitchEvent sw:
                     await SendOut(_battle.Party[sw.PartyIndex]);
                     break;
@@ -418,6 +421,26 @@ public partial class BattleScreen : Control
         var enter = CreateTween().SetParallel();
         enter.TweenProperty(_playerSprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
         enter.TweenProperty(_playerBox, "modulate", Colors.White, 0.3);
+        await ToSignal(enter, Tween.SignalName.Finished);
+    }
+
+    /// <summary>A trainer's next Pokémon drops onto the far platform with a fresh info box.</summary>
+    async Task SendOutFoe(Pokemon mon)
+    {
+        _foeSprite.Texture = LoadTexture(_assets.BattleSpritePath(mon.Species.Id, mon.Shiny ? "front-shiny" : "front"));
+        _foeBox.QueueFree();
+        _foeBox = new InfoBox(mon, showNumbers: false) { Modulate = Colors.Transparent };
+        AddChild(_foeBox);
+        MoveChild(_picker, -1);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        Layout();
+        var home = _foeSprite.Position;
+        _foeSprite.Position = home - new Vector2(0, 60);
+        _foeSprite.Modulate = Colors.Transparent;
+        var enter = CreateTween().SetParallel();
+        enter.TweenProperty(_foeSprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Bounce).SetEase(Tween.EaseType.Out);
+        enter.TweenProperty(_foeSprite, "modulate", Colors.White, 0.25);
+        enter.TweenProperty(_foeBox, "modulate", Colors.White, 0.3);
         await ToSignal(enter, Tween.SignalName.Finished);
     }
 

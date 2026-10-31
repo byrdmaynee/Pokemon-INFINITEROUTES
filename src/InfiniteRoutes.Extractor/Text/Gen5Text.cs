@@ -54,6 +54,10 @@ public static class Gen5Text
             key = (ushort)((key >> 3) | (key << 13));
         }
 
+        if (chars[0] == 0xF100)
+            chars = Unpack9Bit(chars);
+        count = chars.Length;
+
         var sb = new StringBuilder(count);
         for (var i = 0; i < count; i++)
         {
@@ -64,6 +68,12 @@ public static class Gen5Text
                     return sb.ToString();
                 case 0xFFFE:
                     sb.Append('\n');
+                    break;
+                case 0x2486:   // the font's "PK" and "MN" ligature halves ("PKMN Breeder")
+                    sb.Append("PK");
+                    break;
+                case 0x2487:
+                    sb.Append("MN");
                     break;
                 case 0xF000 when i + 2 < count:
                 {
@@ -87,6 +97,31 @@ public static class Gen5Text
             }
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Compressed strings (trainer names): after the 0xF100 marker the words are a little-endian bit stream of
+    /// 9-bit characters, ending at 0x1FF.
+    /// </summary>
+    static ushort[] Unpack9Bit(ushort[] words)
+    {
+        var result = new List<ushort>();
+        int buffer = 0, bits = 0;
+        for (var i = 1; i < words.Length; i++)
+        {
+            buffer |= words[i] << bits;
+            bits += 16;
+            while (bits >= 9)
+            {
+                var c = (ushort)(buffer & 0x1FF);
+                buffer >>= 9;
+                bits -= 9;
+                if (c == 0x1FF)
+                    return [.. result, 0xFFFF];
+                result.Add(c);
+            }
+        }
+        return [.. result, 0xFFFF];
     }
 
     static ushort U16(ReadOnlySpan<byte> b, int offset) => BinaryPrimitives.ReadUInt16LittleEndian(b[offset..]);

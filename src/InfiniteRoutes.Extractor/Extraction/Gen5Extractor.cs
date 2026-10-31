@@ -49,6 +49,8 @@ public static class Gen5Extractor
                 ["abilities"] = Table(Gen5Layout.Text.AbilityNames),
                 ["types"] = Table(Gen5Layout.Text.TypeNames),
                 ["locations"] = Table(Gen5Layout.Text.LocationNames),
+                ["trainers"] = Table(Gen5Layout.Text.TrainerNames),
+                ["trainer-classes"] = Table(Gen5Layout.Text.TrainerClassNames),
             };
             var textDir = Directory.CreateDirectory(Path.Combine(temp, "text")).FullName;
             foreach (var (name, lines) in tables)
@@ -81,6 +83,13 @@ public static class Gen5Extractor
             for (var id = 0; id < encounterData.Count; id++)
                 encounters.Add(Gen5Battle.DecodeEncounters(id, encounterData.Read(id)));
             WriteJson(Path.Combine(temp, "data", "encounters.json"), encounters);
+
+            var trainerData = Narc.Parse(fs.ReadFile(Gen5Layout.Trainers));
+            var trainerParties = Narc.Parse(fs.ReadFile(Gen5Layout.TrainerParties));
+            var trainers = new List<TrainerInfo>();
+            for (var id = 0; id < trainerData.Count && id < trainerParties.Count; id++)
+                trainers.Add(Gen5Battle.DecodeTrainer(id, trainerData.Read(id), trainerParties.Read(id), tables["trainers"], tables["trainer-classes"]));
+            WriteJson(Path.Combine(temp, "data", "trainers.json"), trainers);
 
             var sprites = Narc.Parse(fs.ReadFile(Gen5Layout.BattleSprites));
             var spriteDir = Path.Combine(temp, "sprites", "battle");

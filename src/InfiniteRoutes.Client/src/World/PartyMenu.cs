@@ -52,7 +52,7 @@ public partial class PartyMenu : Control
         panel.AddChild(Ui.Ui.VBox(12,
             Ui.Ui.HBox(24,
                 Ui.Ui.VBox(8, Ui.Ui.Text("Party", 22, Ui.Ui.Accent), _party),
-                Ui.Ui.VBox(8, Ui.Ui.Text("Bag", 22, Ui.Ui.Accent), _bag)),
+                Ui.Ui.VBox(8, Ui.Ui.Text($"Bag     ₽{OfflineSession.Money}", 22, Ui.Ui.Accent), _bag)),
             _hint));
         Refresh("Pick a medicine, then a Pokémon to use it on. Pick a Pokémon to make it lead.  X / Esc: close");
     }

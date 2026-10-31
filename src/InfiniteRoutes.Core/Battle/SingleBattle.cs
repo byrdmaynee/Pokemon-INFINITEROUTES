@@ -16,8 +16,8 @@ public sealed record FaintEvent(BattleSide Side) : BattleEvent;
 /// <summary>Party member <see cref="PartyIndex"/> gained experience; <see cref="Level"/> is its level afterwards.</summary>
 public sealed record ExpEvent(int PartyIndex, int Gained, int Level) : BattleEvent;
 public sealed record LevelUpEvent(int PartyIndex, int Level, int MaxHp, int Hp) : BattleEvent;
-/// <summary>The player sent out party member <see cref="PartyIndex"/>.</summary>
-public sealed record SwitchEvent(int PartyIndex) : BattleEvent;
+/// <summary>Party member <see cref="PartyIndex"/> of <see cref="Side"/> came out (the player's or a trainer's).</summary>
+public sealed record SwitchEvent(int PartyIndex, BattleSide Side = BattleSide.Player) : BattleEvent;
 /// <summary>A Poké Ball was thrown: it shook <see cref="Shakes"/> times (0–3) and caught the Pokémon or not.</summary>
 public sealed record CatchEvent(int Ball, int Shakes, bool Caught) : BattleEvent;
 
@@ -35,24 +35,35 @@ public sealed class Battler(Pokemon mon, BattleSide side)
 }
 
 /// <summary>
-/// A single battle against one wild Pokémon, with Generation 5 rules: priority and speed order, accuracy and evasion,
-/// critical hits, STAB, type effectiveness, random damage roll, burn, poison, paralysis, sleep, freeze, confusion,
-/// flinching, stat stages, multi-hit, recoil, drain, healing, one-hit KOs, escape odds, Poké Balls and medicine,
-/// switching, and experience shared between the Pokémon that fought. Moves whose special effects aren't
-/// implemented yet still deal their damage.
+/// A single battle against one wild Pokémon or a trainer's team, with Generation 5 rules: priority and speed order,
+/// accuracy and evasion, critical hits, STAB, type effectiveness, random damage roll, burn, poison, paralysis, sleep,
+/// freeze, confusion, flinching, stat stages, multi-hit, recoil, drain, healing, one-hit KOs, escape odds, Poké
+/// Balls and medicine, switching, experience shared between the Pokémon that fought (×1.5 from trainers) and prize
+/// money. Trainers pick moves at random for now. Moves whose special effects aren't implemented yet still deal
+/// their damage.
 /// </summary>
-public sealed class WildBattle
+public sealed class SingleBattle
 {
     readonly BattleData _data;
     readonly Random _rng;
     readonly IReadOnlyList<Pokemon> _party;
     readonly Bag _bag;
+    readonly IReadOnlyList<Pokemon> _foeParty;
     readonly HashSet<Pokemon> _participants = new();
+    /// <summary>A trainer's Pokémon fainted and another is left: it comes out at the end of the turn.</summary>
+    bool _foeReplacing;
     int _escapeAttempts;
     int _turns;
 
     public Battler Player { get; private set; }
-    public Battler Foe { get; }
+    public Battler Foe { get; private set; }
+
+    /// <summary>The trainer being fought, or null in a wild battle.</summary>
+    public TrainerInfo? Trainer { get; }
+    public IReadOnlyList<Pokemon> FoeParty => _foeParty;
+
+    /// <summary>Money won from the trainer (set when the battle is won).</summary>
+    public int PrizeMoney { get; private set; }
     public BattleOutcome Outcome { get; private set; }
     public bool Over => Outcome != BattleOutcome.Ongoing;
 
@@ -63,23 +74,64 @@ public sealed class WildBattle
     public Bag Bag => _bag;
     public int ActiveIndex => IndexOf(Player.Mon);
 
-    /// <summary>A battle with the party's first able Pokémon leading.</summary>
-    public WildBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, Pokemon wild, Random rng)
+    /// <summary>
+    /// A battle against <paramref name="foeParty"/> — one wild Pokémon, or <paramref name="trainer"/>'s team — with the
+    /// player's first able Pokémon leading.
+    /// </summary>
+    public SingleBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, IReadOnlyList<Pokemon> foeParty, TrainerInfo? trainer, Random rng)
     {
         _data = data;
         _rng = rng;
         _party = party;
         _bag = bag;
+        _foeParty = foeParty;
+        Trainer = trainer;
         Player = new Battler(party.FirstOrDefault(p => !p.Fainted) ?? throw new ArgumentException("No Pokémon can fight.", nameof(party)), BattleSide.Player);
         _participants.Add(Player.Mon);
-        Foe = new Battler(wild, BattleSide.Foe);
+        Foe = new Battler(foeParty.FirstOrDefault(p => !p.Fainted) ?? throw new ArgumentException("The foe has no Pokémon.", nameof(foeParty)), BattleSide.Foe);
+    }
+
+    /// <summary>A wild battle with the party's first able Pokémon leading.</summary>
+    public SingleBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, Pokemon wild, Random rng)
+        : this(data, party, bag, [wild], null, rng) { }
+
+    /// <summary>
+    /// A trainer's team as Pokémon: each at its level with every IV at difficulty × 31 / 255, knowing its listed moves
+    /// or else the last four it learned by that level.
+    /// </summary>
+    public static List<Pokemon> TrainerParty(BattleData data, TrainerInfo trainer, Random rng)
+    {
+        var team = new List<Pokemon>();
+        foreach (var p in trainer.Pokemon)
+        {
+            if (p.Species <= 0)
+                continue;
+            var mon = Pokemon.Create(data, p.Species, p.Level, rng);
+            Array.Fill(mon.Ivs, p.Difficulty * 31 / 255);
+            if (p.Moves is { Count: > 0 } moves)
+            {
+                mon.Moves.Clear();
+                foreach (var id in moves)
+                    if (data.Move(id) is { } move)
+                        mon.Moves.Add(new MoveSlot(move));
+            }
+            mon.Hp = mon.MaxHp;
+            team.Add(mon);
+        }
+        return team;
     }
 
     /// <summary>A one-on-one battle with no items (for tests and simple uses).</summary>
-    public WildBattle(BattleData data, Pokemon player, Pokemon wild, Random rng) : this(data, [player], new Bag(), wild, rng) { }
+    public SingleBattle(BattleData data, Pokemon player, Pokemon wild, Random rng) : this(data, [player], new Bag(), wild, rng) { }
 
-    public IReadOnlyList<BattleEvent> Start() =>
-        [new MessageEvent($"A wild {Foe.Mon.Name} appeared!"), new MessageEvent($"Go! {Player.Mon.Name}!")];
+    public IReadOnlyList<BattleEvent> Start() => Trainer is { } trainer
+        ?
+        [
+            new MessageEvent($"You are challenged by {trainer.Title}!"),
+            new MessageEvent($"{trainer.Title} sent out {Foe.Mon.Name}!"),
+            new MessageEvent($"Go! {Player.Mon.Name}!"),
+        ]
+        : [new MessageEvent($"A wild {Foe.Mon.Name} appeared!"), new MessageEvent($"Go! {Player.Mon.Name}!")];
 
     /// <summary>True when no move has PP left: <see cref="Fight"/> then uses Struggle whatever the slot.</summary>
     public bool MustStruggle => Player.Mon.Moves.All(m => m.Pp <= 0);
@@ -113,7 +165,7 @@ public sealed class WildBattle
         for (var i = 0; i < order.Length && !Waiting; i++)
         {
             var (user, target, choice) = order[i];
-            if (choice is null || user.Mon.Fainted)
+            if (choice is null || user.Mon.Fainted || target.Mon.Fainted)
                 continue;
             UseMove(user, target, choice.Value.Move, choice.Value.Slot, movedFirst: i == 0, events);
             CheckFaints(events);
@@ -127,6 +179,8 @@ public sealed class WildBattle
     {
         if (Waiting)
             return [];
+        if (Trainer is not null)
+            return [new MessageEvent("No! There's no running from a Trainer battle!")];
         var events = new List<BattleEvent>();
         _escapeAttempts++;
         _turns++;
@@ -191,6 +245,12 @@ public sealed class WildBattle
             _bag.Take(item);
             _turns++;
             events.Add(new MessageEvent($"You threw a {name}!"));
+            if (Trainer is not null)
+            {
+                events.Add(new MessageEvent("The Trainer blocked the Ball! Don't be a thief!"));
+                FoeTurn(events);
+                return events;
+            }
             var shakes = CatchShakes(ball, item);
             var caught = shakes == 4;
             events.Add(new CatchEvent(item, Math.Min(3, shakes), caught));
@@ -619,18 +679,42 @@ public sealed class WildBattle
                 CheckFaints(events);
             }
         }
+
+        // A trainer sends out their next Pokémon once the turn is over; it's fought by whoever is out now.
+        if (_foeReplacing && !Over)
+        {
+            _foeReplacing = false;
+            var next = Enumerable.Range(0, _foeParty.Count).First(i => !_foeParty[i].Fainted);
+            Foe = new Battler(_foeParty[next], BattleSide.Foe);
+            _participants.Clear();
+            if (!Player.Mon.Fainted)
+                _participants.Add(Player.Mon);
+            events.Add(new SwitchEvent(next, BattleSide.Foe));
+            events.Add(new MessageEvent($"{Trainer?.Title ?? "The foe"} sent out {Foe.Mon.Name}!"));
+        }
     }
 
     void CheckFaints(List<BattleEvent> events)
     {
         if (Over)
             return;
-        if (Foe.Mon.Fainted)
+        if (Foe.Mon.Fainted && !_foeReplacing)
         {
             events.Add(new FaintEvent(BattleSide.Foe));
             events.Add(new MessageEvent($"{Label(Foe)} fainted!"));
-            Outcome = BattleOutcome.Won;
             AwardExp(events);
+            if (_foeParty.Any(p => !p.Fainted))
+                _foeReplacing = true;
+            else
+            {
+                Outcome = BattleOutcome.Won;
+                if (Trainer is { } trainer)
+                {
+                    PrizeMoney = trainer.PrizeBase * 4 * _foeParty[^1].Level;
+                    events.Add(new MessageEvent($"You defeated {trainer.Title}!"));
+                    events.Add(new MessageEvent($"You got ₽{PrizeMoney} for winning!"));
+                }
+            }
         }
         if (Player.Mon.Fainted && !NeedsSwitch)
         {
@@ -652,11 +736,11 @@ public sealed class WildBattle
     /// Gen 5 scaled experience for beating a wild Pokémon, shared by <paramref name="participants"/> Pokémon:
     /// base EXP × level / 5 / participants × ((2L + 10) / (L + Lp + 10))^2.5 + 1.
     /// </summary>
-    public static int ExpYield(Pokemon defeated, Pokemon winner, int participants = 1)
+    public static int ExpYield(Pokemon defeated, Pokemon winner, int participants = 1, bool trainer = false)
     {
         double lv = defeated.Level, own = winner.Level;
         var scaled = defeated.Species.BaseExp * lv / 5 / Math.Max(1, participants) * Math.Pow((2 * lv + 10) / (lv + own + 10), 2.5);
-        return (int)Math.Floor(scaled) + 1;
+        return (int)Math.Floor((Math.Floor(scaled) + 1) * (trainer ? 1.5 : 1));
     }
 
     /// <summary>Every Pokémon that was sent out against the wild one and is still standing shares the experience.</summary>
@@ -668,7 +752,7 @@ public sealed class WildBattle
             if (mon.Level >= 100)
                 continue;
             var index = IndexOf(mon);
-            var exp = ExpYield(Foe.Mon, mon, earners.Count);
+            var exp = ExpYield(Foe.Mon, mon, earners.Count, Trainer is not null);
             var levels = mon.GainExp(exp, _data);
             events.Add(new MessageEvent($"{mon.Name} gained {exp} Exp. Points!"));
             events.Add(new ExpEvent(index, exp, mon.Level));
@@ -710,7 +794,7 @@ public sealed class WildBattle
 
     bool Roll(int percent) => _rng.Next(100) < percent;
 
-    static string Label(Battler b) => b.Side == BattleSide.Foe ? $"The wild {b.Mon.Name}" : b.Mon.Name;
+    string Label(Battler b) => b.Side != BattleSide.Foe ? b.Mon.Name : Trainer is null ? $"The wild {b.Mon.Name}" : $"The foe's {b.Mon.Name}";
 
     static string StatName(BattleStat stat) => stat switch
     {

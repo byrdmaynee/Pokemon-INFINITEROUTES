@@ -62,7 +62,8 @@ public static class DebugCapture
             Save("09-overworld");
             if (main.CurrentScreen is World.OverworldScreen world)
             {
-                world.RandomEncounters = false;   // scripted walks; the battle below is forced
+                world.RandomEncounters = false;   // scripted walks; the battles below are forced
+                world.TrainerBattles = false;
                 var season = world.Season;
                 world.Zoom = 2.2f;   // far enough out to show Nuvema's houses
                 foreach (var s in Enum.GetValues<Extractor.Extraction.Season>())
@@ -285,6 +286,53 @@ public static class DebugCapture
                     Save("20-nurse");
                     GD.Print($"[capture] nurse at {nurseTile}, player {world.PlayerTile}: talked {talked}; party HP {string.Join(", ", World.OfflineSession.Party.Select(p => $"{p.Hp}/{p.MaxHp}"))}");
                     Press("ui_accept");
+                }
+
+                // Trainer: Youngster Jimmy on Route 2 spots the player, walks up and battles a levelled-up Snivy.
+                const int route2 = 319;
+                if (world.ZoneNpcs(route2).FirstOrDefault(n => n.TrainerId == 1) is { } jimmy)
+                {
+                    var data = World.OfflineSession.Data;
+                    lead.GainExp(Core.Battle.ExpCurve.ForLevel(lead.Species.GrowthRate, 14) - lead.Exp, data);
+                    World.OfflineSession.HealParty();
+                    await Wait(0.5);
+                    var eye = new Vector2I(jimmy.X, jimmy.Y);
+                    world.Teleport(route2, eye + new Vector2I(0, jimmy.Sight + 3));
+                    await Wait(1.2);
+                    world.TrainerBattles = true;
+                    var approach = FindPath(world, world.PlayerTile, t => t.X == eye.X && t.Y > eye.Y && t.Y <= eye.Y + jimmy.Sight);
+                    GD.Print($"[capture] Jimmy at {eye} sight {jimmy.Sight}; walking {approach.Count} steps from {world.PlayerTile}");
+                    foreach (var step in approach)
+                    {
+                        world.TryStep(step);
+                        await Wait(0.35);
+                        if (world.Busy)
+                            break;
+                    }
+                    await Wait(0.4);
+                    Save("21-trainer-spotted");
+                    for (var waited = 0.0; world.CurrentBattle is null && waited < 8; waited += 0.1)
+                        await Wait(0.1);
+                    await Wait(1.6);
+                    Save("22-trainer-battle");
+                    var trainerBattle = world.CurrentBattle?.Battle;
+                    for (var turn = 0; turn < 30 && world.CurrentBattle is not null; turn++)
+                    {
+                        for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                            await Wait(0.1);
+                        await Wait(0.2);
+                        if (world.CurrentBattle is not { Battle.Over: false })
+                            break;
+                        Press("ui_accept");   // Fight
+                        await Wait(0.2);
+                        Press("ui_accept");   // first move
+                        await Wait(0.3);
+                    }
+                    for (var waited = 0.0; world.CurrentBattle is not null && waited < 10; waited += 0.1)
+                        await Wait(0.1);
+                    await Wait(0.6);
+                    Save("23-after-trainer");
+                    GD.Print($"[capture] trainer battle {trainerBattle?.Outcome} vs {trainerBattle?.Trainer?.Title}; money {World.OfflineSession.Money}; beaten {string.Join(",", World.OfflineSession.DefeatedTrainers)}; spotted again: {world.Busy}");
                 }
             }
             main.Back();

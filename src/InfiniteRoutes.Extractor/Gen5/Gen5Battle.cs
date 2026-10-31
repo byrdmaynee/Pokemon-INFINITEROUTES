@@ -64,6 +64,56 @@ public static class Gen5Battle
     }
 
     /// <summary>
+    /// A trainer: its 20-byte (or 16-byte) record — u8 Pokémon data flags (bit 0 custom moves, bit 1 held items),
+    /// class, battle type, Pokémon count, four u16 items, u32 AI flags, u8 ?, u8 prize base — and its Pokémon,
+    /// each u8 difficulty, u8 gender/ability, u8 level, u8 0, u16 species, u16 form, then a u16 held item and
+    /// four u16 moves when the flags say so.
+    /// </summary>
+    public static TrainerInfo DecodeTrainer(int id, ReadOnlySpan<byte> r, ReadOnlySpan<byte> party,
+        IReadOnlyList<string> names, IReadOnlyList<string> classNames)
+    {
+        if (r.Length < 16)
+            throw new InvalidDataException($"Trainer {id} is {r.Length} bytes; expected 16 or 20.");
+        int flags = r[0], trainerClass = r[1], count = r[3];
+        var hasMoves = (flags & 1) != 0;
+        var hasItem = (flags & 2) != 0;
+        var size = 8 + (hasItem ? 2 : 0) + (hasMoves ? 8 : 0);
+        if (party.Length < count * size)
+            throw new InvalidDataException($"Trainer {id}'s party is {party.Length} bytes; {count} Pokémon need {count * size}.");
+
+        var pokemon = new List<TrainerPokemon>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var p = party.Slice(i * size, size);
+            var o = 8;
+            var item = 0;
+            if (hasItem)
+            {
+                item = BinaryPrimitives.ReadUInt16LittleEndian(p[o..]);
+                o += 2;
+            }
+            List<int>? moves = null;
+            if (hasMoves)
+            {
+                moves = new List<int>(4);
+                for (var m = 0; m < 4; m++)
+                    if (BinaryPrimitives.ReadUInt16LittleEndian(p[(o + m * 2)..]) is var move and > 0)
+                        moves.Add(move);
+            }
+            pokemon.Add(new TrainerPokemon(BinaryPrimitives.ReadUInt16LittleEndian(p[4..]), BinaryPrimitives.ReadUInt16LittleEndian(p[6..]),
+                p[2], p[0], p[1], item, moves));
+        }
+
+        var items = new List<int>();
+        for (var i = 0; i < 4; i++)
+            if (BinaryPrimitives.ReadUInt16LittleEndian(r[(4 + i * 2)..]) is var it and > 0)
+                items.Add(it);
+        return new TrainerInfo(id, id < names.Count ? names[id] : $"#{id}", trainerClass,
+            trainerClass < classNames.Count ? classNames[trainerClass] : "", r[2], items,
+            BinaryPrimitives.ReadInt32LittleEndian(r[12..]), r.Length > 17 ? r[17] : 0, pokemon);
+    }
+
+    /// <summary>
     /// An encounter file: one 232-byte set, or four (one per season). A set is 8 rate bytes (grass, double grass,
     /// shaking grass, surf, surf spots, fishing, fishing spots, unused) and then 12 + 12 + 12 + 5 + 5 + 5 + 5 slots of
     /// u16 species (low 11 bits; form above), u8 min level, u8 max level.

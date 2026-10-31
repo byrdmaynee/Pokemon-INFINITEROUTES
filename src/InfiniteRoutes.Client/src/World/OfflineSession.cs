@@ -5,7 +5,8 @@ using InfiniteRoutes.Extractor.Extraction;
 namespace InfiniteRoutes.Client.World;
 
 /// <summary>
-/// The offline test world's game state: battle data from the extracted ROM, the player's party, PC box and Bag.
+/// The offline test world's game state: battle data from the extracted ROM, the player's party, PC box, Bag, money
+/// and the trainers already beaten.
 /// Lives for the whole client session (leaving to the menu and coming back keeps them) until the assets change.
 /// Nothing is saved to disk yet.
 /// </summary>
@@ -24,6 +25,10 @@ public static class OfflineSession
     /// <summary>Caught Pokémon that didn't fit in the party.</summary>
     public static List<Pokemon> Box { get; } = new();
     public static Bag Bag { get; private set; } = new();
+    public static IReadOnlyList<TrainerInfo> Trainers { get; private set; } = [];
+    /// <summary>Trainers already beaten: they don't challenge again.</summary>
+    public static HashSet<int> DefeatedTrainers { get; } = new();
+    public static int Money { get; set; } = 3000;
     public static Random Rng { get; } = new();
 
     /// <summary>Loads the battle data for <paramref name="assets"/> (once) and hands out a starter and items if the party is empty.</summary>
@@ -36,6 +41,8 @@ public static class OfflineSession
                 return false;
             Data = new BattleData(assets.LoadSpecies(), moves, assets.LoadLearnsets(), assets.LoadText("items"));
             Encounters = assets.LoadEncounters();
+            Trainers = assets.LoadTrainers();
+            DefeatedTrainers.Clear();
             Party.Clear();
             Box.Clear();
             _assets = assets;

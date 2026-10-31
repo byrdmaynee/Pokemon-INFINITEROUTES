@@ -38,7 +38,13 @@ public sealed record WarpInfo(int X, int Y, int Width, int Height, int TargetZon
 /// 3 wanders within <see cref="RangeX"/>/<see cref="RangeY"/> of home, others scripted).
 /// </summary>
 public sealed record NpcInfo(int Id, int Sprite, int X, int Y, float Height, Facing Facing, int Movement,
-    int RangeX, int RangeY, int Script, int Flag);
+    int RangeX, int RangeY, int Script, int Flag, int Sight = 0)
+{
+    /// <summary>The trainer this NPC battles as (its script is <see cref="Gen5Layout.TrainerScriptBase"/> + id), or -1.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int TrainerId => Script >= Gen5Layout.TrainerScriptBase && Script < Gen5Layout.TrainerScriptBase + 1000
+        ? Script - Gen5Layout.TrainerScriptBase : -1;
+}
 
 /// <summary>
 /// A zone (named area with its own scripts, warps and NPCs) and the map it lives on. <see cref="Encounters"/> is its
@@ -140,7 +146,7 @@ public static class Gen5WorldExtractor
             // Rail-placed NPCs (coordinate type 1) need rail support first.
             return Gen5Events.ParseNpcs(file).Where(n => n.OnGrid).Select(n => new NpcInfo(n.Id, n.Sprite, n.X, n.Y, n.HeightTiles,
                 n.Direction switch { 0 => Facing.Up, 2 => Facing.Left, 3 => Facing.Right, _ => Facing.Down },
-                n.Movement, n.RangeX, n.RangeY, n.Script, n.Flag)).ToList();
+                n.Movement, n.RangeX, n.RangeY, n.Script, n.Flag, n.Sight)).ToList();
         }
         catch (InvalidDataException)
         {

@@ -167,7 +167,7 @@ public class BattleTests
         var rng = new Random(11);
         var player = Pokemon.Create(data, 495, 9, rng);
         var wild = Pokemon.Create(data, 504, 3, rng);
-        var battle = new WildBattle(data, player, wild, rng);
+        var battle = new SingleBattle(data, player, wild, rng);
         Assert.Equal("A wild Patrat appeared!", ((MessageEvent)battle.Start()[0]).Text);
 
         var events = new List<BattleEvent>();
@@ -197,7 +197,7 @@ public class BattleTests
                 _ => [],
             })).ToList());
         var rng = new Random(5);
-        var battle = new WildBattle(data, Pokemon.Create(data, 4, 20, rng), Pokemon.Create(data, 495, 20, rng), rng);
+        var battle = new SingleBattle(data, Pokemon.Create(data, 4, 20, rng), Pokemon.Create(data, 495, 20, rng), rng);
         var events = battle.Fight(0);
         Assert.Contains(events, e => e is MessageEvent { Text: "It's super effective!" });
         Assert.Contains(events, e => e is MessageEvent { Text: "Charmander's Defense fell!" });
@@ -210,7 +210,7 @@ public class BattleTests
         var data = Data();
         var rng = new Random(2);
         var player = Pokemon.Create(data, 495, 30, rng);
-        var battle = new WildBattle(data, player, Pokemon.Create(data, 504, 2, rng), rng);
+        var battle = new SingleBattle(data, player, Pokemon.Create(data, 504, 2, rng), rng);
         Assert.Contains(battle.Run(), e => e is MessageEvent { Text: "Got away safely!" });
         Assert.Equal(BattleOutcome.Escaped, battle.Outcome);
     }
@@ -224,7 +224,7 @@ public class BattleTests
         var wild = Pokemon.Create(data, 495, 40, rng);
         foreach (var slot in player.Moves)
             slot.Pp = 0;
-        var battle = new WildBattle(data, player, wild, rng);
+        var battle = new SingleBattle(data, player, wild, rng);
         Assert.True(battle.MustStruggle);
         var events = new List<BattleEvent>();
         for (var turn = 0; turn < 20 && !battle.Over; turn++)
@@ -240,7 +240,7 @@ public class BattleTests
         var rng = new Random(3);
         var bag = new Bag();
         bag.Add(ItemEffect.MasterBall);
-        var battle = new WildBattle(data, [Pokemon.Create(data, 495, 5, rng)], bag, Pokemon.Create(data, 504, 3, rng), rng);
+        var battle = new SingleBattle(data, [Pokemon.Create(data, 495, 5, rng)], bag, Pokemon.Create(data, 504, 3, rng), rng);
         var events = battle.UseItem(ItemEffect.MasterBall);
         Assert.Equal(new CatchEvent(ItemEffect.MasterBall, 3, true), events.OfType<CatchEvent>().Single());
         Assert.Equal(BattleOutcome.Caught, battle.Outcome);
@@ -256,7 +256,7 @@ public class BattleTests
                 b.Add(ItemEffect.PokeBall);
                 var wild = Pokemon.Create(data, 504, 3, rng);
                 prepare(wild);
-                if (new WildBattle(data, [Pokemon.Create(data, 495, 50, rng)], b, wild, rng).UseItem(ItemEffect.PokeBall).OfType<CatchEvent>().Single().Caught)
+                if (new SingleBattle(data, [Pokemon.Create(data, 495, 50, rng)], b, wild, rng).UseItem(ItemEffect.PokeBall).OfType<CatchEvent>().Single().Caught)
                     caught++;
             }
             return caught;
@@ -275,7 +275,7 @@ public class BattleTests
         var bag = new Bag();
         bag.Add(ItemEffect.Potion, 2);
         var mon = Pokemon.Create(data, 495, 10, rng);
-        var battle = new WildBattle(data, [mon], bag, Pokemon.Create(data, 504, 2, rng), rng);
+        var battle = new SingleBattle(data, [mon], bag, Pokemon.Create(data, 504, 2, rng), rng);
 
         Assert.Equal([new MessageEvent("It won't have any effect.")], battle.UseItem(ItemEffect.Potion, 0));
         Assert.Equal(2, bag.Count(ItemEffect.Potion));
@@ -300,7 +300,7 @@ public class BattleTests
         var weak = Pokemon.Create(data, 504, 2, rng);
         var strong = Pokemon.Create(data, 495, 30, rng);
         var wild = Pokemon.Create(data, 495, 12, rng);
-        var battle = new WildBattle(data, [weak, strong], new Bag(), wild, rng);
+        var battle = new SingleBattle(data, [weak, strong], new Bag(), wild, rng);
 
         for (var turn = 0; turn < 30 && !battle.NeedsSwitch; turn++)
             battle.Fight(0);
@@ -327,7 +327,7 @@ public class BattleTests
         var rng = new Random(8);
         var a = Pokemon.Create(data, 495, 40, rng);
         var b = Pokemon.Create(data, 495, 40, rng);
-        var battle = new WildBattle(data, [a, b], new Bag(), Pokemon.Create(data, 504, 2, rng), rng);
+        var battle = new SingleBattle(data, [a, b], new Bag(), Pokemon.Create(data, 504, 2, rng), rng);
         var events = battle.Switch(1);
         Assert.Contains(events, e => e is MessageEvent { Text: "Snivy, come back!" });
         Assert.Contains(events, e => e is MessageEvent { Text: "The wild Patrat used Tackle!" } || e is MessageEvent { Text: "The wild Patrat used Leer!" });
@@ -356,11 +356,74 @@ public class BattleTests
     }
 
     [Fact]
+    public void Trainer_record_decodes_party_with_items_and_moves()
+    {
+        var r = new byte[20];
+        r[0] = 3; r[1] = 2; r[3] = 2; r[17] = 4;
+        BinaryPrimitives.WriteUInt16LittleEndian(r.AsSpan(4), 17);
+        BinaryPrimitives.WriteInt32LittleEndian(r.AsSpan(12), 1);
+        var party = new byte[2 * 18];
+        for (var i = 0; i < 2; i++)
+        {
+            var p = party.AsSpan(i * 18);
+            p[0] = 255; p[2] = (byte)(7 + i);
+            BinaryPrimitives.WriteUInt16LittleEndian(p[4..], (ushort)(504 + i));
+            BinaryPrimitives.WriteUInt16LittleEndian(p[8..], 155);   // held item
+            BinaryPrimitives.WriteUInt16LittleEndian(p[10..], 33);
+            BinaryPrimitives.WriteUInt16LittleEndian(p[12..], 43);
+        }
+
+        var t = Gen5Battle.DecodeTrainer(1, r, party, ["", "Jimmy"], ["", "", "Youngster"]);
+        Assert.Equal("Youngster Jimmy", t.Title);
+        Assert.Equal((0, 4, 1), (t.BattleType, t.PrizeBase, t.Ai));
+        Assert.Equal([17], t.Items);
+        Assert.Equal(new TrainerPokemon(505, 0, 8, 255, 0, 155, null) with { Moves = t.Pokemon[1].Moves }, t.Pokemon[1]);
+        Assert.Equal([33, 43], t.Pokemon[0].Moves!);
+        Assert.Throws<InvalidDataException>(() => Gen5Battle.DecodeTrainer(1, r, party.AsSpan(0, 20), [], []));
+
+        // Plain 8-byte entries without moves or items.
+        r[0] = 0; r[3] = 1;
+        var plain = Gen5Battle.DecodeTrainer(2, r, new byte[] { 0, 0, 7, 0, 248, 1, 0, 0 }, [], []);
+        Assert.Equal(new TrainerPokemon(504, 0, 7, 0, 0, 0, null), Assert.Single(plain.Pokemon));
+    }
+
+    [Fact]
+    public void Trainer_battles_send_out_each_pokemon_and_pay_prize_money()
+    {
+        var data = Data();
+        var rng = new Random(12);
+        var trainer = new TrainerInfo(1, "Jimmy", 2, "Youngster", 0, [], 1, 4,
+            [new TrainerPokemon(504, 0, 3, 0, 0, 0, null), new TrainerPokemon(504, 0, 4, 255, 0, 0, [33])]);
+        var foes = SingleBattle.TrainerParty(data, trainer, rng);
+        Assert.Equal(31, foes[1].Ivs[0]);
+        Assert.Equal([33], foes[1].Moves.Select(m => m.Move.Id));
+
+        var bag = new Bag();
+        bag.Add(ItemEffect.PokeBall);
+        var battle = new SingleBattle(data, [Pokemon.Create(data, 495, 30, rng)], bag, foes, trainer, rng);
+        Assert.Equal("You are challenged by Youngster Jimmy!", ((MessageEvent)battle.Start()[0]).Text);
+        Assert.Equal([new MessageEvent("No! There's no running from a Trainer battle!")], battle.Run());
+        Assert.Contains(battle.UseItem(ItemEffect.PokeBall), e => e is MessageEvent { Text: "The Trainer blocked the Ball! Don't be a thief!" });
+        Assert.False(battle.Over);
+
+        var events = new List<BattleEvent>();
+        for (var turn = 0; turn < 20 && !battle.Over; turn++)
+            events.AddRange(battle.Fight(2));
+        Assert.Equal(BattleOutcome.Won, battle.Outcome);
+        Assert.Equal(new SwitchEvent(1, BattleSide.Foe), events.OfType<SwitchEvent>().Single());
+        Assert.Contains(events, e => e is MessageEvent { Text: "Youngster Jimmy sent out Patrat!" });
+        Assert.Contains(events, e => e is MessageEvent { Text: "The foe's Patrat fainted!" });
+        Assert.Equal(4 * 4 * 4, battle.PrizeMoney);
+        Assert.Contains(events, e => e is MessageEvent { Text: "You got ₽64 for winning!" });
+        Assert.Equal(2, events.OfType<ExpEvent>().Count());
+    }
+
+    [Fact]
     public void Exp_yield_scales_with_level_difference()
     {
         var data = Data();
         var rng = new Random(1);
         var wild = Pokemon.Create(data, 504, 5, rng);
-        Assert.True(WildBattle.ExpYield(wild, Pokemon.Create(data, 495, 2, rng)) > WildBattle.ExpYield(wild, Pokemon.Create(data, 495, 20, rng)));
+        Assert.True(SingleBattle.ExpYield(wild, Pokemon.Create(data, 495, 2, rng)) > SingleBattle.ExpYield(wild, Pokemon.Create(data, 495, 20, rng)));
     }
 }
