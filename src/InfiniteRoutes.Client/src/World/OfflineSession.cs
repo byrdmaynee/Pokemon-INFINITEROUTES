@@ -1,14 +1,15 @@
 using InfiniteRoutes.Core.Battle;
 using InfiniteRoutes.Core.Data;
+using InfiniteRoutes.Core.Player;
 using InfiniteRoutes.Extractor.Extraction;
 
 namespace InfiniteRoutes.Client.World;
 
 /// <summary>
-/// The offline test world's game state: battle data from the extracted ROM, the player's party, PC box, Bag, money
-/// and the trainers already beaten.
+/// The offline test world's game state: battle data from the extracted ROM, the player's party, PC box, Bag, progress
+/// (money, badges, trainers beaten), quests, mail, friends and the market.
 /// Lives for the whole client session (leaving to the menu and coming back keeps them) until the assets change.
-/// Nothing is saved to disk yet.
+/// Nothing is saved to disk yet. Friends and market sellers are sample data until the server exists (M4/M5).
 /// </summary>
 public static class OfflineSession
 {
@@ -16,6 +17,8 @@ public static class OfflineSession
     const int StarterSpecies = 495;
     const int StarterLevel = 5;
     public const int PartySize = 6;
+    public const string PlayerName = "Player";
+    const string Juniper = "Prof. Juniper", MarketDesk = "Global Market", QuestDesk = "Quest Board";
 
     static GameAssets? _assets;
 
@@ -26,9 +29,14 @@ public static class OfflineSession
     public static List<Pokemon> Box { get; } = new();
     public static Bag Bag { get; private set; } = new();
     public static IReadOnlyList<TrainerInfo> Trainers { get; private set; } = [];
+    public static PlayerProgress Progress { get; private set; } = new();
     /// <summary>Trainers already beaten: they don't challenge again.</summary>
-    public static HashSet<int> DefeatedTrainers { get; } = new();
-    public static int Money { get; set; } = 3000;
+    public static HashSet<int> DefeatedTrainers => Progress.DefeatedTrainers;
+    public static int Money { get => Progress.Money; set => Progress.Money = value; }
+    public static QuestLog Quests { get; private set; } = new([]);
+    public static Mailbox Mail { get; private set; } = new();
+    public static FriendList Friends { get; private set; } = new();
+    public static Market Market { get; private set; } = new();
     public static Random Rng { get; } = new();
 
     /// <summary>Loads the battle data for <paramref name="assets"/> (once) and hands out a starter and items if the party is empty.</summary>
@@ -42,23 +50,37 @@ public static class OfflineSession
             Data = new BattleData(assets.LoadSpecies(), moves, assets.LoadLearnsets(), assets.LoadText("items"));
             Encounters = assets.LoadEncounters();
             Trainers = assets.LoadTrainers();
-            DefeatedTrainers.Clear();
             Party.Clear();
             Box.Clear();
             _assets = assets;
         }
         if (Party.Count == 0)
-        {
-            Party.Add(Pokemon.Create(Data, StarterSpecies, StarterLevel, Rng));
-            Bag = new Bag();
-            Bag.Add(ItemEffect.PokeBall, 10);
-            Bag.Add(ItemEffect.GreatBall, 3);
-            Bag.Add(ItemEffect.Potion, 5);
-            Bag.Add(ItemEffect.Antidote, 2);
-            Bag.Add(ItemEffect.ParlyzHeal, 2);
-            Bag.Add(ItemEffect.ReviveItem, 1);
-        }
+            NewGame();
         return true;
+    }
+
+    static void NewGame()
+    {
+        var now = DateTime.Now;
+        Party.Add(Pokemon.Create(Data, StarterSpecies, StarterLevel, Rng));
+        Bag = new Bag();
+        Bag.Add(ItemEffect.PokeBall, 10);
+        Bag.Add(ItemEffect.GreatBall, 3);
+        Bag.Add(ItemEffect.Potion, 5);
+        Bag.Add(ItemEffect.Antidote, 2);
+        Bag.Add(ItemEffect.ParlyzHeal, 2);
+        Bag.Add(ItemEffect.ReviveItem, 1);
+        Progress = new PlayerProgress { PartyCount = Party.Count };
+        Quests = new QuestLog(StarterQuests.Unova(Trainers));
+        foreach (var id in StarterQuests.Initial)
+            Quests.Start(id, Progress, now);
+        Mail = new Mailbox();
+        Mail.Send(Juniper, "Welcome to Unova!",
+            $"Hello, {PlayerName}! {Party[0].Name} is yours now. Take good care of each other.\n\nYour quests are in the menu (X → Quests): the one you track shows at the top right. Rewards arrive here in your Mail, so check back after finishing one.\n\nI've enclosed a little something for the road.",
+            now, new MailAttachment(Money: 500), new MailAttachment(Item: ItemEffect.Potion, Count: 3));
+        Friends = SampleFriends(now);
+        Market = new Market();
+        SeedMarket(now);
     }
 
     /// <summary>The first Pokémon that can still fight, or null when all have fainted.</summary>
@@ -80,5 +102,217 @@ public static class OfflineSession
     {
         foreach (var mon in Party)
             mon.HealFully();
+    }
+
+    /// <summary>Records a finished battle: prize money, trainers and badges, catches. Returns lines to show the player.</summary>
+    public static List<string> RecordBattle(SingleBattle battle)
+    {
+        var lines = new List<string>();
+        switch (battle.Outcome)
+        {
+            case BattleOutcome.Won when battle.Trainer is { } trainer:
+                Money += battle.PrizeMoney;
+                if (Progress.Defeated(trainer, DateTime.Now) is { } badge)
+                    lines.Add($"You received the {badge.Name} from Leader {trainer.Name}!");
+                break;
+            case BattleOutcome.Won:
+                Progress.WildWins++;
+                break;
+            case BattleOutcome.Caught:
+                Progress.Caught++;
+                lines.Add(Keep(battle.Foe.Mon));
+                break;
+        }
+        return lines;
+    }
+
+    public static void RecordCenterVisit()
+    {
+        HealParty();
+        Progress.CenterVisits++;
+    }
+
+    /// <summary>
+    /// Finishes quests whose objectives are met and mails their rewards. Returns one line per finished quest, for a
+    /// toast. Also settles the market (expired listings, sample buyers).
+    /// </summary>
+    public static List<string> CheckQuests()
+    {
+        var now = DateTime.Now;
+        Progress.PartyCount = Party.Count;
+        var lines = new List<string>();
+        foreach (var quest in Quests.Update(Progress, now))
+        {
+            var attachments = new List<MailAttachment>();
+            if (quest.Reward.Money > 0)
+                attachments.Add(new MailAttachment(Money: quest.Reward.Money));
+            attachments.AddRange(quest.Reward.ItemList.Select(i => new MailAttachment(Item: i.Item, Count: i.Count)));
+            Mail.Send(QuestDesk, $"Quest complete: {quest.Title}", $"Well done! You completed \"{quest.Title}\". Your reward is attached.", now, [.. attachments]);
+            lines.Add($"Quest complete: {quest.Title}");
+        }
+        SettleMarket(now);
+        return lines;
+    }
+
+    /// <summary>Collects a letter's attachments into the wallet, Bag and party. Returns what was received.</summary>
+    public static string Claim(MailMessage message)
+    {
+        var got = new List<string>();
+        foreach (var a in Mail.Claim(message))
+        {
+            if (a.Money > 0)
+            {
+                Money += a.Money;
+                got.Add($"₽{a.Money:N0}");
+            }
+            if (a.Item > 0 && a.Count > 0)
+            {
+                Bag.Add(a.Item, a.Count);
+                got.Add($"{Data.ItemName(a.Item)} ×{a.Count}");
+            }
+            if (a.Pokemon is { } mon)
+                got.Add(Keep(mon));
+        }
+        return got.Count == 0 ? "Nothing to collect." : "Received " + string.Join(", ", got) + ".";
+    }
+
+    // ── Market ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    public static string ListingName(MarketListing l) =>
+        l.Kind == ListingKind.Pokemon && l.Pokemon is { } mon ? $"{mon.Name} Lv{mon.Level}" : $"{Data.ItemName(l.Item)} ×{l.Count}";
+
+    /// <summary>Roughly what something is worth, for sample listings and to guide the player's prices.</summary>
+    public static int SuggestedPrice(ListingKind kind, int item, int count, Pokemon? mon)
+    {
+        if (kind == ListingKind.Pokemon && mon is not null)
+            return (mon.Species.Stats.Total * 4 + mon.Level * 120) * (mon.Shiny ? 10 : 1);
+        var each = item switch
+        {
+            ItemEffect.MasterBall => 50000, ItemEffect.UltraBall => 1200, ItemEffect.GreatBall => 600, ItemEffect.PokeBall => 200,
+            ItemEffect.Potion => 300, ItemEffect.SuperPotion => 700, ItemEffect.HyperPotion => 1200, ItemEffect.MaxPotion => 2500,
+            ItemEffect.FullRestore => 3000, ItemEffect.ReviveItem => 1500, ItemEffect.MaxRevive => 4000, ItemEffect.FullHeal => 600,
+            _ => 250,
+        };
+        return each * Math.Max(1, count);
+    }
+
+    public static string Buy(MarketListing listing)
+    {
+        var money = Money;
+        var result = Market.Buy(listing.Id, PlayerName, ref money, DateTime.Now, out var bought);
+        Money = money;
+        if (result != BuyResult.Bought || bought is null)
+            return result switch
+            {
+                BuyResult.NotEnoughMoney => $"You need ₽{listing.Price:N0} but have ₽{Money:N0}.",
+                BuyResult.OwnListing => "That's your own listing.",
+                _ => "That listing is gone.",
+            };
+        Mail.Send(MarketDesk, $"Purchase: {ListingName(bought)}", $"You bought {ListingName(bought)} from {bought.Seller} for ₽{bought.Price:N0}.",
+            DateTime.Now, Goods(bought));
+        return $"Bought {ListingName(bought)} for ₽{bought.Price:N0}. It's waiting in your Mail.";
+    }
+
+    /// <summary>Lists <paramref name="count"/> of a Bag item. Returns a message for the player.</summary>
+    public static string SellItem(int item, int count, int price, int days)
+    {
+        if (count <= 0 || Bag.Count(item) < count)
+            return "You don't have that many.";
+        var fee = Market.ListingFee(price);
+        if (Money < fee)
+            return $"The listing fee is ₽{fee:N0}.";
+        if (Market.List(PlayerName, ListingKind.Item, item, count, null, price, days, DateTime.Now, out _) is { } error)
+            return error;
+        for (var i = 0; i < count; i++)
+            Bag.Take(item);
+        Money -= fee;
+        return $"Listed {Data.ItemName(item)} ×{count} for ₽{price:N0} (fee ₽{fee:N0}). Proceeds arrive by mail when it sells.";
+    }
+
+    /// <summary>Lists a party Pokémon (never the last one). Returns a message for the player.</summary>
+    public static string SellPokemon(Pokemon mon, int price, int days)
+    {
+        if (Party.Count <= 1 || !Party.Contains(mon))
+            return "You can't list your last Pokémon.";
+        var fee = Market.ListingFee(price);
+        if (Money < fee)
+            return $"The listing fee is ₽{fee:N0}.";
+        if (Market.List(PlayerName, ListingKind.Pokemon, 0, 1, mon, price, days, DateTime.Now, out _) is { } error)
+            return error;
+        Party.Remove(mon);
+        Money -= fee;
+        return $"Listed {mon.Name} Lv{mon.Level} for ₽{price:N0} (fee ₽{fee:N0}).";
+    }
+
+    public static string CancelListing(MarketListing listing)
+    {
+        if (Market.Cancel(listing.Id, PlayerName) is not { } cancelled)
+            return "That listing is gone.";
+        Mail.Send(MarketDesk, $"Listing cancelled: {ListingName(cancelled)}", "Your listing was taken down. Your goods are attached; the listing fee isn't refunded.",
+            DateTime.Now, Goods(cancelled));
+        return $"Cancelled. {ListingName(cancelled)} is waiting in your Mail.";
+    }
+
+    static MailAttachment Goods(MarketListing l) =>
+        l.Kind == ListingKind.Pokemon ? new MailAttachment(Pokemon: l.Pokemon) : new MailAttachment(Item: l.Item, Count: l.Count);
+
+    /// <summary>
+    /// Returns expired listings by mail. Offline there are no other players, so a sample buyer takes the player's
+    /// fairly priced listings (up to 25% over the suggested price) after two minutes.
+    /// </summary>
+    static void SettleMarket(DateTime now)
+    {
+        foreach (var l in Market.Expire(now))
+            if (l.Seller == PlayerName)
+                Mail.Send(MarketDesk, $"Unsold: {ListingName(l)}", "Your listing ended without a buyer. Your goods are attached.", now, Goods(l));
+        foreach (var l in Market.Listings.Where(l => l.Seller == PlayerName && now - l.Listed >= TimeSpan.FromMinutes(2)
+                     && l.Price <= SuggestedPrice(l.Kind, l.Item, l.Count, l.Pokemon) * 5 / 4).ToList())
+        {
+            var buyer = SampleSellers[Rng.Next(SampleSellers.Length)];
+            var cash = int.MaxValue;
+            if (Market.Buy(l.Id, buyer, ref cash, now, out _) != BuyResult.Bought)
+                continue;
+            var proceeds = Market.Proceeds(l.Price);
+            Mail.Send(MarketDesk, $"Sold: {ListingName(l)}", $"{buyer} bought your {ListingName(l)} for ₽{l.Price:N0}. After the 5% sales tax you receive ₽{proceeds:N0}.",
+                now, new MailAttachment(Money: proceeds));
+        }
+    }
+
+    static readonly string[] SampleSellers = ["Kestrel", "Mako", "Juno_W", "BerryBroker", "Tamsin", "Orrin-77", "Vesper", "Calloway"];
+
+    static void SeedMarket(DateTime now)
+    {
+        int[] items = [ItemEffect.PokeBall, ItemEffect.GreatBall, ItemEffect.UltraBall, ItemEffect.Potion, ItemEffect.SuperPotion,
+            ItemEffect.HyperPotion, ItemEffect.FullHeal, ItemEffect.ReviveItem, ItemEffect.MaxRevive];
+        for (var i = 0; i < 14; i++)
+        {
+            var item = items[Rng.Next(items.Length)];
+            var count = Rng.Next(1, 11);
+            Seed(ListingKind.Item, item, count, null);
+        }
+        // Pokémon from the Unova dex (Snivy 495 … Genesect 649), skipping legendaries at the end.
+        for (var i = 0; i < 12; i++)
+        {
+            var species = Rng.Next(495, 638);
+            var mon = Pokemon.Create(Data, species, Rng.Next(5, 36), Rng);
+            Seed(ListingKind.Pokemon, 0, 1, mon);
+        }
+
+        void Seed(ListingKind kind, int item, int count, Pokemon? mon)
+        {
+            var price = SuggestedPrice(kind, item, count, mon) * Rng.Next(80, 141) / 100;
+            Market.List(SampleSellers[Rng.Next(SampleSellers.Length)], kind, item, count, mon, Math.Max(1, price), Rng.Next(1, 8),
+                now.AddMinutes(-Rng.Next(1, 600)), out _);
+        }
+    }
+
+    static FriendList SampleFriends(DateTime now)
+    {
+        var friends = new FriendList();
+        friends.Set(new Friend("Kestrel", FriendState.Online, "Unova", 1, "Castelia City", Note: "sample"));
+        friends.Set(new Friend("Mako", FriendState.Away, "Unova", 2, "Route 4", Note: "sample"));
+        friends.Set(new Friend("Tamsin", FriendState.Offline, "Unova", LastSeen: now.AddHours(-5), Note: "sample"));
+        friends.Set(new Friend("Orrin-77", FriendState.RequestReceived, Note: "sample"));
+        return friends;
     }
 }

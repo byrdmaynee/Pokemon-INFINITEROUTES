@@ -18,7 +18,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 | Arrows / WASD | Walk one tile per press; hold to keep walking |
 | Shift (held) | Run |
 | Z / Enter / Space | Talk to the NPC you face; press again (or Esc) to close. In battle: choose, or skip a message |
-| X | Party and Bag menu (X or Esc closes it) |
+| X | Game menu: Party, Bag, Badges, Quests, Mail, Friends, Market, Trainer Card (Q / E switch tabs; X or Esc closes) |
 | Mouse wheel | Zoom (0.5×–4×) |
 | F3 | Collision overlay: red blocked, blue warp, green tall grass |
 | F4 | Next season |
@@ -115,9 +115,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] When your Pokémon faints and you have another, you must pick the next one (Esc does nothing); the
       battle carries on. Only when all have fainted do you black out.
 - [ ] EXP goes to every Pokémon that was sent out and is still standing, split between them.
-- [ ] X in the overworld: party (icon, level, HP, status, moves) and Bag. Pick Potion → a Pokémon to heal
-      it; pick a Pokémon on its own to make it lead the next battle. X or Esc closes; you can't walk
-      while it is open.
+- [ ] X in the overworld opens the menu on the Party tab (icon, level, HP, status, moves, stats). Bag tab:
+      pick Potion → it jumps to Party to choose who to heal; pick a Pokémon on its own to make it lead the
+      next battle. X or Esc closes; you can't walk while it is open.
 - [ ] Pokémon Center (e.g. Accumula Town): talk to the nurse in the middle of the counter → "Your
       Pokémon have been restored to full health" and HP, PP and status are all restored.
 
@@ -136,6 +136,32 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] A beaten trainer never challenges again; talking to them shows a placeholder line.
 - [ ] Losing to a trainer blacks out like a wild battle.
 
+## Menu: badges, quests, mail, friends, market
+
+- [ ] Top right of the screen: the tracked quest with its objectives, then "Badges n/8 · ₽money · ✉ n new".
+      A new game tracks "A New Partner" (catch a wild Pokémon).
+- [ ] Finishing a quest (catch something, heal at a Center, beat Jimmy…) pops "Quest complete: …" at the
+      top; the story moves on (A New Partner → Trainer's Debut → The Striaton Gym → … → Road to the League).
+- [ ] Badges tab: eight Unova badges with city, leader and type; earned ones are in colour with the date.
+      Beating a gym leader shows "You received the … Badge from Leader …!".
+- [ ] Quests tab: Story / Side / Daily lists, completed ones below. Picking one shows its description,
+      objectives with progress bars and its reward. "Track on HUD" changes the top-right tracker; side and
+      daily quests can be abandoned, story quests can't. Daily quests come back the next day.
+- [ ] Mail tab: a welcome letter from Prof. Juniper, plus one per finished quest and market deal. Unread
+      ones are marked ●, [+] means something is attached. Collect adds money, items or Pokémon; letters
+      with uncollected attachments can't be deleted. Writing letters is greyed out (needs the server).
+- [ ] Friends tab: sample friends with online / away / offline state, location and channel. Accept or
+      decline the pending request; send a request by name (bad names are refused); Remove, Ignore and
+      Unignore work. Whisper / Trade / Battle are greyed out (needs the server).
+- [ ] Market tab → Browse: ~26 sample listings (items and Pokémon with nature, gender and IVs); filter
+      by kind, sort by price / newest / ending soon, search by name. Buy takes the money and the goods
+      arrive by mail. Listings you can't afford are greyed out.
+- [ ] Market → Sell: pick a Bag item or party Pokémon, set quantity, price and 1–7 days; the fee (2%) and
+      what you'd get after the 5% tax update as you type. It leaves your Bag/party; My listings shows it
+      and Cancel mails it back. Offline, a fairly priced listing (≤ 125% of suggested) "sells" after about
+      two minutes and the proceeds arrive by mail.
+- [ ] Trainer Card tab: money, badges, catches, trainers beaten, quests done, play time, badge row and party.
+
 ## Things that are expected to be missing (not bugs yet)
 
 - Frame-swap animations (swaying flowers, blinking lights) and animated objects are still static.
@@ -145,5 +171,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
   special effects beyond damage, status and stat changes just deal damage. A fifth move is skipped with a
   message instead of asking which to forget. The battle background is a placeholder.
 - Other Pokémon Center staff and shop clerks only show their script number. No PC to move Pokémon around.
-- No saving or other players.
+- No saving or other players. Friends and market sellers are sample data; mail between players,
+  whispers, trades, price history and IV/EV market filters need the server. Badges are drawn shapes,
+  not the ROM's badge art, and quests are a starter set rather than ROM story flags.
 - No sound or music.

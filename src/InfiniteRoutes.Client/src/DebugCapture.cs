@@ -334,6 +334,59 @@ public static class DebugCapture
                     Save("23-after-trainer");
                     GD.Print($"[capture] trainer battle {trainerBattle?.Outcome} vs {trainerBattle?.Trainer?.Title}; money {World.OfflineSession.Money}; beaten {string.Join(",", World.OfflineSession.DefeatedTrainers)}; spotted again: {world.Busy}");
                 }
+
+                // Gym: a levelled-up Snivy takes on Striaton's Chili for the Trio Badge, which finishes the story quests.
+                Press("ui_accept");
+                await Wait(0.3);
+                if (World.OfflineSession.Trainers.FirstOrDefault(t => t.Name == "Chili" && t.ClassName == "Leader") is { } chili)
+                {
+                    lead.GainExp(Core.Battle.ExpCurve.ForLevel(lead.Species.GrowthRate, 40) - lead.Exp, World.OfflineSession.Data);
+                    World.OfflineSession.HealParty();
+                    world.StartTrainerBattle(chili);
+                    await Wait(1.5);
+                    var gym = world.CurrentBattle?.Battle;
+                    for (var turn = 0; turn < 30 && world.CurrentBattle is not null; turn++)
+                    {
+                        for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                            await Wait(0.1);
+                        await Wait(0.2);
+                        if (world.CurrentBattle is not { Battle.Over: false })
+                            break;
+                        Press("ui_accept");
+                        await Wait(0.2);
+                        Press("ui_accept");
+                        await Wait(0.3);
+                    }
+                    for (var waited = 0.0; world.CurrentBattle is not null && waited < 10; waited += 0.1)
+                        await Wait(0.1);
+                    await Wait(0.8);
+                    Save("24-badge");
+                    var p = World.OfflineSession.Progress;
+                    GD.Print($"[capture] gym {gym?.Outcome}: badges {string.Join(",", p.Badges.Keys)}; quests active {string.Join(", ", World.OfflineSession.Quests.Active.Select(q => q.Info.Id))}; done {string.Join(", ", World.OfflineSession.Quests.Completed.Select(c => c.Quest.Id))}; mail {World.OfflineSession.Mail.Messages.Count} ({World.OfflineSession.Mail.Unread} unread)");
+                    Press("ui_accept");
+                    await Wait(0.3);
+                }
+
+                // The X menu, one tab at a time.
+                world.ToggleMenu();
+                await Wait(0.4);
+                if (world.Menu is { } menu)
+                {
+                    foreach (var tab in Enum.GetValues<World.GameMenu.Tab>())
+                    {
+                        menu.Show(tab);
+                        await Wait(0.3);
+                        if (tab == World.GameMenu.Tab.Mail)
+                        {
+                            Press("ui_accept");   // open the newest letter
+                            await Wait(0.3);
+                        }
+                        Save($"25-menu-{tab.ToString().ToLowerInvariant()}");
+                    }
+                    GD.Print($"[capture] market {World.OfflineSession.Market.Listings.Count} listings; friends {World.OfflineSession.Friends.Friends.Count()}; mail unread {World.OfflineSession.Mail.Unread}");
+                    world.ToggleMenu();
+                    await Wait(0.3);
+                }
             }
             main.Back();
         }

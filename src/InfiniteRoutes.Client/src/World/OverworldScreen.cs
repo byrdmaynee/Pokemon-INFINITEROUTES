@@ -47,7 +47,10 @@ public partial class OverworldScreen : Control
     MeshInstance3D? _overlay;
     BattleScreen? _battle;
 
-    PartyMenu? _menu;
+    GameMenu? _menu;
+    Label _questHud = null!;
+    Label _toast = null!;
+    Tween? _toastTween;
     /// <summary>False when the cache has no battle data (extracted before 0.6.0): no encounters then.</summary>
     bool _battles;
     float _zoom = 1;
@@ -108,7 +111,32 @@ public partial class OverworldScreen : Control
         });
         AddChild(_hud);
         _hud.Position = new Vector2(16, 16);
-        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · X: party & bag · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
+        // Top right: the tracked quest and unread mail. Top centre: a toast for finished quests and new badges.
+        _questHud = Ui.Ui.Text("", 15);
+        _questHud.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+        {
+            BgColor = new Color(0, 0, 0, 0.55f), ContentMarginLeft = 12, ContentMarginRight = 12, ContentMarginTop = 8, ContentMarginBottom = 8,
+            BorderColor = new Color(0.95f, 0.76f, 0.31f, 0.8f), BorderWidthLeft = 3,
+        });
+        _questHud.HorizontalAlignment = HorizontalAlignment.Left;
+        AddChild(_questHud);
+        _questHud.SetAnchorsAndOffsetsPreset(LayoutPreset.TopRight);
+        _questHud.GrowHorizontal = GrowDirection.Begin;
+        _questHud.OffsetRight = -16;
+        _questHud.OffsetTop = 16;
+        _toast = Ui.Ui.Text("", 20, Ui.Ui.Accent);
+        _toast.AddThemeStyleboxOverride("normal", new StyleBoxFlat
+        {
+            BgColor = new Color(0.08f, 0.09f, 0.13f, 0.92f), ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 10, ContentMarginBottom = 10,
+            CornerRadiusTopLeft = 8, CornerRadiusTopRight = 8, CornerRadiusBottomLeft = 8, CornerRadiusBottomRight = 8,
+        });
+        _toast.HorizontalAlignment = HorizontalAlignment.Center;
+        _toast.Modulate = Colors.Transparent;
+        AddChild(_toast);
+        _toast.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterTop);
+        _toast.GrowHorizontal = GrowDirection.Both;
+        _toast.OffsetTop = 70;
+        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · X: menu · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
         AddChild(help);
         help.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomLeft);
         help.Position = new Vector2(16, -36);
@@ -476,6 +504,12 @@ public partial class OverworldScreen : Control
     {
         if (TrainerFor(npc) is not { } trainer)
             return;
+        StartTrainerBattle(trainer);
+    }
+
+    /// <summary>Starts a battle with <paramref name="trainer"/>'s team wherever the player is (smoke tests use it for gym leaders).</summary>
+    public void StartTrainerBattle(Core.Data.TrainerInfo trainer)
+    {
         var team = Core.Battle.SingleBattle.TrainerParty(OfflineSession.Data, trainer, OfflineSession.Rng);
         if (team.Count == 0 || OfflineSession.Lead is null)
             return;
@@ -544,17 +578,13 @@ public partial class OverworldScreen : Control
         await ToSignal(fadeOut, Tween.SignalName.Finished);
         if (!IsInstanceValid(this))
             return;
-        var caught = _battle?.Battle is { Outcome: Core.Battle.BattleOutcome.Caught } b ? b.Foe.Mon : null;
-        if (_battle?.Battle is { Outcome: Core.Battle.BattleOutcome.Won, Trainer: { } beaten } won)
-        {
-            OfflineSession.DefeatedTrainers.Add(beaten.Id);
-            OfflineSession.Money += won.PrizeMoney;
-        }
+        var lines = _battle?.Battle is { } finished ? OfflineSession.RecordBattle(finished) : [];
         _battle?.QueueFree();
         _battle = null;
 
-        if (caught is not null)
-            ShowMessage(OfflineSession.Keep(caught));
+        if (lines.Count > 0)
+            ShowMessage(string.Join("\n", lines));
+        CheckQuests();
         if ((Core.Battle.BattleOutcome)outcome == Core.Battle.BattleOutcome.Lost)
         {
             // Black out back home to Nuvema Town, fully healed (the games use the last Pokémon Center visited).
@@ -688,8 +718,9 @@ public partial class OverworldScreen : Control
         }
         if (npc.Info.Script == NurseScript && _battles)
         {
-            OfflineSession.HealParty();
+            OfflineSession.RecordCenterVisit();
             ShowMessage("Welcome to the Pokémon Center!\nYour Pokémon have been restored to full health. We hope to see you again!");
+            CheckQuests();
             return true;
         }
         ShowMessage($"…\n[NPC {npc.Info.Id} · script {npc.Info.Script} · sprite {npc.Info.Sprite}: dialogue arrives with the script engine]");
@@ -705,24 +736,75 @@ public partial class OverworldScreen : Control
         _dialog.Visible = true;
     }
 
-    /// <summary>The X menu: party and Bag, or closes it if open. Public so smoke tests can open it.</summary>
-    public void ToggleMenu()
+    /// <summary>The X menu (party, Bag, badges, quests, mail, friends, market), or closes it if open. Public so smoke tests can open it.</summary>
+    public void ToggleMenu(GameMenu.Tab tab = GameMenu.Tab.Party)
     {
         if (_menu is not null)
         {
             _menu.QueueFree();
             _menu = null;
+            CheckQuests();
             return;
         }
         if (!_battles || _moving || _dialog.Visible || _battle is not null)
             return;
-        _menu = new PartyMenu(_assets);
-        _menu.Closed += () => _menu = null;
+        CheckQuests();
+        _menu = new GameMenu(_assets, tab);
+        _menu.Closed += () =>
+        {
+            _menu = null;
+            CheckQuests();
+        };
         AddChild(_menu);
         MoveChild(_fade, -1);
     }
 
     public bool MenuOpen => _menu is not null;
+    public GameMenu? Menu => _menu;
+
+    /// <summary>Finishes quests that are done (their rewards go to the mail), toasts them and refreshes the tracker.</summary>
+    void CheckQuests()
+    {
+        if (!_battles)
+            return;
+        var lines = OfflineSession.CheckQuests();
+        if (lines.Count > 0)
+            Toast(string.Join("\n", lines) + "\nRewards are in your Mail (X → Mail).");
+        UpdateQuestHud();
+    }
+
+    void Toast(string text)
+    {
+        _toast.Text = text;
+        _toastTween?.Kill();
+        _toastTween = CreateTween();
+        _toastTween.TweenProperty(_toast, "modulate", Colors.White, 0.25);
+        _toastTween.TweenInterval(4);
+        _toastTween.TweenProperty(_toast, "modulate", Colors.Transparent, 0.6);
+    }
+
+    void UpdateQuestHud()
+    {
+        _questHud.Visible = _battles;
+        if (!_battles)
+            return;
+        var p = OfflineSession.Progress;
+        var lines = new List<string>();
+        if (OfflineSession.Quests.Tracked is { } quest)
+        {
+            lines.Add($"◆ {quest.Info.Title}");
+            for (var i = 0; i < quest.Info.Objectives.Count; i++)
+            {
+                var o = quest.Info.Objectives[i];
+                var n = quest.Progress(i, p);
+                lines.Add(o.Count > 1 ? $"   {o.Text}  {n}/{o.Count}" : $"   {(n >= o.Count ? "✓" : "○")} {o.Text}");
+            }
+        }
+        else
+            lines.Add("No active quests");
+        lines.Add($"Badges {p.Badges.Count}/8   ·   ₽{p.Money:N0}" + (OfflineSession.Mail.Unread > 0 ? $"   ·   ✉ {OfflineSession.Mail.Unread} new" : ""));
+        _questHud.Text = string.Join("\n", lines);
+    }
 
     NpcActor? NpcAt(Vector2I t)
     {
@@ -938,5 +1020,6 @@ public partial class OverworldScreen : Control
     {
         var name = LocationAt(_tile) is { Length: > 0 } location ? location : "Unova";
         _hud.Text = $"{name}   ·   {_season}   ·   tile {_tile.X}, {_tile.Y}";
+        UpdateQuestHud();
     }
 }
