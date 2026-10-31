@@ -10,6 +10,12 @@ public static class Gen5Layout
     public const string StoryText = "a/0/0/3";
     public const string BattleSprites = "a/0/0/4";
     public const string Personal = "a/0/1/6";
+    /// <summary>Level-up learnsets, one per personal record (see <see cref="Gen5Battle.DecodeLearnset"/>).</summary>
+    public const string Learnsets = "a/0/1/8";
+    /// <summary>Move data, 36 bytes per move (see <see cref="Gen5Battle.DecodeMove"/>).</summary>
+    public const string Moves = "a/0/2/1";
+    /// <summary>Wild encounter tables, indexed by the zone header (see <see cref="Gen5Battle.DecodeEncounters"/>).</summary>
+    public const string Encounters = "a/1/2/6";
 
     public const string MapChunks = "a/0/0/8";
     public const string MapMatrices = "a/0/0/9";
@@ -54,6 +60,8 @@ public static class Gen5Layout
     {
         public const int Area = 0x02;
         public const int Matrix = 0x04;
+        /// <summary>u16 index into <see cref="Encounters"/>; 0xFFFF for no wild Pokémon.</summary>
+        public const int Encounters = 0x14;
         public const int Events = 0x16;
         public const int Parent = 0x18;
         public const int LocationName = 0x1A;

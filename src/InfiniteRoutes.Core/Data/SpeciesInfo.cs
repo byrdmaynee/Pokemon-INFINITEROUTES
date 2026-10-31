@@ -26,4 +26,13 @@ public sealed record SpeciesInfo(
     int BaseExp,
     int HeightDecimetres,
     int WeightHectograms,
-    int FormCount);
+    int FormCount,
+    IReadOnlyList<int>? TypeIds = null)
+{
+    /// <summary>
+    /// Wild Pokémon gender: genderless (255), always female (254), always male (0), else female when a
+    /// random byte is below the ratio.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsGenderless => GenderRatio == 255;
+}

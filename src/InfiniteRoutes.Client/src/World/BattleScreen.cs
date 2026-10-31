@@ -1,0 +1,466 @@
+using Godot;
+using InfiniteRoutes.Core.Battle;
+using InfiniteRoutes.Core.Data;
+using InfiniteRoutes.Extractor.Extraction;
+
+namespace InfiniteRoutes.Client.World;
+
+/// <summary>
+/// A wild battle drawn over the overworld: the wild Pokémon on the far platform, the player's from behind on the
+/// near one, info boxes with HP (and EXP for the player's), a message box, and the Fight / Bag / Pokémon / Run
+/// menu. Turns run in <see cref="WildBattle"/>; this screen plays back its events in order.
+/// </summary>
+public partial class BattleScreen : Control
+{
+    const float MessageSeconds = 1.1f;
+    const float HpSeconds = 0.55f;
+
+    [Signal]
+    public delegate void FinishedEventHandler(int outcome);
+
+    readonly WildBattle _battle;
+    readonly GameAssets _assets;
+    readonly IReadOnlyList<string> _typeNames;
+
+    TextureRect _foeSprite = null!, _playerSprite = null!;
+    InfoBox _foeBox = null!, _playerBox = null!;
+    Label _message = null!;
+    GridContainer _commands = null!, _moves = null!;
+    bool _busy;
+    bool _skip;
+
+    public WildBattle Battle => _battle;
+
+    /// <summary>True while events are playing back (the menu is hidden).</summary>
+    public bool Busy => _busy;
+
+    // Godot needs a parameterless constructor to recreate script instances.
+    public BattleScreen() : this(null!, null!) { }
+
+    public BattleScreen(WildBattle battle, GameAssets assets)
+    {
+        _battle = battle;
+        _assets = assets;
+        _typeNames = assets?.LoadText("types") ?? [];
+    }
+
+    public override void _Ready()
+    {
+        SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        MouseFilter = MouseFilterEnum.Stop;
+
+        _foeSprite = Sprite(_assets.BattleSpritePath(_battle.Foe.Mon.Species.Id, _battle.Foe.Mon.Shiny ? "front-shiny" : "front"), 2.6f);
+        _playerSprite = Sprite(_assets.BattleSpritePath(_battle.Player.Mon.Species.Id, _battle.Player.Mon.Shiny ? "back-shiny" : "back"), 3.2f);
+
+        _foeBox = new InfoBox(_battle.Foe.Mon, showNumbers: false);
+        AddChild(_foeBox);
+        _playerBox = new InfoBox(_battle.Player.Mon, showNumbers: true);
+        AddChild(_playerBox);
+
+        var bottom = new PanelContainer();
+        bottom.AddThemeStyleboxOverride("panel", Box(new Color(0.12f, 0.16f, 0.22f), new Color(0.9f, 0.55f, 0.25f), 3));
+        AddChild(bottom);
+        bottom.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomWide);
+        bottom.OffsetTop = -150;
+        var row = Ui.Ui.HBox(16);
+        bottom.AddChild(row);
+        _message = Ui.Ui.Text("", 24, wrap: true);
+        _message.CustomMinimumSize = new Vector2(0, 110);
+        row.AddChild(_message);
+
+        _commands = new GridContainer { Columns = 2, Visible = false };
+        _commands.AddThemeConstantOverride("h_separation", 8);
+        _commands.AddThemeConstantOverride("v_separation", 8);
+        _commands.AddChild(Command("Fight", new Color(0.85f, 0.3f, 0.25f), ShowMoves));
+        _commands.AddChild(Command("Bag", new Color(0.85f, 0.6f, 0.2f), () => Say("There's no Bag yet.")));
+        _commands.AddChild(Command("Pokémon", new Color(0.3f, 0.65f, 0.3f), () => Say("There's nothing to switch to yet.")));
+        _commands.AddChild(Command("Run", new Color(0.3f, 0.45f, 0.85f), () => Play(_battle.Run())));
+        row.AddChild(_commands);
+
+        _moves = new GridContainer { Columns = 2, Visible = false };
+        _moves.AddThemeConstantOverride("h_separation", 8);
+        _moves.AddThemeConstantOverride("v_separation", 8);
+        row.AddChild(_moves);
+
+        Resized += Layout;
+        Layout();
+        Intro();
+    }
+
+    async void Intro()
+    {
+        _busy = true;
+        // Let the info boxes take their size before placing everything.
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        if (!IsInstanceValid(this))
+            return;
+        Layout();
+        // The wild Pokémon slides in from the left, the player's from the right.
+        var foeEnd = _foeSprite.Position;
+        var playerEnd = _playerSprite.Position;
+        _foeSprite.Position = foeEnd - new Vector2(Size.X * 0.7f, 0);
+        _playerSprite.Position = playerEnd + new Vector2(Size.X * 0.7f, 0);
+        _foeBox.Modulate = _playerBox.Modulate = Colors.Transparent;
+        var tween = CreateTween().SetParallel();
+        tween.TweenProperty(_foeSprite, "position", foeEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        tween.TweenProperty(_playerSprite, "position", playerEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        await ToSignal(tween, Tween.SignalName.Finished);
+        if (!IsInstanceValid(this))
+            return;
+        CreateTween().TweenProperty(_foeBox, "modulate", Colors.White, 0.25);
+        CreateTween().TweenProperty(_playerBox, "modulate", Colors.White, 0.25);
+        Play(_battle.Start());
+    }
+
+    void Layout()
+    {
+        var w = Size.X;
+        var h = Size.Y - 150;
+        PlaceSprite(_foeSprite, new Vector2(w * 0.72f, h * 0.52f));
+        PlaceSprite(_playerSprite, new Vector2(w * 0.27f, h + 8));
+        _foeBox.Position = new Vector2(w * 0.06f, h * 0.08f);
+        _playerBox.Position = new Vector2(w * 0.94f - _playerBox.Size.X, h * 0.62f);
+        QueueRedraw();
+    }
+
+    /// <summary>Keeps a sprite's bottom centre on <paramref name="feet"/> (battle sprites stand on the bottom of their frame).</summary>
+    static void PlaceSprite(TextureRect sprite, Vector2 feet) =>
+        sprite.Position = feet - new Vector2(sprite.Size.X / 2, sprite.Size.Y);
+
+    public override void _Draw()
+    {
+        var w = Size.X;
+        var h = Size.Y - 150;
+        // Sky and field, then the two platforms.
+        DrawRect(new Rect2(0, 0, w, h * 0.45f), new Color(0.62f, 0.83f, 0.95f));
+        DrawRect(new Rect2(0, h * 0.45f, w, Size.Y - h * 0.45f), new Color(0.56f, 0.8f, 0.5f));
+        DrawEllipse(new Vector2(w * 0.72f, h * 0.5f), new Vector2(w * 0.17f, h * 0.07f), new Color(0.42f, 0.66f, 0.36f));
+        DrawEllipse(new Vector2(w * 0.27f, h * 0.98f), new Vector2(w * 0.22f, h * 0.09f), new Color(0.42f, 0.66f, 0.36f));
+    }
+
+    void DrawEllipse(Vector2 centre, Vector2 radius, Color color)
+    {
+        var points = new Vector2[48];
+        for (var i = 0; i < points.Length; i++)
+        {
+            var a = Mathf.Tau * i / points.Length;
+            points[i] = centre + new Vector2(Mathf.Cos(a) * radius.X, Mathf.Sin(a) * radius.Y);
+        }
+        DrawColoredPolygon(points, color);
+        DrawPolyline([.. points, points[0]], color.Darkened(0.25f), 3);
+    }
+
+    TextureRect Sprite(string path, float scale)
+    {
+        var texture = File.Exists(path) && Image.LoadFromFile(path) is { } image ? ImageTexture.CreateFromImage(image) : null;
+        var rect = new TextureRect
+        {
+            Texture = texture,
+            ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.Scale,
+            TextureFilter = TextureFilterEnum.Nearest,
+            Size = (texture?.GetSize() ?? new Vector2(96, 96)) * scale,
+            MouseFilter = MouseFilterEnum.Ignore,
+        };
+        AddChild(rect);
+        return rect;
+    }
+
+    static Button Command(string text, Color color, Action onPressed)
+    {
+        var button = Ui.Ui.Button(text, onPressed, 22);
+        button.CustomMinimumSize = new Vector2(170, 52);
+        button.AddThemeStyleboxOverride("normal", Box(color.Darkened(0.15f), color.Lightened(0.3f), 2));
+        button.AddThemeStyleboxOverride("hover", Box(color, Colors.White, 2));
+        button.AddThemeStyleboxOverride("focus", Box(color, Colors.White, 3));
+        button.AddThemeStyleboxOverride("pressed", Box(color.Darkened(0.3f), Colors.White, 2));
+        return button;
+    }
+
+    static StyleBoxFlat Box(Color fill, Color border, int borderWidth) => new()
+    {
+        BgColor = fill, BorderColor = border,
+        BorderWidthLeft = borderWidth, BorderWidthTop = borderWidth, BorderWidthRight = borderWidth, BorderWidthBottom = borderWidth,
+        CornerRadiusTopLeft = 8, CornerRadiusTopRight = 8, CornerRadiusBottomLeft = 8, CornerRadiusBottomRight = 8,
+        ContentMarginLeft = 14, ContentMarginRight = 14, ContentMarginTop = 8, ContentMarginBottom = 8,
+    };
+
+    void ShowCommands()
+    {
+        _moves.Visible = false;
+        _commands.Visible = true;
+        _message.Text = $"What will {_battle.Player.Mon.Name} do?";
+        _commands.GetChild<Button>(0).GrabFocus();
+    }
+
+    void ShowMoves()
+    {
+        if (_battle.MustStruggle)
+        {
+            Play(_battle.Fight(0));
+            return;
+        }
+        Ui.Ui.ClearChildren(_moves);
+        var mon = _battle.Player.Mon;
+        for (var i = 0; i < 4; i++)
+        {
+            if (i >= mon.Moves.Count)
+            {
+                _moves.AddChild(new Control { CustomMinimumSize = new Vector2(230, 52) });
+                continue;
+            }
+            var slot = mon.Moves[i];
+            var index = i;
+            var type = slot.Move.Type < _typeNames.Count ? _typeNames[slot.Move.Type] : "";
+            var button = Command($"{slot.Move.Name}\n{type}   PP {slot.Pp}/{slot.MaxPp}", TypeColor(slot.Move.Type), () => Play(_battle.Fight(index)));
+            button.AddThemeFontSizeOverride("font_size", 17);
+            button.CustomMinimumSize = new Vector2(230, 52);
+            button.Disabled = slot.Pp <= 0;
+            _moves.AddChild(button);
+        }
+        _commands.Visible = false;
+        _moves.Visible = true;
+        _message.Text = "Choose a move.  (Esc: back)";
+        if (_moves.GetChildren().OfType<Button>().FirstOrDefault(b => !b.Disabled) is { } first)
+            first.GrabFocus();
+    }
+
+    /// <summary>A quick message that keeps the menu open.</summary>
+    async void Say(string text)
+    {
+        _commands.Visible = false;
+        _message.Text = text;
+        await Wait(MessageSeconds);
+        if (IsInstanceValid(this) && !_battle.Over)
+            ShowCommands();
+    }
+
+    /// <summary>Plays a turn's events, then shows the menu again or ends the battle.</summary>
+    async void Play(IReadOnlyList<BattleEvent> events)
+    {
+        _busy = true;
+        _commands.Visible = _moves.Visible = false;
+        foreach (var e in events)
+        {
+            if (!IsInstanceValid(this))
+                return;
+            switch (e)
+            {
+                case MessageEvent m:
+                    _message.Text = m.Text;
+                    await Wait(MessageSeconds);
+                    break;
+                case HpEvent hp:
+                    var box = hp.Side == BattleSide.Player ? _playerBox : _foeBox;
+                    var sprite = hp.Side == BattleSide.Player ? _playerSprite : _foeSprite;
+                    if (hp.Hp < box.Hp)
+                        Blink(sprite);
+                    await ToSignal(box.AnimateHp(hp.Hp, hp.MaxHp, HpSeconds), Tween.SignalName.Finished);
+                    break;
+                case StatusEvent s:
+                    (s.Side == BattleSide.Player ? _playerBox : _foeBox).SetStatus(s.Status);
+                    break;
+                case FaintEvent f:
+                    var fainted = f.Side == BattleSide.Player ? _playerSprite : _foeSprite;
+                    var fall = CreateTween().SetParallel();
+                    fall.TweenProperty(fainted, "position", fainted.Position + new Vector2(0, fainted.Size.Y * 0.6f), 0.4);
+                    fall.TweenProperty(fainted, "modulate", Colors.Transparent, 0.4);
+                    await ToSignal(fall, Tween.SignalName.Finished);
+                    break;
+                case ExpEvent:
+                    await ToSignal(_playerBox.AnimateExp(0.6), Tween.SignalName.Finished);
+                    break;
+                case LevelUpEvent:
+                    _playerBox.Refresh();
+                    break;
+            }
+        }
+        if (!IsInstanceValid(this))
+            return;
+        _busy = false;
+        if (_battle.Over)
+        {
+            await Wait(0.3f);
+            EmitSignal(SignalName.Finished, (int)_battle.Outcome);
+        }
+        else
+            ShowCommands();
+    }
+
+    void Blink(TextureRect sprite)
+    {
+        var tween = CreateTween();
+        for (var i = 0; i < 3; i++)
+        {
+            tween.TweenProperty(sprite, "modulate:a", 0.15f, 0.06);
+            tween.TweenProperty(sprite, "modulate:a", 1f, 0.06);
+        }
+    }
+
+    async Task Wait(float seconds)
+    {
+        _skip = false;
+        for (var t = 0f; t < seconds && !_skip; t += 0.05f)
+            await ToSignal(GetTree().CreateTimer(0.05), SceneTreeTimer.SignalName.Timeout);
+    }
+
+    public override void _UnhandledInput(InputEvent e)
+    {
+        if (e.IsActionPressed("ui_cancel"))
+        {
+            // Esc never leaves the battle: it backs out of the move list, otherwise does nothing.
+            if (_moves.Visible)
+                ShowCommands();
+            GetViewport().SetInputAsHandled();
+        }
+        else if (_busy && (e.IsActionPressed("ui_accept") || e is InputEventKey { Pressed: true, Keycode: Key.Z, Echo: false }))
+        {
+            _skip = true;
+            GetViewport().SetInputAsHandled();
+        }
+    }
+
+    public override void _GuiInput(InputEvent e)
+    {
+        if (_busy && e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
+            _skip = true;
+    }
+
+    /// <summary>Colours roughly matching each type's usual colour, by ROM type id.</summary>
+    static Color TypeColor(int type) => type switch
+    {
+        TypeChart.Fighting => new Color(0.75f, 0.19f, 0.16f),
+        TypeChart.Flying => new Color(0.66f, 0.56f, 0.94f),
+        TypeChart.Poison => new Color(0.63f, 0.25f, 0.63f),
+        TypeChart.Ground => new Color(0.88f, 0.75f, 0.41f),
+        TypeChart.Rock => new Color(0.72f, 0.63f, 0.22f),
+        TypeChart.Bug => new Color(0.66f, 0.72f, 0.13f),
+        TypeChart.Ghost => new Color(0.44f, 0.35f, 0.6f),
+        TypeChart.Steel => new Color(0.72f, 0.72f, 0.82f),
+        TypeChart.Fire => new Color(0.94f, 0.5f, 0.19f),
+        TypeChart.Water => new Color(0.41f, 0.56f, 0.94f),
+        TypeChart.Grass => new Color(0.47f, 0.78f, 0.31f),
+        TypeChart.Electric => new Color(0.97f, 0.82f, 0.19f),
+        TypeChart.Psychic => new Color(0.97f, 0.35f, 0.53f),
+        TypeChart.Ice => new Color(0.6f, 0.85f, 0.85f),
+        TypeChart.Dragon => new Color(0.44f, 0.22f, 0.97f),
+        TypeChart.Dark => new Color(0.44f, 0.35f, 0.28f),
+        _ => new Color(0.66f, 0.66f, 0.47f),
+    };
+
+    /// <summary>Name, gender, level, status and HP bar (and HP numbers and EXP bar for the player's side).</summary>
+    sealed partial class InfoBox : PanelContainer
+    {
+        readonly Pokemon _mon;
+        readonly bool _player;
+        readonly Label _name, _level, _status, _hpText;
+        readonly ColorRect _hpFill, _expFill;
+        float _shownHp;
+        float _shownExp;
+
+        public int Hp => Mathf.RoundToInt(_shownHp);
+
+        public InfoBox() : this(null!, false) { }
+
+        public InfoBox(Pokemon mon, bool showNumbers)
+        {
+            _mon = mon;
+            _player = showNumbers;
+            _shownHp = mon.Hp;
+            _shownExp = ExpFraction();
+            AddThemeStyleboxOverride("panel", Box(new Color(0.97f, 0.96f, 0.9f), new Color(0.25f, 0.27f, 0.3f), 3));
+            CustomMinimumSize = new Vector2(330, 0);
+
+            var dark = new Color(0.15f, 0.16f, 0.18f);
+            var gender = mon.Gender switch { Gender.Male => " ♂", Gender.Female => " ♀", _ => "" };
+            _name = Ui.Ui.Text(mon.Name + gender, 22, dark);
+            _level = Ui.Ui.Text("", 20, dark);
+            _status = Ui.Ui.Text("", 16, Colors.White);
+            _status.AddThemeStyleboxOverride("normal", new StyleBoxFlat { BgColor = Colors.Transparent, ContentMarginLeft = 6, ContentMarginRight = 6 });
+            var top = Ui.Ui.HBox(8, _name, _status, Ui.Ui.Spacer(), _level);
+
+            var hpLabel = Ui.Ui.Text("HP", 14, new Color(0.95f, 0.75f, 0.2f));
+            var track = new ColorRect { Color = new Color(0.25f, 0.27f, 0.3f), CustomMinimumSize = new Vector2(0, 12), SizeFlagsHorizontal = SizeFlags.ExpandFill };
+            _hpFill = new ColorRect { Color = Colors.Green, MouseFilter = MouseFilterEnum.Ignore };
+            track.AddChild(_hpFill);
+            var hpRow = Ui.Ui.HBox(6, hpLabel, track);
+            hpRow.Alignment = BoxContainer.AlignmentMode.Center;
+
+            _hpText = Ui.Ui.Text("", 18, dark);
+            _hpText.HorizontalAlignment = HorizontalAlignment.Right;
+            var expTrack = new ColorRect { Color = new Color(0.25f, 0.27f, 0.3f), CustomMinimumSize = new Vector2(0, 6) };
+            _expFill = new ColorRect { Color = new Color(0.3f, 0.65f, 0.95f), MouseFilter = MouseFilterEnum.Ignore };
+            expTrack.AddChild(_expFill);
+            _hpText.Visible = expTrack.Visible = showNumbers;
+
+            AddChild(Ui.Ui.VBox(4, top, hpRow, _hpText, expTrack));
+            track.Resized += () => DrawBars();
+            expTrack.Resized += () => DrawBars();
+            Refresh();
+        }
+
+        public void Refresh()
+        {
+            _level.Text = $"Lv{_mon.Level}";
+            _shownHp = Math.Min(_shownHp, _mon.MaxHp);
+            if (!_mon.Fainted && _shownHp < 1)
+                _shownHp = _mon.Hp;
+            _shownExp = ExpFraction();
+            SetStatus(_mon.Status);
+            DrawBars();
+        }
+
+        public void SetStatus(Ailment status)
+        {
+            var (text, color) = status switch
+            {
+                Ailment.Paralysis => ("PAR", new Color(0.85f, 0.7f, 0.1f)),
+                Ailment.Sleep => ("SLP", new Color(0.5f, 0.5f, 0.55f)),
+                Ailment.Freeze => ("FRZ", new Color(0.4f, 0.75f, 0.9f)),
+                Ailment.Burn => ("BRN", new Color(0.9f, 0.35f, 0.2f)),
+                Ailment.Poison => ("PSN", new Color(0.65f, 0.3f, 0.7f)),
+                _ => ("", Colors.Transparent),
+            };
+            _status.Text = text;
+            ((StyleBoxFlat)_status.GetThemeStylebox("normal")).BgColor = color;
+        }
+
+        public Tween AnimateHp(int hp, int maxHp, float seconds)
+        {
+            var tween = CreateTween();
+            tween.TweenMethod(Callable.From<float>(v => { _shownHp = v; DrawBars(); }), _shownHp, (float)hp, seconds);
+            return tween;
+        }
+
+        public Tween AnimateExp(double seconds)
+        {
+            var tween = CreateTween();
+            var target = ExpFraction();
+            // A level up wraps the bar: fill to the end first.
+            if (target < _shownExp)
+                tween.TweenMethod(Callable.From<float>(v => { _shownExp = v; DrawBars(); }), _shownExp, 1f, seconds / 2);
+            tween.TweenMethod(Callable.From<float>(v => { _shownExp = v; DrawBars(); }), target < _shownExp ? 0f : _shownExp, target, seconds);
+            return tween;
+        }
+
+        float ExpFraction()
+        {
+            if (_mon.Level >= 100)
+                return 1;
+            var from = ExpCurve.ForLevel(_mon.Species.GrowthRate, _mon.Level);
+            var to = ExpCurve.ForLevel(_mon.Species.GrowthRate, _mon.Level + 1);
+            return Math.Clamp((float)(_mon.Exp - from) / Math.Max(1, to - from), 0, 1);
+        }
+
+        void DrawBars()
+        {
+            var fraction = _mon.MaxHp > 0 ? Math.Clamp(_shownHp / _mon.MaxHp, 0, 1) : 0;
+            var track = (Control)_hpFill.GetParent();
+            _hpFill.Size = new Vector2(track.Size.X * fraction, track.Size.Y);
+            _hpFill.Color = fraction > 0.5f ? new Color(0.3f, 0.85f, 0.4f) : fraction > 0.2f ? new Color(0.95f, 0.75f, 0.2f) : new Color(0.9f, 0.25f, 0.2f);
+            _hpText.Text = $"{Mathf.RoundToInt(_shownHp)} / {_mon.MaxHp}";
+            var expTrack = (Control)_expFill.GetParent();
+            _expFill.Size = new Vector2(expTrack.Size.X * _shownExp, expTrack.Size.Y);
+        }
+    }
+}

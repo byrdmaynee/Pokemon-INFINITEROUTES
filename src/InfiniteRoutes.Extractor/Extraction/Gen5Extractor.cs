@@ -62,6 +62,26 @@ public static class Gen5Extractor
             Directory.CreateDirectory(Path.Combine(temp, "data"));
             WriteJson(Path.Combine(temp, "data", "species.json"), species);
 
+            progress?.Report(new("Reading moves and encounters", 0.08));
+            var moveData = Narc.Parse(fs.ReadFile(Gen5Layout.Moves));
+            var moves = new List<MoveInfo>();
+            for (var id = 1; id < moveData.Count; id++)
+                moves.Add(Gen5Battle.DecodeMove(id, moveData.Read(id), tables["moves"]));
+            WriteJson(Path.Combine(temp, "data", "moves.json"), moves);
+
+            // Learnsets by species id (index 0 is empty); forms beyond the national dex are left out for now.
+            var learnData = Narc.Parse(fs.ReadFile(Gen5Layout.Learnsets));
+            var learnsets = new List<List<LevelMove>>();
+            for (var id = 0; id <= Gen5Layout.NationalDexCount && id < learnData.Count; id++)
+                learnsets.Add(id == 0 ? [] : Gen5Battle.DecodeLearnset(learnData.Read(id)));
+            WriteJson(Path.Combine(temp, "data", "learnsets.json"), learnsets);
+
+            var encounterData = Narc.Parse(fs.ReadFile(Gen5Layout.Encounters));
+            var encounters = new List<EncounterTable>();
+            for (var id = 0; id < encounterData.Count; id++)
+                encounters.Add(Gen5Battle.DecodeEncounters(id, encounterData.Read(id)));
+            WriteJson(Path.Combine(temp, "data", "encounters.json"), encounters);
+
             var sprites = Narc.Parse(fs.ReadFile(Gen5Layout.BattleSprites));
             var spriteDir = Path.Combine(temp, "sprites", "battle");
             foreach (var sub in new[] { "front", "back", "front-shiny", "back-shiny" })

@@ -40,8 +40,12 @@ public sealed record WarpInfo(int X, int Y, int Width, int Height, int TargetZon
 public sealed record NpcInfo(int Id, int Sprite, int X, int Y, float Height, Facing Facing, int Movement,
     int RangeX, int RangeY, int Script, int Flag);
 
-/// <summary>A zone (named area with its own scripts, warps and NPCs) and the map it lives on.</summary>
-public sealed record ZoneInfo(int Id, string Map, string Location, int Parent, IReadOnlyList<WarpInfo> Warps, IReadOnlyList<NpcInfo> Npcs);
+/// <summary>
+/// A zone (named area with its own scripts, warps and NPCs) and the map it lives on. <see cref="Encounters"/> is its
+/// wild encounter table (<c>data/encounters.json</c> id), or -1.
+/// </summary>
+public sealed record ZoneInfo(int Id, string Map, string Location, int Parent, IReadOnlyList<WarpInfo> Warps, IReadOnlyList<NpcInfo> Npcs,
+    int Encounters = -1);
 
 public sealed record WorldData(IReadOnlyList<WorldIndex> Maps, IReadOnlyList<ZoneInfo> Zones);
 
@@ -101,7 +105,9 @@ public static class Gen5WorldExtractor
                 continue;
             var eventsFile = ctx.ZoneField(z, Gen5Layout.Zone.Events);
             var file = eventsFile < events.Count ? events.Read(eventsFile) : [];
-            zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file), ReadNpcs(file)));
+            var encounters = ctx.ZoneField(z, Gen5Layout.Zone.Encounters);
+            zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file), ReadNpcs(file),
+                encounters == 0xFFFF ? -1 : encounters));
         }
 
         foreach (var map in maps)

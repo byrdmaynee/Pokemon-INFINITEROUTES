@@ -26,6 +26,21 @@ public sealed class GameAssets
         JsonSerializer.Deserialize<List<string>>(File.ReadAllText(Path.Combine(Directory, "text", table + ".json")), Json.Indented)
         ?? [];
 
+    /// <summary>Every move, in id order starting at 1.</summary>
+    public IReadOnlyList<MoveInfo> LoadMoves() => LoadData<List<MoveInfo>>("moves") ?? [];
+
+    /// <summary>Level-up learnsets indexed by species id.</summary>
+    public IReadOnlyList<IReadOnlyList<LevelMove>> LoadLearnsets() => LoadData<List<List<LevelMove>>>("learnsets") ?? [];
+
+    /// <summary>Wild encounter tables indexed by <see cref="ZoneInfo.Encounters"/>.</summary>
+    public IReadOnlyList<EncounterTable> LoadEncounters() => LoadData<List<EncounterTable>>("encounters") ?? [];
+
+    T? LoadData<T>(string name)
+    {
+        var path = Path.Combine(Directory, "data", name + ".json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<T>(File.ReadAllText(path), Json.Indented) : default;
+    }
+
     /// <summary>An exported map by key (<see cref="Gen5WorldExtractor.OverworldKey"/> for Unova's overworld); null if missing.</summary>
     public WorldIndex? LoadMap(string key)
     {

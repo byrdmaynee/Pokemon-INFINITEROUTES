@@ -62,6 +62,7 @@ public static class DebugCapture
             Save("09-overworld");
             if (main.CurrentScreen is World.OverworldScreen world)
             {
+                world.RandomEncounters = false;   // scripted walks; the battle below is forced
                 var season = world.Season;
                 world.Zoom = 2.2f;   // far enough out to show Nuvema's houses
                 foreach (var s in Enum.GetValues<Extractor.Extraction.Season>())
@@ -184,6 +185,47 @@ public static class DebugCapture
                 Save("14b-tall-grass");
                 world.Zoom = 1;
                 GD.Print($"[capture] tall grass at {world.PlayerTile}: height {world.PlayerHeight:F2} (beside it {outside:F2})");
+
+                // A wild battle: a Route 1 Patrat against the starter, fought with the first move until it ends.
+                var lead = World.OfflineSession.Lead!;
+                world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 504, 3, new Random(7)));
+                await Wait(1.2);
+                Save("15-battle-intro");
+                void Press(string action)
+                {
+                    Input.ParseInputEvent(new InputEventAction { Action = action, Pressed = true });
+                    Input.ParseInputEvent(new InputEventAction { Action = action, Pressed = false });
+                }
+                for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 15; waited += 0.1)
+                    await Wait(0.1);
+                Save("15b-battle-menu");
+                Press("ui_accept");   // Fight
+                await Wait(0.3);
+                Save("15c-battle-moves");
+                var battle = world.CurrentBattle?.Battle;
+                for (var turn = 0; turn < 20 && world.CurrentBattle is not null; turn++)
+                {
+                    Press("ui_accept");   // first move (and Fight again on later turns)
+                    await Wait(0.3);
+                    if (turn == 0)
+                    {
+                        await Wait(1.6);
+                        Save("15d-battle-turn");
+                    }
+                    for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                        await Wait(0.1);
+                    await Wait(0.2);
+                    if (world.CurrentBattle is { } open && !open.Battle.Over)
+                    {
+                        Press("ui_accept");   // Fight → move list
+                        await Wait(0.2);
+                    }
+                }
+                for (var waited = 0.0; world.CurrentBattle is not null && waited < 10; waited += 0.1)
+                    await Wait(0.1);
+                await Wait(0.6);
+                Save("16-after-battle");
+                GD.Print($"[capture] battle {battle?.Outcome}: {lead.Name} Lv{lead.Level} HP {lead.Hp}/{lead.MaxHp} EXP {lead.Exp}; back in the overworld: {world.CurrentBattle is null}");
             }
             main.Back();
         }

@@ -44,6 +44,7 @@ public static class Gen5Personal
             BaseExp: BinaryPrimitives.ReadUInt16LittleEndian(r[0x22..]),
             HeightDecimetres: BinaryPrimitives.ReadUInt16LittleEndian(r[0x24..]),
             WeightHectograms: BinaryPrimitives.ReadUInt16LittleEndian(r[0x26..]),
-            FormCount: r[0x20]);
+            FormCount: r[0x20],
+            TypeIds: r[7] != r[6] ? [r[6], r[7]] : [r[6]]);
     }
 }

@@ -45,6 +45,9 @@ public partial class OverworldScreen : Control
     PanelContainer _dialog = null!;
     Label _dialogText = null!;
     MeshInstance3D? _overlay;
+    BattleScreen? _battle;
+    /// <summary>False when the cache has no battle data (extracted before 0.6.0): no encounters then.</summary>
+    bool _battles;
     float _zoom = 1;
     // Black/White change season every month: January spring, February summer, March autumn, April winter, …
     Season _season = (Season)((DateTime.Now.Month - 1) % 4);
@@ -69,6 +72,7 @@ public partial class OverworldScreen : Control
             return;
         }
         _assets = assets;
+        _battles = OfflineSession.Ensure(assets);
         foreach (var z in assets.LoadZones())
             _zones[z.Id] = z;
 
@@ -231,7 +235,7 @@ public partial class OverworldScreen : Control
         foreach (var npc in _npcs.Values.SelectMany(l => l).ToList())
             if (npc.Tick(delta))
                 ActNpc(npc);
-        if (!_moving && !_dialog.Visible)
+        if (!_moving && !_dialog.Visible && _battle is null)
         {
             var wasRunning = _running;
             var input = Vector2I.Zero;
@@ -252,9 +256,9 @@ public partial class OverworldScreen : Control
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (_world is null)
+        if (_world is null || _battle is not null)
             return;
-        var talk = e.IsActionPressed("ui_accept") || e is InputEventKey { Pressed: true, Keycode: Key.Z, Echo: false };
+        var talk =e.IsActionPressed("ui_accept") || e is InputEventKey { Pressed: true, Keycode: Key.Z, Echo: false };
         if (_dialog.Visible && (talk || e.IsActionPressed("ui_cancel")))
         {
             _dialog.Visible = false;
@@ -390,8 +394,85 @@ public partial class OverworldScreen : Control
             if (_cellsByPos.TryGetValue(CellOf(_tile), out var cell) && cell.Zone >= 0)
                 _zone = cell.Zone;
             UpdateHud();
+            if (RollEncounter() is { } wild)
+                StartBattle(wild);
         };
     }
+
+    /// <summary>
+    /// After a step into tall grass: the zone's grass rate is the percent chance of a wild Pokémon, picked from the
+    /// current season's grass slots by their weights.
+    /// </summary>
+    Core.Battle.Pokemon? RollEncounter()
+    {
+        if (!_battles || !RandomEncounters || !IsTallGrass(_tile) || OfflineSession.Lead is null
+            || !_zones.TryGetValue(_zone, out var zone) || zone.Encounters < 0 || zone.Encounters >= OfflineSession.Encounters.Count)
+            return null;
+        var set = OfflineSession.Encounters[zone.Encounters].ForSeason((int)_season);
+        var rng = OfflineSession.Rng;
+        if (set.GrassRate <= 0 || rng.Next(100) >= set.GrassRate
+            || Core.Data.EncounterSet.Pick(set.Grass, Core.Data.EncounterSet.GrassWeights, rng) is not { } slot)
+            return null;
+        return Core.Battle.Pokemon.Create(OfflineSession.Data, slot.Species, rng.Next(slot.MinLevel, slot.MaxLevel + 1), rng);
+    }
+
+    /// <summary>Starts a wild battle against <paramref name="wild"/> with the party's lead. Public so smoke tests can force one.</summary>
+    public async void StartBattle(Core.Battle.Pokemon wild)
+    {
+        if (_battle is not null || OfflineSession.Lead is not { } lead)
+            return;
+        _moving = true;
+        ShowFrame(0);
+        // The classic flash: two quick white blinks, then black, then the battle.
+        var flash = CreateTween();
+        for (var i = 0; i < 2; i++)
+        {
+            flash.TweenProperty(_fade, "modulate", new Color(1, 1, 1, 0.8f), 0.08);
+            flash.TweenProperty(_fade, "modulate", Colors.Transparent, 0.08);
+        }
+        flash.TweenProperty(_fade, "modulate", Colors.White, 0.25);
+        await ToSignal(flash, Tween.SignalName.Finished);
+        if (!IsInstanceValid(this))
+            return;
+
+        _battle = new BattleScreen(new Core.Battle.WildBattle(OfflineSession.Data, lead, wild, OfflineSession.Rng), _assets);
+        _battle.Finished += EndBattle;
+        AddChild(_battle);
+        MoveChild(_fade, -1);
+        CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, 0.25);
+    }
+
+    async void EndBattle(int outcome)
+    {
+        var fadeOut = CreateTween();
+        fadeOut.TweenProperty(_fade, "modulate", Colors.White, 0.3);
+        await ToSignal(fadeOut, Tween.SignalName.Finished);
+        if (!IsInstanceValid(this))
+            return;
+        _battle?.QueueFree();
+        _battle = null;
+        if ((Core.Battle.BattleOutcome)outcome == Core.Battle.BattleOutcome.Lost)
+        {
+            // No Pokémon Centers yet: black out back to Nuvema Town, fully healed.
+            OfflineSession.HealParty();
+            _zone = StartZone;
+            if (_assets.LoadOverworld() is { } overworld)
+                EnterMap(overworld);
+            _tile = FindStartTile();
+            StreamChunks();
+            UpdateHud();
+            Arrive(_tile, Facing.Down, autoStep: false);
+        }
+        else
+            _moving = false;
+        CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, 0.3).SetDelay(0.05);
+    }
+
+    /// <summary>Whether steps in tall grass can start wild battles (smoke tests turn it off while walking).</summary>
+    public bool RandomEncounters { get; set; } = true;
+
+    /// <summary>The battle in progress, if any; for smoke tests.</summary>
+    public BattleScreen? CurrentBattle => _battle;
 
     async void TakeWarp(WarpInfo warp)
     {
