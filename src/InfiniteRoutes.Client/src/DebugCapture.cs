@@ -172,6 +172,18 @@ public static class DebugCapture
                 await Wait(0.5);
                 Save("14-overworld-route1");
                 GD.Print($"[capture] walked from {start} to {world.PlayerTile} ({world.LocationAt(world.PlayerTile)})");
+
+                // Into tall grass: the player stands in it at ground height, not on top of the bushes.
+                var beside = FindPath(world, world.PlayerTile, t => !world.IsTallGrass(t) && world.IsTallGrass(t + Vector2I.Up));
+                await Walk(beside, run: false);
+                var outside = world.PlayerHeight;
+                await Walk([Vector2I.Up], run: false);
+                await Wait(0.3);
+                world.Zoom = 2.2f;
+                await Wait(0.4);
+                Save("14b-tall-grass");
+                world.Zoom = 1;
+                GD.Print($"[capture] tall grass at {world.PlayerTile}: height {world.PlayerHeight:F2} (beside it {outside:F2})");
             }
             main.Back();
         }

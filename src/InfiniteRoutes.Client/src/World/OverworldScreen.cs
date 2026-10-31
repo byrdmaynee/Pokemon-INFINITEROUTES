@@ -443,6 +443,11 @@ public partial class OverworldScreen : Control
 
     public bool IsWalkable(Vector2I t) => !IsBlocked(t) && NpcAt(t) is null;
 
+    public bool IsTallGrass(Vector2I t) => (TileFlags(t) & 2) != 0;
+
+    /// <summary>The player's feet height in world units; for smoke tests.</summary>
+    public float PlayerHeight => _height;
+
     /// <summary>NPCs currently spawned around the player; for smoke tests.</summary>
     public IEnumerable<NpcActor> Npcs => _npcs.Values.SelectMany(l => l);
 
@@ -608,7 +613,7 @@ public partial class OverworldScreen : Control
         foreach (var mesh in scene.FindChildren("*", nameof(MeshInstance3D), owned: false).OfType<MeshInstance3D>())
         {
             ForcePixelArt(mesh);
-            mesh.CreateTrimeshCollision();
+            AddGroundCollision(mesh);
         }
         // Replaces any animator left from a chunk this cell held before (another map or season).
         _animators.Remove((cell.X, cell.Y));
@@ -630,6 +635,34 @@ public partial class OverworldScreen : Control
                 m.TextureFilter = BaseMaterial3D.TextureFilterEnum.NearestWithMipmaps;
                 m.ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded;
             }
+    }
+
+    /// <summary>
+    /// Collision for ground-height raycasts from the mesh's opaque surfaces only. Cut-out and blended
+    /// surfaces (tall grass, tree canopies, petals, shadows) sit above the walkable ground, so standing on
+    /// them would lift the player on top of the grass instead of into it.
+    /// </summary>
+    static void AddGroundCollision(MeshInstance3D mesh)
+    {
+        var faces = new List<Vector3>();
+        for (var s = 0; s < mesh.Mesh.GetSurfaceCount(); s++)
+        {
+            if (mesh.GetActiveMaterial(s) is BaseMaterial3D { Transparency: not BaseMaterial3D.TransparencyEnum.Disabled })
+                continue;
+            var arrays = mesh.Mesh.SurfaceGetArrays(s);
+            var vertices = arrays[(int)Mesh.ArrayType.Vertex].AsVector3Array();
+            var indices = arrays[(int)Mesh.ArrayType.Index].AsInt32Array();
+            if (indices.Length > 0)
+                foreach (var i in indices)
+                    faces.Add(vertices[i]);
+            else
+                faces.AddRange(vertices);
+        }
+        if (faces.Count == 0)
+            return;
+        var body = new StaticBody3D();
+        body.AddChild(new CollisionShape3D { Shape = new ConcavePolygonShape3D { Data = faces.ToArray() } });
+        mesh.AddChild(body);
     }
 
     /// <summary>Ground height at a tile: highest surface under its centre, casting from a little above <paramref name="near"/>.</summary>

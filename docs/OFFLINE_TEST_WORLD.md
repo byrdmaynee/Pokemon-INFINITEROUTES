@@ -30,6 +30,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Facing changes when you press a direction into a wall (no step taken).
 - [ ] You can't walk through houses, fences, trees, signs or water (compare with F3: red tiles).
 - [ ] You can walk through tall grass (green on F3); nothing happens yet — encounters are M1c.
+- [ ] In tall grass the player (and NPCs) stand down in it, half hidden, not on top of the bushes.
 - [ ] Ground height follows slopes and steps; you never sink into or float above the ground.
 - [ ] Walking north to Route 1 and on: chunks stream in ahead of you with no gaps at chunk seams,
       and the HUD location changes at the boundary.
