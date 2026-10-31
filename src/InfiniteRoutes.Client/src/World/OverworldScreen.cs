@@ -46,6 +46,7 @@ public partial class OverworldScreen : Control
     Label _dialogText = null!;
     MeshInstance3D? _overlay;
     BattleScreen? _battle;
+    PartyMenu? _menu;
     /// <summary>False when the cache has no battle data (extracted before 0.6.0): no encounters then.</summary>
     bool _battles;
     float _zoom = 1;
@@ -106,7 +107,7 @@ public partial class OverworldScreen : Control
         });
         AddChild(_hud);
         _hud.Position = new Vector2(16, 16);
-        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
+        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · X: party & bag · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
         AddChild(help);
         help.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomLeft);
         help.Position = new Vector2(16, -36);
@@ -235,7 +236,7 @@ public partial class OverworldScreen : Control
         foreach (var npc in _npcs.Values.SelectMany(l => l).ToList())
             if (npc.Tick(delta))
                 ActNpc(npc);
-        if (!_moving && !_dialog.Visible && _battle is null)
+        if (!_moving && !_dialog.Visible && _battle is null && _menu is null)
         {
             var wasRunning = _running;
             var input = Vector2I.Zero;
@@ -266,6 +267,11 @@ public partial class OverworldScreen : Control
         }
         else if (talk && Interact())
             GetViewport().SetInputAsHandled();
+        else if (e is InputEventKey { Pressed: true, Keycode: Key.X, Echo: false } && _menu is null)
+        {
+            ToggleMenu();
+            GetViewport().SetInputAsHandled();
+        }
     }
 
     public override void _UnhandledKeyInput(InputEvent e)
@@ -435,7 +441,7 @@ public partial class OverworldScreen : Control
         if (!IsInstanceValid(this))
             return;
 
-        _battle = new BattleScreen(new Core.Battle.WildBattle(OfflineSession.Data, lead, wild, OfflineSession.Rng), _assets);
+        _battle = new BattleScreen(new Core.Battle.WildBattle(OfflineSession.Data, OfflineSession.Party, OfflineSession.Bag, wild, OfflineSession.Rng), _assets);
         _battle.Finished += EndBattle;
         AddChild(_battle);
         MoveChild(_fade, -1);
@@ -449,11 +455,14 @@ public partial class OverworldScreen : Control
         await ToSignal(fadeOut, Tween.SignalName.Finished);
         if (!IsInstanceValid(this))
             return;
+        var caught = _battle?.Battle is { Outcome: Core.Battle.BattleOutcome.Caught } b ? b.Foe.Mon : null;
         _battle?.QueueFree();
         _battle = null;
+        if (caught is not null)
+            ShowMessage(OfflineSession.Keep(caught));
         if ((Core.Battle.BattleOutcome)outcome == Core.Battle.BattleOutcome.Lost)
         {
-            // No Pokémon Centers yet: black out back to Nuvema Town, fully healed.
+            // Black out back home to Nuvema Town, fully healed (the games use the last Pokémon Center visited).
             OfflineSession.HealParty();
             _zone = StartZone;
             if (_assets.LoadOverworld() is { } overworld)
@@ -501,6 +510,23 @@ public partial class OverworldScreen : Control
         CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, FadeSeconds).SetDelay(0.05);
     }
 
+    /// <summary>Moves the player straight to <paramref name="tile"/> in <paramref name="zone"/>'s map (debugging and smoke tests).</summary>
+    public bool Teleport(int zone, Vector2I tile)
+    {
+        if (_moving || !_zones.TryGetValue(zone, out var info) || _assets.LoadMap(info.Map) is not { } map)
+            return false;
+        _zone = zone;
+        EnterMap(map);
+        _tile = tile;
+        StreamChunks();
+        UpdateHud();
+        Arrive(_tile, Facing.Down, autoStep: false);
+        return true;
+    }
+
+    /// <summary>NPCs of a zone as placed in its event data; for smoke tests.</summary>
+    public IReadOnlyList<NpcInfo> ZoneNpcs(int zone) => _zones.TryGetValue(zone, out var z) ? z.Npcs : [];
+
     static Vector2I FacingToDir(Facing f) => f switch
     {
         Facing.Up => Vector2I.Up,
@@ -540,19 +566,58 @@ public partial class OverworldScreen : Control
 
     /// <summary>
     /// Talks to the NPC the player faces: it turns toward the player and a dialogue box opens. Real lines need
-    /// the script engine, so for now the box says which script would run. False when nobody is there.
+    /// the script engine, so for now the box says which script would run — except the Pokémon Center nurse, who
+    /// heals the party. Counters can be talked across. False when nobody is there.
     /// </summary>
     public bool Interact()
     {
-        if (_moving || _dialog.Visible || NpcAt(_tile + _dir) is not { } npc)
+        if (_moving || _dialog.Visible || _menu is not null)
+            return false;
+        var npc = NpcAt(_tile + _dir);
+        if (npc is null && IsBlocked(_tile + _dir))
+            npc = NpcAt(_tile + _dir * 2);   // across a counter
+        if (npc is null)
             return false;
         npc.Facing = DirToFacing(-_dir);
         npc.Pause(2);
-        _dialogText.Text = $"…\n[NPC {npc.Info.Id} · script {npc.Info.Script} · sprite {npc.Info.Sprite}: dialogue arrives with the script engine]";
-        _dialog.Visible = true;
         ShowFrame(0);
+        if (npc.Info.Script == NurseScript && _battles)
+        {
+            OfflineSession.HealParty();
+            ShowMessage("Welcome to the Pokémon Center!\nYour Pokémon have been restored to full health. We hope to see you again!");
+            return true;
+        }
+        ShowMessage($"…\n[NPC {npc.Info.Id} · script {npc.Info.Script} · sprite {npc.Info.Sprite}: dialogue arrives with the script engine]");
         return true;
     }
+
+    /// <summary>The shared script every Pokémon Center nurse runs (the middle of the counter in every Center).</summary>
+    const int NurseScript = 10100;
+
+    void ShowMessage(string text)
+    {
+        _dialogText.Text = text;
+        _dialog.Visible = true;
+    }
+
+    /// <summary>The X menu: party and Bag, or closes it if open. Public so smoke tests can open it.</summary>
+    public void ToggleMenu()
+    {
+        if (_menu is not null)
+        {
+            _menu.QueueFree();
+            _menu = null;
+            return;
+        }
+        if (!_battles || _moving || _dialog.Visible || _battle is not null)
+            return;
+        _menu = new PartyMenu(_assets);
+        _menu.Closed += () => _menu = null;
+        AddChild(_menu);
+        MoveChild(_fade, -1);
+    }
+
+    public bool MenuOpen => _menu is not null;
 
     NpcActor? NpcAt(Vector2I t)
     {

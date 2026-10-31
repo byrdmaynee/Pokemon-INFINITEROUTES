@@ -226,6 +226,66 @@ public static class DebugCapture
                 await Wait(0.6);
                 Save("16-after-battle");
                 GD.Print($"[capture] battle {battle?.Outcome}: {lead.Name} Lv{lead.Level} HP {lead.Hp}/{lead.MaxHp} EXP {lead.Exp}; back in the overworld: {world.CurrentBattle is null}");
+
+                // Catch a Lillipup: Bag → first ball, until it's caught or the balls run out.
+                if (world.MenuOpen)
+                    world.ToggleMenu();
+                Press("ui_accept");   // close any message box
+                await Wait(0.5);
+                world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 506, 2, new Random(3)));
+                await Wait(1.2);
+                for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 15; waited += 0.1)
+                    await Wait(0.1);
+                var catchBattle = world.CurrentBattle?.Battle;
+                for (var throwNo = 0; throwNo < 10 && world.CurrentBattle is not null && !(catchBattle?.Over ?? true); throwNo++)
+                {
+                    Press("ui_right");   // Fight → Bag
+                    await Wait(0.1);
+                    Press("ui_accept");
+                    await Wait(0.4);
+                    if (throwNo == 0)
+                        Save("17-bag");
+                    Press("ui_accept");   // the first ball
+                    await Wait(throwNo == 0 ? 2.4 : 0.5);
+                    if (throwNo == 0)
+                        Save("17b-throw");
+                    for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                        await Wait(0.1);
+                    await Wait(0.2);
+                    if (catchBattle is { NeedsSwitch: true })
+                        break;
+                }
+                for (var waited = 0.0; world.CurrentBattle is not null && waited < 10; waited += 0.1)
+                    await Wait(0.1);
+                await Wait(0.6);
+                Save("18-caught");
+                GD.Print($"[capture] catch battle {catchBattle?.Outcome}; party: {string.Join(", ", World.OfflineSession.Party.Select(p => $"{p.Name} Lv{p.Level} {p.Hp}/{p.MaxHp}"))}; balls left {World.OfflineSession.Bag.Count(Core.Battle.ItemEffect.PokeBall)}");
+                Press("ui_accept");   // close "added to your party"
+                await Wait(0.3);
+                world.ToggleMenu();
+                await Wait(0.5);
+                Save("19-party-menu");
+                world.ToggleMenu();
+                await Wait(0.2);
+
+                // Pokémon Center: hurt the party, talk to the nurse across the counter in Accumula Town's Center.
+                const int accumulaCenter = 398;
+                if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Script == 10100) is { } nurse)
+                {
+                    foreach (var mon in World.OfflineSession.Party)
+                        mon.Hp = 1;
+                    var nurseTile = new Vector2I(nurse.X, nurse.Y);
+                    world.Teleport(accumulaCenter, nurseTile + new Vector2I(0, 3));
+                    await Wait(1.0);
+                    await Walk(FindPath(world, world.PlayerTile, t => t + Vector2I.Up == nurseTile || (t + Vector2I.Up * 2 == nurseTile && !world.IsWalkable(t + Vector2I.Up))), run: false);
+                    world.TryStep(Vector2I.Up);   // faces the counter
+                    await Wait(0.2);
+                    var talked = world.Interact();
+                    await Wait(0.4);
+                    Save("20-nurse");
+                    GD.Print($"[capture] nurse at {nurseTile}, player {world.PlayerTile}: talked {talked}; party HP {string.Join(", ", World.OfflineSession.Party.Select(p => $"{p.Hp}/{p.MaxHp}"))}");
+                    Press("ui_accept");
+                }
             }
             main.Back();
         }

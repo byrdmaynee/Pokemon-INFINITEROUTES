@@ -4,7 +4,7 @@ namespace InfiniteRoutes.Core.Battle;
 
 public enum BattleSide { Player, Foe }
 
-public enum BattleOutcome { Ongoing, Won, Lost, Escaped }
+public enum BattleOutcome { Ongoing, Won, Lost, Escaped, Caught }
 
 /// <summary>Something that happened in a turn, in order, for the UI to play back.</summary>
 public abstract record BattleEvent;
@@ -13,9 +13,13 @@ public sealed record MessageEvent(string Text) : BattleEvent;
 public sealed record HpEvent(BattleSide Side, int Hp, int MaxHp) : BattleEvent;
 public sealed record StatusEvent(BattleSide Side, Ailment Status) : BattleEvent;
 public sealed record FaintEvent(BattleSide Side) : BattleEvent;
-/// <summary>The player's Pokémon gained experience; <see cref="Level"/> is its level afterwards.</summary>
-public sealed record ExpEvent(int Gained, int Level) : BattleEvent;
-public sealed record LevelUpEvent(int Level, int MaxHp, int Hp) : BattleEvent;
+/// <summary>Party member <see cref="PartyIndex"/> gained experience; <see cref="Level"/> is its level afterwards.</summary>
+public sealed record ExpEvent(int PartyIndex, int Gained, int Level) : BattleEvent;
+public sealed record LevelUpEvent(int PartyIndex, int Level, int MaxHp, int Hp) : BattleEvent;
+/// <summary>The player sent out party member <see cref="PartyIndex"/>.</summary>
+public sealed record SwitchEvent(int PartyIndex) : BattleEvent;
+/// <summary>A Poké Ball was thrown: it shook <see cref="Shakes"/> times (0–3) and caught the Pokémon or not.</summary>
+public sealed record CatchEvent(int Ball, int Shakes, bool Caught) : BattleEvent;
 
 /// <summary>A Pokémon on the field: the Pokémon plus what resets when it leaves (stat stages, confusion, flinch).</summary>
 public sealed class Battler(Pokemon mon, BattleSide side)
@@ -33,27 +37,46 @@ public sealed class Battler(Pokemon mon, BattleSide side)
 /// <summary>
 /// A single battle against one wild Pokémon, with Generation 5 rules: priority and speed order, accuracy and evasion,
 /// critical hits, STAB, type effectiveness, random damage roll, burn, poison, paralysis, sleep, freeze, confusion,
-/// flinching, stat stages, multi-hit, recoil, drain, healing, one-hit KOs, escape odds and experience. Moves whose
-/// special effects aren't implemented yet still deal their damage.
+/// flinching, stat stages, multi-hit, recoil, drain, healing, one-hit KOs, escape odds, Poké Balls and medicine,
+/// switching, and experience shared between the Pokémon that fought. Moves whose special effects aren't
+/// implemented yet still deal their damage.
 /// </summary>
 public sealed class WildBattle
 {
     readonly BattleData _data;
     readonly Random _rng;
+    readonly IReadOnlyList<Pokemon> _party;
+    readonly Bag _bag;
+    readonly HashSet<Pokemon> _participants = new();
     int _escapeAttempts;
+    int _turns;
 
-    public Battler Player { get; }
+    public Battler Player { get; private set; }
     public Battler Foe { get; }
     public BattleOutcome Outcome { get; private set; }
     public bool Over => Outcome != BattleOutcome.Ongoing;
 
-    public WildBattle(BattleData data, Pokemon player, Pokemon wild, Random rng)
+    /// <summary>The player's Pokémon fainted and another can fight: call <see cref="SendOut"/> before the next action.</summary>
+    public bool NeedsSwitch { get; private set; }
+
+    public IReadOnlyList<Pokemon> Party => _party;
+    public Bag Bag => _bag;
+    public int ActiveIndex => IndexOf(Player.Mon);
+
+    /// <summary>A battle with the party's first able Pokémon leading.</summary>
+    public WildBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, Pokemon wild, Random rng)
     {
         _data = data;
         _rng = rng;
-        Player = new Battler(player, BattleSide.Player);
+        _party = party;
+        _bag = bag;
+        Player = new Battler(party.FirstOrDefault(p => !p.Fainted) ?? throw new ArgumentException("No Pokémon can fight.", nameof(party)), BattleSide.Player);
+        _participants.Add(Player.Mon);
         Foe = new Battler(wild, BattleSide.Foe);
     }
+
+    /// <summary>A one-on-one battle with no items (for tests and simple uses).</summary>
+    public WildBattle(BattleData data, Pokemon player, Pokemon wild, Random rng) : this(data, [player], new Bag(), wild, rng) { }
 
     public IReadOnlyList<BattleEvent> Start() =>
         [new MessageEvent($"A wild {Foe.Mon.Name} appeared!"), new MessageEvent($"Go! {Player.Mon.Name}!")];
@@ -61,22 +84,33 @@ public sealed class WildBattle
     /// <summary>True when no move has PP left: <see cref="Fight"/> then uses Struggle whatever the slot.</summary>
     public bool MustStruggle => Player.Mon.Moves.All(m => m.Pp <= 0);
 
+    int IndexOf(Pokemon mon)
+    {
+        for (var i = 0; i < _party.Count; i++)
+            if (ReferenceEquals(_party[i], mon))
+                return i;
+        return -1;
+    }
+
+    bool Waiting => Over || NeedsSwitch;
+
     /// <summary>Plays one turn in which the player uses move <paramref name="slot"/> (ignored when struggling).</summary>
     public IReadOnlyList<BattleEvent> Fight(int slot)
     {
-        if (Over)
+        if (Waiting)
             return [];
         var events = new List<BattleEvent>();
         var playerMove = Choose(Player, slot);
         if (playerMove is null)
             return [new MessageEvent("There's no PP left for this move!")];
         var foeMove = Choose(Foe, _rng.Next(Math.Max(1, Foe.Mon.Moves.Count)));
+        _turns++;
 
         var playerFirst = GoesFirst(playerMove.Value.Move, foeMove?.Move);
         var order = playerFirst
             ? new[] { (Player, Foe, playerMove), (Foe, Player, foeMove) }
             : new[] { (Foe, Player, foeMove), (Player, Foe, playerMove) };
-        for (var i = 0; i < order.Length && !Over; i++)
+        for (var i = 0; i < order.Length && !Waiting; i++)
         {
             var (user, target, choice) = order[i];
             if (choice is null || user.Mon.Fainted)
@@ -91,10 +125,11 @@ public sealed class WildBattle
     /// <summary>Tries to run. On failure the wild Pokémon gets a free turn.</summary>
     public IReadOnlyList<BattleEvent> Run()
     {
-        if (Over)
+        if (Waiting)
             return [];
         var events = new List<BattleEvent>();
         _escapeAttempts++;
+        _turns++;
         int mine = EffectiveSpeed(Player), theirs = Math.Max(1, EffectiveSpeed(Foe));
         var odds = (mine * 128 / theirs + 30 * _escapeAttempts) % 256;
         if (mine >= theirs || _rng.Next(256) < odds)
@@ -104,13 +139,149 @@ public sealed class WildBattle
             return events;
         }
         events.Add(new MessageEvent("Can't escape!"));
+        FoeTurn(events);
+        return events;
+    }
+
+    /// <summary>Switches to party member <paramref name="index"/> as the turn's action; the wild Pokémon then attacks the newcomer.</summary>
+    public IReadOnlyList<BattleEvent> Switch(int index)
+    {
+        if (Waiting || !CanSendOut(index) || index == ActiveIndex)
+            return [];
+        var events = new List<BattleEvent> { new MessageEvent($"{Player.Mon.Name}, come back!") };
+        _turns++;
+        Enter(index, events);
+        FoeTurn(events);
+        return events;
+    }
+
+    /// <summary>Replaces a fainted Pokémon with party member <paramref name="index"/> (no turn passes).</summary>
+    public IReadOnlyList<BattleEvent> SendOut(int index)
+    {
+        if (!NeedsSwitch || !CanSendOut(index))
+            return [];
+        NeedsSwitch = false;
+        var events = new List<BattleEvent>();
+        Enter(index, events);
+        return events;
+    }
+
+    public bool CanSendOut(int index) => index >= 0 && index < _party.Count && !_party[index].Fainted;
+
+    void Enter(int index, List<BattleEvent> events)
+    {
+        Player = new Battler(_party[index], BattleSide.Player);
+        _participants.Add(Player.Mon);
+        events.Add(new SwitchEvent(index));
+        events.Add(new MessageEvent($"Go! {Player.Mon.Name}!"));
+    }
+
+    /// <summary>
+    /// Uses item <paramref name="item"/> from the Bag: a Poké Ball is thrown at the wild Pokémon, medicine is used on
+    /// party member <paramref name="target"/>. Uses up the turn unless the item would have no effect.
+    /// </summary>
+    public IReadOnlyList<BattleEvent> UseItem(int item, int target = -1)
+    {
+        if (Waiting || _bag.Count(item) <= 0 || ItemEffect.For(item) is not { } effect)
+            return [];
+        var name = _data.ItemName(item);
+        var events = new List<BattleEvent>();
+        if (effect is ItemEffect.Ball ball)
+        {
+            _bag.Take(item);
+            _turns++;
+            events.Add(new MessageEvent($"You threw a {name}!"));
+            var shakes = CatchShakes(ball, item);
+            var caught = shakes == 4;
+            events.Add(new CatchEvent(item, Math.Min(3, shakes), caught));
+            if (caught)
+            {
+                events.Add(new MessageEvent($"Gotcha! {Foe.Mon.Name} was caught!"));
+                Outcome = BattleOutcome.Caught;
+                return events;
+            }
+            events.Add(new MessageEvent(shakes switch
+            {
+                0 => "Oh no! The Pokémon broke free!",
+                1 => "Aww! It appeared to be caught!",
+                2 => "Aargh! Almost had it!",
+                _ => "Gah! It was so close, too!",
+            }));
+            FoeTurn(events);
+            return events;
+        }
+
+        if (target < 0 || target >= _party.Count)
+            target = ActiveIndex;
+        var mon = _party[target];
+        var wasConfused = target == ActiveIndex && Player.ConfusionTurns > 0;
+        var message = ItemUse.Apply(effect, mon);
+        if (effect is ItemEffect.Cure { Status: Ailment.None } && wasConfused)
+        {
+            Player.ConfusionTurns = 0;
+            message ??= $"{mon.Name} snapped out of its confusion.";
+        }
+        if (message is null)
+            return [new MessageEvent("It won't have any effect.")];
+        _bag.Take(item);
+        _turns++;
+        events.Add(new MessageEvent($"You used the {name}."));
+        if (target == ActiveIndex)
+        {
+            events.Add(new HpEvent(BattleSide.Player, mon.Hp, mon.MaxHp));
+            events.Add(new StatusEvent(BattleSide.Player, mon.Status));
+        }
+        events.Add(new MessageEvent(message));
+        FoeTurn(events);
+        return events;
+    }
+
+    /// <summary>
+    /// Gen 5 capture: a = (3·max − 2·hp) · rate · ball / (3·max) × status (2.5 asleep/frozen, 1.5 other), then up to
+    /// three shake checks against b = 65536 / (255 / a)^(3/16). Returns 4 when caught, else the shakes before breaking free.
+    /// </summary>
+    int CatchShakes(ItemEffect.Ball ball, int item)
+    {
+        if (ball.AlwaysCatches)
+            return 4;
+        var mon = Foe.Mon;
+        double max = mon.MaxHp, hp = Math.Max(1, mon.Hp);
+        var a = (3 * max - 2 * hp) * mon.Species.CatchRate * BallMultiplier(ball, item) / (3 * max);
+        a *= mon.Status switch { Ailment.Sleep or Ailment.Freeze => 2.5, Ailment.None => 1, _ => 1.5 };
+        if (a >= 255)
+            return 4;
+        var b = 65536 / Math.Pow(255 / Math.Max(a, 0.01), 3.0 / 16);
+        for (var shake = 0; shake < 3; shake++)
+            if (_rng.Next(65536) >= b)
+                return shake;
+        return 4;
+    }
+
+    /// <summary>A ball's bonus in this battle: Net (Bug/Water), Nest (low level), Timer (long battles), Quick (first turn).</summary>
+    double BallMultiplier(ItemEffect.Ball ball, int item)
+    {
+        var types = Foe.Mon.Types;
+        return item switch
+        {
+            ItemEffect.NetBall when types.Contains(TypeChart.Bug) || types.Contains(TypeChart.Water) => 3,
+            ItemEffect.NestBall => Math.Max(1, (41 - Foe.Mon.Level) / 10.0),
+            ItemEffect.TimerBall => Math.Min(4, 1 + _turns * 0.3),
+            ItemEffect.QuickBall when _turns == 0 => 5,
+            _ => ball.Multiplier,
+        };
+    }
+
+    /// <summary>The wild Pokémon's move after the player spent the turn on something else.</summary>
+    void FoeTurn(List<BattleEvent> events)
+    {
+        if (Waiting)
+            return;
         if (Choose(Foe, _rng.Next(Math.Max(1, Foe.Mon.Moves.Count))) is { } foeMove)
         {
             UseMove(Foe, Player, foeMove.Move, foeMove.Slot, movedFirst: true, events);
             CheckFaints(events);
         }
         EndOfTurn(events);
-        return events;
     }
 
     (MoveInfo Move, int Slot)? Choose(Battler b, int slot)
@@ -459,14 +630,17 @@ public sealed class WildBattle
             events.Add(new FaintEvent(BattleSide.Foe));
             events.Add(new MessageEvent($"{Label(Foe)} fainted!"));
             Outcome = BattleOutcome.Won;
-            if (!Player.Mon.Fainted)
-                AwardExp(events);
+            AwardExp(events);
         }
-        if (Player.Mon.Fainted)
+        if (Player.Mon.Fainted && !NeedsSwitch)
         {
             events.Add(new FaintEvent(BattleSide.Player));
             events.Add(new MessageEvent($"{Player.Mon.Name} fainted!"));
-            if (Outcome != BattleOutcome.Won)
+            if (Outcome == BattleOutcome.Won)
+                return;
+            if (_party.Any(p => !p.Fainted))
+                NeedsSwitch = true;
+            else
             {
                 events.Add(new MessageEvent("You have no more Pokémon that can fight! You blacked out!"));
                 Outcome = BattleOutcome.Lost;
@@ -474,31 +648,39 @@ public sealed class WildBattle
         }
     }
 
-    /// <summary>Gen 5 scaled experience for beating a wild Pokémon.</summary>
-    public static int ExpYield(Pokemon defeated, Pokemon winner)
+    /// <summary>
+    /// Gen 5 scaled experience for beating a wild Pokémon, shared by <paramref name="participants"/> Pokémon:
+    /// base EXP × level / 5 / participants × ((2L + 10) / (L + Lp + 10))^2.5 + 1.
+    /// </summary>
+    public static int ExpYield(Pokemon defeated, Pokemon winner, int participants = 1)
     {
         double lv = defeated.Level, own = winner.Level;
-        var scaled = defeated.Species.BaseExp * lv / 5 * Math.Pow((2 * lv + 10) / (lv + own + 10), 2.5);
+        var scaled = defeated.Species.BaseExp * lv / 5 / Math.Max(1, participants) * Math.Pow((2 * lv + 10) / (lv + own + 10), 2.5);
         return (int)Math.Floor(scaled) + 1;
     }
 
+    /// <summary>Every Pokémon that was sent out against the wild one and is still standing shares the experience.</summary>
     void AwardExp(List<BattleEvent> events)
     {
-        var mon = Player.Mon;
-        if (mon.Level >= 100)
-            return;
-        var exp = ExpYield(Foe.Mon, mon);
-        var levels = mon.GainExp(exp, _data);
-        events.Add(new MessageEvent($"{mon.Name} gained {exp} Exp. Points!"));
-        events.Add(new ExpEvent(exp, mon.Level));
-        foreach (var (level, learned, skipped) in levels)
+        var earners = _participants.Where(p => !p.Fainted && IndexOf(p) >= 0).ToList();
+        foreach (var mon in earners)
         {
-            events.Add(new LevelUpEvent(level, mon.MaxHp, mon.Hp));
-            events.Add(new MessageEvent($"{mon.Name} grew to Lv. {level}!"));
-            foreach (var move in learned)
-                events.Add(new MessageEvent($"{mon.Name} learned {move.Name}!"));
-            foreach (var move in skipped)
-                events.Add(new MessageEvent($"{mon.Name} wants to learn {move.Name}, but it already knows four moves."));
+            if (mon.Level >= 100)
+                continue;
+            var index = IndexOf(mon);
+            var exp = ExpYield(Foe.Mon, mon, earners.Count);
+            var levels = mon.GainExp(exp, _data);
+            events.Add(new MessageEvent($"{mon.Name} gained {exp} Exp. Points!"));
+            events.Add(new ExpEvent(index, exp, mon.Level));
+            foreach (var (level, learned, skipped) in levels)
+            {
+                events.Add(new LevelUpEvent(index, level, mon.MaxHp, mon.Hp));
+                events.Add(new MessageEvent($"{mon.Name} grew to Lv. {level}!"));
+                foreach (var move in learned)
+                    events.Add(new MessageEvent($"{mon.Name} learned {move.Name}!"));
+                foreach (var move in skipped)
+                    events.Add(new MessageEvent($"{mon.Name} wants to learn {move.Name}, but it already knows four moves."));
+            }
         }
     }
 

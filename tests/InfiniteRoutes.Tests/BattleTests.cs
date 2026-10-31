@@ -234,6 +234,128 @@ public class BattleTests
     }
 
     [Fact]
+    public void Master_ball_always_catches_and_weak_pokemon_are_easier()
+    {
+        var data = Data();
+        var rng = new Random(3);
+        var bag = new Bag();
+        bag.Add(ItemEffect.MasterBall);
+        var battle = new WildBattle(data, [Pokemon.Create(data, 495, 5, rng)], bag, Pokemon.Create(data, 504, 3, rng), rng);
+        var events = battle.UseItem(ItemEffect.MasterBall);
+        Assert.Equal(new CatchEvent(ItemEffect.MasterBall, 3, true), events.OfType<CatchEvent>().Single());
+        Assert.Equal(BattleOutcome.Caught, battle.Outcome);
+        Assert.Equal(0, bag.Count(ItemEffect.MasterBall));
+
+        // Catch rate 45 at full HP vs 1 HP and asleep, 2000 throws each.
+        int Catches(Action<Pokemon> prepare)
+        {
+            var caught = 0;
+            for (var i = 0; i < 2000; i++)
+            {
+                var b = new Bag();
+                b.Add(ItemEffect.PokeBall);
+                var wild = Pokemon.Create(data, 504, 3, rng);
+                prepare(wild);
+                if (new WildBattle(data, [Pokemon.Create(data, 495, 50, rng)], b, wild, rng).UseItem(ItemEffect.PokeBall).OfType<CatchEvent>().Single().Caught)
+                    caught++;
+            }
+            return caught;
+        }
+        var full = Catches(_ => { });
+        var weak = Catches(w => { w.Hp = 1; w.Status = Ailment.Sleep; });
+        Assert.InRange(full, 1, 1000);
+        Assert.True(weak > full * 2, $"{weak} vs {full}");
+    }
+
+    [Fact]
+    public void Medicine_heals_and_is_kept_when_useless()
+    {
+        var data = Data();
+        var rng = new Random(4);
+        var bag = new Bag();
+        bag.Add(ItemEffect.Potion, 2);
+        var mon = Pokemon.Create(data, 495, 10, rng);
+        var battle = new WildBattle(data, [mon], bag, Pokemon.Create(data, 504, 2, rng), rng);
+
+        Assert.Equal([new MessageEvent("It won't have any effect.")], battle.UseItem(ItemEffect.Potion, 0));
+        Assert.Equal(2, bag.Count(ItemEffect.Potion));
+
+        mon.Hp = 1;
+        var events = battle.UseItem(ItemEffect.Potion, 0);
+        Assert.Contains(events, e => e is HpEvent { Side: BattleSide.Player, Hp: > 1 });
+        Assert.Equal(1, bag.Count(ItemEffect.Potion));
+        Assert.Equal("Snivy's HP was restored by 20 point(s).", ItemUse.Apply(new ItemEffect.Heal(20), new Func<Pokemon>(() => { var m = Pokemon.Create(data, 495, 50, rng); m.Hp = 1; return m; })()));
+        var fainted = Pokemon.Create(data, 495, 10, rng);
+        fainted.Hp = 0;
+        Assert.Null(ItemUse.Apply(ItemEffect.For(ItemEffect.Potion)!, fainted));
+        Assert.Equal("Snivy was revived!", ItemUse.Apply(ItemEffect.For(ItemEffect.ReviveItem)!, fainted));
+        Assert.Equal(fainted.MaxHp / 2, fainted.Hp);
+    }
+
+    [Fact]
+    public void Fainting_with_others_left_asks_for_a_switch_and_exp_is_shared()
+    {
+        var data = Data();
+        var rng = new Random(6);
+        var weak = Pokemon.Create(data, 504, 2, rng);
+        var strong = Pokemon.Create(data, 495, 30, rng);
+        var wild = Pokemon.Create(data, 495, 12, rng);
+        var battle = new WildBattle(data, [weak, strong], new Bag(), wild, rng);
+
+        for (var turn = 0; turn < 30 && !battle.NeedsSwitch; turn++)
+            battle.Fight(0);
+        Assert.True(battle.NeedsSwitch);
+        Assert.False(battle.Over);
+        Assert.Empty(battle.Fight(0));
+        Assert.Empty(battle.SendOut(0));   // fainted
+
+        var sent = battle.SendOut(1);
+        Assert.Equal(new SwitchEvent(1), sent.OfType<SwitchEvent>().Single());
+        Assert.Same(strong, battle.Player.Mon);
+        var events = new List<BattleEvent>();
+        for (var turn = 0; turn < 30 && !battle.Over; turn++)
+            events.AddRange(battle.Fight(0));
+        Assert.Equal(BattleOutcome.Won, battle.Outcome);
+        // The fainted Patrat gets nothing; Snivy alone earns it.
+        Assert.Equal(1, Assert.Single(events.OfType<ExpEvent>()).PartyIndex);
+    }
+
+    [Fact]
+    public void Switching_costs_a_turn_and_both_share_the_exp()
+    {
+        var data = Data();
+        var rng = new Random(8);
+        var a = Pokemon.Create(data, 495, 40, rng);
+        var b = Pokemon.Create(data, 495, 40, rng);
+        var battle = new WildBattle(data, [a, b], new Bag(), Pokemon.Create(data, 504, 2, rng), rng);
+        var events = battle.Switch(1);
+        Assert.Contains(events, e => e is MessageEvent { Text: "Snivy, come back!" });
+        Assert.Contains(events, e => e is MessageEvent { Text: "The wild Patrat used Tackle!" } || e is MessageEvent { Text: "The wild Patrat used Leer!" });
+        Assert.Equal(1, battle.ActiveIndex);
+        Assert.Empty(battle.Switch(1));
+
+        var rest = new List<BattleEvent>();
+        for (var turn = 0; turn < 10 && !battle.Over; turn++)
+            rest.AddRange(battle.Fight(0));
+        Assert.Equal([0, 1], rest.OfType<ExpEvent>().Select(e => e.PartyIndex).Order());
+    }
+
+    [Fact]
+    public void Bag_keeps_order_and_drops_empty_items()
+    {
+        var bag = new Bag();
+        bag.Add(ItemEffect.Potion, 2);
+        bag.Add(ItemEffect.PokeBall, 5);
+        bag.Add(ItemEffect.Potion);
+        Assert.Equal([(ItemEffect.Potion, 3), (ItemEffect.PokeBall, 5)], bag.Items);
+        Assert.Equal([(ItemEffect.PokeBall, 5)], bag.Balls);
+        for (var i = 0; i < 3; i++)
+            Assert.True(bag.Take(ItemEffect.Potion));
+        Assert.False(bag.Take(ItemEffect.Potion));
+        Assert.Empty(bag.Medicine);
+    }
+
+    [Fact]
     public void Exp_yield_scales_with_level_difference()
     {
         var data = Data();

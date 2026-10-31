@@ -8,7 +8,8 @@ namespace InfiniteRoutes.Client.World;
 /// <summary>
 /// A wild battle drawn over the overworld: the wild Pokémon on the far platform, the player's from behind on the
 /// near one, info boxes with HP (and EXP for the player's), a message box, and the Fight / Bag / Pokémon / Run
-/// menu. Turns run in <see cref="WildBattle"/>; this screen plays back its events in order.
+/// menu. Bag throws Poké Balls or uses medicine; Pokémon switches (and picks the next one when the lead faints).
+/// Turns run in <see cref="WildBattle"/>; this screen plays back its events in order.
 /// </summary>
 public partial class BattleScreen : Control
 {
@@ -26,6 +27,10 @@ public partial class BattleScreen : Control
     InfoBox _foeBox = null!, _playerBox = null!;
     Label _message = null!;
     GridContainer _commands = null!, _moves = null!;
+    PanelContainer _picker = null!;
+    Label _pickerTitle = null!;
+    VBoxContainer _pickerList = null!;
+    Action? _pickerCancel;
     bool _busy;
     bool _skip;
 
@@ -72,8 +77,8 @@ public partial class BattleScreen : Control
         _commands.AddThemeConstantOverride("h_separation", 8);
         _commands.AddThemeConstantOverride("v_separation", 8);
         _commands.AddChild(Command("Fight", new Color(0.85f, 0.3f, 0.25f), ShowMoves));
-        _commands.AddChild(Command("Bag", new Color(0.85f, 0.6f, 0.2f), () => Say("There's no Bag yet.")));
-        _commands.AddChild(Command("Pokémon", new Color(0.3f, 0.65f, 0.3f), () => Say("There's nothing to switch to yet.")));
+        _commands.AddChild(Command("Bag", new Color(0.85f, 0.6f, 0.2f), ShowBag));
+        _commands.AddChild(Command("Pokémon", new Color(0.3f, 0.65f, 0.3f), () => ShowParty(forced: false)));
         _commands.AddChild(Command("Run", new Color(0.3f, 0.45f, 0.85f), () => Play(_battle.Run())));
         row.AddChild(_commands);
 
@@ -81,6 +86,14 @@ public partial class BattleScreen : Control
         _moves.AddThemeConstantOverride("h_separation", 8);
         _moves.AddThemeConstantOverride("v_separation", 8);
         row.AddChild(_moves);
+
+        // Bag and party lists open in a panel above the message box.
+        _picker = new PanelContainer { Visible = false };
+        _picker.AddThemeStyleboxOverride("panel", Box(new Color(0.12f, 0.16f, 0.22f, 0.97f), new Color(0.9f, 0.55f, 0.25f), 3));
+        _pickerTitle = Ui.Ui.Text("", 20, Ui.Ui.Accent);
+        _pickerList = Ui.Ui.VBox(6);
+        _picker.AddChild(Ui.Ui.VBox(10, _pickerTitle, _pickerList));
+        AddChild(_picker);
 
         Resized += Layout;
         Layout();
@@ -120,6 +133,8 @@ public partial class BattleScreen : Control
         PlaceSprite(_playerSprite, new Vector2(w * 0.27f, h + 8));
         _foeBox.Position = new Vector2(w * 0.06f, h * 0.08f);
         _playerBox.Position = new Vector2(w * 0.94f - _playerBox.Size.X, h * 0.62f);
+        _picker.Size = new Vector2(440, 0);
+        _picker.Position = new Vector2(w - _picker.Size.X - 16, h - _picker.GetCombinedMinimumSize().Y - 12);
         QueueRedraw();
     }
 
@@ -150,9 +165,12 @@ public partial class BattleScreen : Control
         DrawPolyline([.. points, points[0]], color.Darkened(0.25f), 3);
     }
 
+    static ImageTexture? LoadTexture(string path) =>
+        File.Exists(path) && Image.LoadFromFile(path) is { } image ? ImageTexture.CreateFromImage(image) : null;
+
     TextureRect Sprite(string path, float scale)
     {
-        var texture = File.Exists(path) && Image.LoadFromFile(path) is { } image ? ImageTexture.CreateFromImage(image) : null;
+        var texture = LoadTexture(path);
         var rect = new TextureRect
         {
             Texture = texture,
@@ -225,6 +243,81 @@ public partial class BattleScreen : Control
             first.GrabFocus();
     }
 
+    /// <summary>Opens the list panel with <paramref name="options"/>; <paramref name="onCancel"/> null means it can't be closed.</summary>
+    void ShowPicker(string title, IEnumerable<(string Text, bool Enabled, Action OnPick)> options, Action? onCancel)
+    {
+        _commands.Visible = _moves.Visible = false;
+        Ui.Ui.ClearChildren(_pickerList);
+        foreach (var (text, enabled, onPick) in options)
+        {
+            var button = Ui.Ui.Button(text, () =>
+            {
+                _picker.Visible = false;
+                onPick();
+            }, 18);
+            button.Alignment = HorizontalAlignment.Left;
+            button.Disabled = !enabled;
+            _pickerList.AddChild(button);
+        }
+        if (onCancel is not null)
+            _pickerList.AddChild(Ui.Ui.Button("Cancel  (Esc)", ClosePicker, 18));
+        _pickerTitle.Text = title;
+        _pickerCancel = onCancel;
+        _picker.Visible = true;
+        _picker.ResetSize();
+        Layout();
+        if (_pickerList.GetChildren().OfType<Button>().FirstOrDefault(b => !b.Disabled) is { } first)
+            first.GrabFocus();
+    }
+
+    void ClosePicker()
+    {
+        _picker.Visible = false;
+        var cancel = _pickerCancel;
+        _pickerCancel = null;
+        cancel?.Invoke();
+    }
+
+    void ShowBag()
+    {
+        var data = OfflineSession.Data;
+        var options = _battle.Bag.Balls.Concat(_battle.Bag.Medicine).Select(i =>
+        {
+            var item = i.Item;
+            Action pick = ItemEffect.For(item) is ItemEffect.Ball
+                ? () => Play(_battle.UseItem(item))
+                : () => ShowParty(forced: false, useItem: item);
+            return ($"{data.ItemName(item)}   ×{i.Count}", true, pick);
+        }).ToList();
+        if (options.Count == 0)
+        {
+            Say("The Bag is empty.");
+            return;
+        }
+        ShowPicker("Bag", options, ShowCommands);
+        _message.Text = "Use which item?";
+    }
+
+    /// <summary>The party list: to switch, to pick the next Pokémon after a faint (<paramref name="forced"/>), or to use an item on.</summary>
+    void ShowParty(bool forced, int useItem = 0)
+    {
+        var party = _battle.Party;
+        var options = party.Select((mon, i) =>
+        {
+            var status = mon.Fainted ? "  FNT" : mon.Status != Ailment.None ? $"  {StatusTag(mon.Status)}" : "";
+            var text = $"{mon.Name}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}{status}{(i == _battle.ActiveIndex ? "   (in battle)" : "")}";
+            var index = i;
+            if (useItem != 0)
+                return (text, true, (Action)(() => Play(_battle.UseItem(useItem, index))));
+            var can = _battle.CanSendOut(i) && i != _battle.ActiveIndex;
+            return (text, can, forced ? () => Play(_battle.SendOut(index)) : (Action)(() => Play(_battle.Switch(index))));
+        });
+        var title = useItem != 0 ? $"Use the {OfflineSession.Data.ItemName(useItem)} on which Pokémon?"
+            : forced ? "Choose the next Pokémon." : "Switch to which Pokémon?";
+        ShowPicker(title, options, forced ? null : ShowCommands);
+        _message.Text = title;
+    }
+
     /// <summary>A quick message that keeps the menu open.</summary>
     async void Say(string text)
     {
@@ -235,11 +328,16 @@ public partial class BattleScreen : Control
             ShowCommands();
     }
 
-    /// <summary>Plays a turn's events, then shows the menu again or ends the battle.</summary>
+    /// <summary>Plays a turn's events, then shows the menu again, asks for the next Pokémon, or ends the battle.</summary>
     async void Play(IReadOnlyList<BattleEvent> events)
     {
+        if (events.Count == 0)
+        {
+            ShowCommands();
+            return;
+        }
         _busy = true;
-        _commands.Visible = _moves.Visible = false;
+        _commands.Visible = _moves.Visible = _picker.Visible = false;
         foreach (var e in events)
         {
             if (!IsInstanceValid(this))
@@ -267,11 +365,17 @@ public partial class BattleScreen : Control
                     fall.TweenProperty(fainted, "modulate", Colors.Transparent, 0.4);
                     await ToSignal(fall, Tween.SignalName.Finished);
                     break;
-                case ExpEvent:
+                case ExpEvent exp when _playerBox.Shows(_battle.Party[exp.PartyIndex]):
                     await ToSignal(_playerBox.AnimateExp(0.6), Tween.SignalName.Finished);
                     break;
-                case LevelUpEvent:
+                case LevelUpEvent up when _playerBox.Shows(_battle.Party[up.PartyIndex]):
                     _playerBox.Refresh();
+                    break;
+                case SwitchEvent sw:
+                    await SendOut(_battle.Party[sw.PartyIndex]);
+                    break;
+                case CatchEvent c:
+                    await ThrowBall(c);
                     break;
             }
         }
@@ -283,8 +387,96 @@ public partial class BattleScreen : Control
             await Wait(0.3f);
             EmitSignal(SignalName.Finished, (int)_battle.Outcome);
         }
+        else if (_battle.NeedsSwitch)
+            ShowParty(forced: true);
         else
             ShowCommands();
+    }
+
+    /// <summary>Recalls the Pokémon on the near platform (if still there) and sends <paramref name="mon"/> out in its place.</summary>
+    async Task SendOut(Pokemon mon)
+    {
+        Layout();
+        var home = _playerSprite.Position;
+        if (_playerSprite.Modulate.A > 0.1f)
+        {
+            var back = CreateTween().SetParallel();
+            back.TweenProperty(_playerSprite, "position", home - new Vector2(Size.X * 0.5f, 0), 0.3);
+            back.TweenProperty(_playerBox, "modulate", Colors.Transparent, 0.2);
+            await ToSignal(back, Tween.SignalName.Finished);
+        }
+        _playerSprite.Texture = LoadTexture(_assets.BattleSpritePath(mon.Species.Id, mon.Shiny ? "back-shiny" : "back"));
+        _playerBox.QueueFree();
+        _playerBox = new InfoBox(mon, showNumbers: true) { Modulate = Colors.Transparent };
+        AddChild(_playerBox);
+        MoveChild(_picker, -1);
+        await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+        Layout();
+        home = _playerSprite.Position;
+        _playerSprite.Position = home - new Vector2(Size.X * 0.5f, 0);
+        _playerSprite.Modulate = Colors.White;
+        var enter = CreateTween().SetParallel();
+        enter.TweenProperty(_playerSprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        enter.TweenProperty(_playerBox, "modulate", Colors.White, 0.3);
+        await ToSignal(enter, Tween.SignalName.Finished);
+    }
+
+    /// <summary>The ball flies to the wild Pokémon, swallows it, wobbles once per shake, then clicks shut or bursts open.</summary>
+    async Task ThrowBall(CatchEvent c)
+    {
+        var ball = new BallIcon { Size = new Vector2(34, 34), MouseFilter = MouseFilterEnum.Ignore };
+        AddChild(ball);
+        var target = _foeSprite.Position + new Vector2(_foeSprite.Size.X / 2 - 17, _foeSprite.Size.Y * 0.55f);
+        ball.Position = new Vector2(Size.X * 0.2f, Size.Y * 0.6f);
+        var fly = CreateTween();
+        fly.TweenProperty(ball, "position", target, 0.45).SetTrans(Tween.TransitionType.Sine).SetEase(Tween.EaseType.Out);
+        await ToSignal(fly, Tween.SignalName.Finished);
+        var absorb = CreateTween().SetParallel();
+        absorb.TweenProperty(_foeSprite, "modulate", new Color(1, 0.4f, 0.4f, 0), 0.3);
+        await ToSignal(absorb, Tween.SignalName.Finished);
+        var drop = CreateTween();
+        drop.TweenProperty(ball, "position", target + new Vector2(0, _foeSprite.Size.Y * 0.4f), 0.25).SetTrans(Tween.TransitionType.Bounce).SetEase(Tween.EaseType.Out);
+        await ToSignal(drop, Tween.SignalName.Finished);
+        ball.PivotOffset = ball.Size / 2;
+        for (var i = 0; i < c.Shakes; i++)
+        {
+            await Wait(0.35f);
+            var wobble = CreateTween();
+            wobble.TweenProperty(ball, "rotation", -0.4f, 0.1);
+            wobble.TweenProperty(ball, "rotation", 0.4f, 0.15);
+            wobble.TweenProperty(ball, "rotation", 0f, 0.1);
+            await ToSignal(wobble, Tween.SignalName.Finished);
+        }
+        await Wait(0.4f);
+        if (c.Caught)
+        {
+            ball.Modulate = new Color(0.75f, 0.75f, 0.75f);
+            return;
+        }
+        ball.QueueFree();
+        CreateTween().TweenProperty(_foeSprite, "modulate", Colors.White, 0.25);
+    }
+
+    /// <summary>A Poké Ball: red top, white bottom, black band and button.</summary>
+    sealed partial class BallIcon : Control
+    {
+        public override void _Draw()
+        {
+            var c = Size / 2;
+            var r = Mathf.Min(Size.X, Size.Y) / 2;
+            DrawCircle(c, r, Colors.Black);
+            DrawCircle(c, r - 2, new Color(0.96f, 0.96f, 0.96f));
+            var top = new List<Vector2> { c + new Vector2(-(r - 2), 0) };
+            for (var i = 0; i <= 16; i++)
+            {
+                var a = Mathf.Pi + Mathf.Pi * i / 16;
+                top.Add(c + new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * (r - 2));
+            }
+            DrawColoredPolygon([.. top], new Color(0.9f, 0.2f, 0.2f));
+            DrawLine(c - new Vector2(r, 0), c + new Vector2(r, 0), Colors.Black, 3);
+            DrawCircle(c, r * 0.3f, Colors.Black);
+            DrawCircle(c, r * 0.2f, Colors.White);
+        }
     }
 
     void Blink(TextureRect sprite)
@@ -308,8 +500,10 @@ public partial class BattleScreen : Control
     {
         if (e.IsActionPressed("ui_cancel"))
         {
-            // Esc never leaves the battle: it backs out of the move list, otherwise does nothing.
-            if (_moves.Visible)
+            // Esc never leaves the battle: it backs out of the move list or a list panel, otherwise does nothing.
+            if (_picker.Visible && _pickerCancel is not null)
+                ClosePicker();
+            else if (_moves.Visible)
                 ShowCommands();
             GetViewport().SetInputAsHandled();
         }
@@ -325,6 +519,16 @@ public partial class BattleScreen : Control
         if (_busy && e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left })
             _skip = true;
     }
+
+    static string StatusTag(Ailment status) => status switch
+    {
+        Ailment.Paralysis => "PAR",
+        Ailment.Sleep => "SLP",
+        Ailment.Freeze => "FRZ",
+        Ailment.Burn => "BRN",
+        Ailment.Poison => "PSN",
+        _ => "",
+    };
 
     /// <summary>Colours roughly matching each type's usual colour, by ROM type id.</summary>
     static Color TypeColor(int type) => type switch
@@ -359,6 +563,8 @@ public partial class BattleScreen : Control
         float _shownExp;
 
         public int Hp => Mathf.RoundToInt(_shownHp);
+
+        public bool Shows(Pokemon mon) => ReferenceEquals(mon, _mon);
 
         public InfoBox() : this(null!, false) { }
 

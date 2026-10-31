@@ -2,9 +2,12 @@ using InfiniteRoutes.Core.Data;
 
 namespace InfiniteRoutes.Core.Battle;
 
-/// <summary>The ROM data a battle needs: species, moves and learnsets, all indexed by their ids.</summary>
-public sealed class BattleData(IReadOnlyList<SpeciesInfo> species, IReadOnlyList<MoveInfo> moves, IReadOnlyList<IReadOnlyList<LevelMove>> learnsets)
+/// <summary>The ROM data a battle needs: species, moves, learnsets and item names, all indexed by their ids.</summary>
+public sealed class BattleData(IReadOnlyList<SpeciesInfo> species, IReadOnlyList<MoveInfo> moves, IReadOnlyList<IReadOnlyList<LevelMove>> learnsets,
+    IReadOnlyList<string>? itemNames = null)
 {
+    public string ItemName(int id) => itemNames is not null && id >= 0 && id < itemNames.Count ? itemNames[id] : $"Item {id}";
+
     readonly Dictionary<int, SpeciesInfo> _species = species.ToDictionary(s => s.Id);
     readonly Dictionary<int, MoveInfo> _moves = moves.ToDictionary(m => m.Id);
 

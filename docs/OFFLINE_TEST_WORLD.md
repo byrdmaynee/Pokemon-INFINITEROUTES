@@ -18,6 +18,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 | Arrows / WASD | Walk one tile per press; hold to keep walking |
 | Shift (held) | Run |
 | Z / Enter / Space | Talk to the NPC you face; press again (or Esc) to close. In battle: choose, or skip a message |
+| X | Party and Bag menu (X or Esc closes it) |
 | Mouse wheel | Zoom (0.5×–4×) |
 | F3 | Collision overlay: red blocked, blue warp, green tall grass |
 | F4 | Next season |
@@ -81,7 +82,8 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 
 ## Wild battles
 
-- [ ] You start with a level 5 Snivy (no menu shows it yet; it appears in battle).
+- [ ] You start with a level 5 Snivy, 10 Poké Balls, 3 Great Balls, 5 Potions, 2 Antidotes, 2 Parlyz Heals
+      and a Revive. X shows them.
 - [ ] Walking through tall grass on Route 1 sometimes starts a battle (about 1 step in 12): a white flash,
       then the battle screen. Walking on paths, in towns or indoors never does.
 - [ ] Route 1's wild Pokémon are Patrat and Lillipup, levels 2–4. Other routes have their own.
@@ -96,14 +98,35 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       Pokémon attacks.
 - [ ] Losing: "You blacked out!", then you are back in Nuvema Town with Snivy fully healed.
 - [ ] After a battle you are back where you were in the grass, and can walk again straight away.
-- [ ] Bag and Pokémon say they aren't available yet. HP is not restored between battles (no Pokémon
-      Center yet), so a long session ends in a blackout.
+- [ ] HP and PP carry over between battles until you heal.
+
+## Catching, party and Bag
+
+- [ ] Bag in battle lists balls and medicine with counts; Esc or Cancel goes back.
+- [ ] Throwing a ball: it flies to the wild Pokémon, which vanishes into it; the ball wobbles 0–3 times.
+      Breaking free shows "Oh no! The Pokémon broke free!" / "Almost had it!" etc., and the wild
+      Pokémon attacks. Weakened (low HP) or sleeping/paralyzed Pokémon are caught noticeably more often.
+- [ ] "Gotcha! … was caught!" ends the battle; back in the overworld a box says it joined your party
+      (or went to the PC once you have six).
+- [ ] Potion in battle: pick it, pick a Pokémon; HP rises and the wild Pokémon then gets its turn. Using a
+      Potion on a Pokémon at full HP says "It won't have any effect." and keeps the Potion.
+- [ ] Pokémon in battle: switch to another party member ("…, come back!" / "Go! …!"); the wild Pokémon
+      attacks the newcomer. Fainted ones can't be picked.
+- [ ] When your Pokémon faints and you have another, you must pick the next one (Esc does nothing); the
+      battle carries on. Only when all have fainted do you black out.
+- [ ] EXP goes to every Pokémon that was sent out and is still standing, split between them.
+- [ ] X in the overworld: party (icon, level, HP, status, moves) and Bag. Pick Potion → a Pokémon to heal
+      it; pick a Pokémon on its own to make it lead the next battle. X or Esc closes; you can't walk
+      while it is open.
+- [ ] Pokémon Center (e.g. Accumula Town): talk to the nurse in the middle of the counter → "Your
+      Pokémon have been restored to full health" and HP, PP and status are all restored.
 
 ## Things that are expected to be missing (not bugs yet)
 
 - Frame-swap animations (swaying flowers, blinking lights) and animated objects are still static.
-- In battle: no catching, items, switching, trainers, abilities, weather or move animations; moves with
-  special effects beyond damage, status and stat changes just deal damage. The battle background is a
-  placeholder.
-- No menus, saving or other players.
+- In battle: no trainers, nicknames, abilities, held items, weather or move animations; moves with
+  special effects beyond damage, status and stat changes just deal damage. A fifth move is skipped with a
+  message instead of asking which to forget. The battle background is a placeholder.
+- Other Pokémon Center staff and shop clerks only show their script number. No PC to move Pokémon around.
+- No saving or other players.
 - No sound or music.
