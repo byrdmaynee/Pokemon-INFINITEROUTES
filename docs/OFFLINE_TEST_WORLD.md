@@ -6,7 +6,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Before you start
 
 - [ ] Launch the client after pulling: the loading screen re-extracts your Black/White ROM once
-      (extractor 0.5.2, ~20 s, ~245 MB in the cache). Later launches skip it.
+      (extractor 0.5.3, ~20 s, ~245 MB in the cache). Later launches skip it.
 - [ ] Opening two clients at once: the second waits for the first's extraction, then starts without
       extracting again.
 - [ ] With no ROM extracted, the screen says to re-extract in Settings → ROM Library instead of crashing.
@@ -71,8 +71,15 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Interiors look the same in every season.
 - [ ] Walk through a few routes in winter: no missing or untextured chunks.
 
+## Animated textures
+
+- [ ] The sea south of Nuvema scrolls and the surf line moves on the beach.
+- [ ] Rivers and ponds along the routes flow; fountains in cities animate.
+- [ ] Water stays continuous across chunk seams (no visible jump at chunk edges).
+- [ ] Animation keeps running after a season change (F4) and after going indoors and back out.
+
 ## Things that are expected to be missing (not bugs yet)
 
-- Animated textures (water, flowers, sea shimmer) are static.
+- Frame-swap animations (swaying flowers, blinking lights) and animated objects are still static.
 - No battles, wild encounters, menus, items, saving or other players.
 - No sound or music.

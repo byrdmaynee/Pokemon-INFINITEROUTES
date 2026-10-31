@@ -30,6 +30,8 @@ public partial class OverworldScreen : Control
     readonly List<NpcInfo> _mapNpcs = new();
     readonly Dictionary<(int, int), List<NpcActor>> _npcs = new();
     readonly Dictionary<int, Texture2D?> _npcSheets = new();
+    readonly Dictionary<int, IReadOnlyList<Extractor.Nitro3D.SrtAnimation>> _animations = new();
+    readonly Dictionary<(int, int), TextureAnimator> _animators = new();
     WorldIndex _map = null!;
     int _zone = StartZone;
 
@@ -222,6 +224,10 @@ public partial class OverworldScreen : Control
     {
         if (_world is null)
             return;
+        var seconds = Time.GetTicksMsec() / 1000.0;
+        foreach (var key in _loaded.Keys)
+            if (_animators.TryGetValue(key, out var animator))
+                animator.Update(seconds);
         foreach (var npc in _npcs.Values.SelectMany(l => l).ToList())
             if (npc.Tick(delta))
                 ActNpc(npc);
@@ -440,6 +446,9 @@ public partial class OverworldScreen : Control
     /// <summary>NPCs currently spawned around the player; for smoke tests.</summary>
     public IEnumerable<NpcActor> Npcs => _npcs.Values.SelectMany(l => l);
 
+    /// <summary>Materials currently animated by the ROM's texture scroll animations; for smoke tests.</summary>
+    public int AnimatedMaterials => _loaded.Keys.Sum(k => _animators.TryGetValue(k, out var a) ? a.Count : 0);
+
     /// <summary>True while a dialogue box is open.</summary>
     public bool Talking => _dialog.Visible;
 
@@ -600,6 +609,15 @@ public partial class OverworldScreen : Control
         {
             ForcePixelArt(mesh);
             mesh.CreateTrimeshCollision();
+        }
+        // Replaces any animator left from a chunk this cell held before (another map or season).
+        _animators.Remove((cell.X, cell.Y));
+        if (cell.Animation >= 0)
+        {
+            if (!_animations.TryGetValue(cell.Animation, out var anims))
+                _animations[cell.Animation] = anims = _assets.LoadAnimation(cell.Animation);
+            if (TextureAnimator.Attach(scene, anims) is { } animator)
+                _animators[(cell.X, cell.Y)] = animator;
         }
         return scene;
     }

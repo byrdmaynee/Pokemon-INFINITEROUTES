@@ -12,7 +12,8 @@ namespace InfiniteRoutes.Extractor.Extraction;
 /// One matrix cell of an exported map, in tile units (1 tile = 1 unit, 32 per chunk). Zone is -1 when the map has
 /// no per-cell zones. <see cref="Seasons"/> is 4 when the cell has a model per season (area + season), else 1.
 /// </summary>
-public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1)
+/// <see cref="Animation"/> is the map texture animation (<c>anims/{n}.json</c>) for its materials, or -1.
+public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1, int Animation = -1)
 {
     /// <summary>The area whose model to show in <paramref name="season"/> (0 spring … 3 winter).</summary>
     public int AreaFor(int season) => season > 0 && season < Seasons ? Area + season : Area;
@@ -200,7 +201,7 @@ public static class Gen5WorldExtractor
 
             var location = zone >= 0 ? ctx.Zones[zone * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.LocationName] : -1;
             cells.Add(new WorldCell(i % width, i / width, (int)chunkIndex, zone,
-                location >= 0 && location < locationNames.Count ? locationNames[location] : "", area, seasons));
+                location >= 0 && location < locationNames.Count ? locationNames[location] : "", area, seasons, ctx.AnimationFor(area)));
         }
         return new WorldIndex(MapKey(matrixIndex, fixedArea), width, height, Gen5Map.Tiles, cells);
     }
@@ -248,6 +249,8 @@ public static class Gen5WorldExtractor
         readonly Dictionary<(bool, int), Dictionary<int, NitroModel>> _packCache = new();
         readonly Dictionary<(int, int), bool> _exported = new();
         readonly HashSet<int> _tilesWritten = new();
+        readonly Narc _srtAnimations;
+        readonly Dictionary<int, bool> _animationsWritten = new();
 
         public Context(NitroFs fs, string outDir)
         {
@@ -256,6 +259,7 @@ public static class Gen5WorldExtractor
             Matrices = Narc.Parse(fs.ReadFile(Gen5Layout.MapMatrices));
             Chunks = Narc.Parse(fs.ReadFile(Gen5Layout.MapChunks));
             _textureSets = Narc.Parse(fs.ReadFile(Gen5Layout.MapTextures));
+            _srtAnimations = Narc.Parse(fs.ReadFile(Gen5Layout.MapSrtAnimations));
             _outdoor = (Narc.Parse(fs.ReadFile(Gen5Layout.BuildingPacks)), Narc.Parse(fs.ReadFile(Gen5Layout.BuildingTextures)));
             _indoor = (Narc.Parse(fs.ReadFile(Gen5Layout.IndoorBuildingPacks)), Narc.Parse(fs.ReadFile(Gen5Layout.IndoorBuildingTextures)));
             _outDir = outDir;
@@ -268,6 +272,29 @@ public static class Gen5WorldExtractor
 
         /// <summary>True for the spring entry of a four-season group (see <see cref="Gen5Layout.AreaSeasonGroup"/>).</summary>
         public bool IsSeasonal(int area) => Gen5WorldExtractor.IsSeasonal(Areas, area);
+
+        /// <summary>The area's SRT animation index (exported on first use), or -1 for none.</summary>
+        public int AnimationFor(int area)
+        {
+            var index = Areas[area * Gen5Layout.AreaSize + Gen5Layout.AreaAnimations];
+            if (index == 0xFF || index >= _srtAnimations.Count)
+                return -1;
+            if (_animationsWritten.TryGetValue(index, out var ok))
+                return ok ? index : -1;
+            try
+            {
+                var anims = Nsbta.Parse(Lz.DecompressIfNeeded(_srtAnimations.Read(index)));
+                var dir = Directory.CreateDirectory(Path.Combine(_outDir, "anims")).FullName;
+                File.WriteAllText(Path.Combine(dir, $"{index}.json"), JsonSerializer.Serialize(anims, Json.Compact));
+                ok = true;
+            }
+            catch (InvalidDataException)
+            {
+                ok = false;
+            }
+            _animationsWritten[index] = ok;
+            return ok ? index : -1;
+        }
 
         /// <summary>The spring area of the season group <paramref name="area"/> belongs to, or the area itself.</summary>
         int SpringArea(int area)

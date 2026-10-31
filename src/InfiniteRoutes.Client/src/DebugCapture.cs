@@ -71,6 +71,11 @@ public static class DebugCapture
                     Save($"09s-{s.ToString().ToLowerInvariant()}");
                 }
                 world.Season = season;
+                await Wait(0.6);
+                GD.Print($"[capture] animated materials: {world.AnimatedMaterials}");
+                Save("09w-water-a");
+                await Wait(0.7);
+                Save("09w-water-b");
                 world.Zoom = 2.6f;
                 world.ShowCollision(true);
                 await Wait(0.6);

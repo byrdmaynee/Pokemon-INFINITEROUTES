@@ -319,4 +319,55 @@ public class MapTests
         Assert.Equal(4, cell.AreaFor((int)Season.Winter));
         Assert.Equal(5, new WorldCell(0, 0, 7, 3, "", 5).AreaFor((int)Season.Winter));
     }
+
+    /// <summary>A one-entry Nitro dictionary: 8-byte header, info block (entry size, names offset, entry), one 16-byte name.</summary>
+    static byte[] Dict(string name, byte[] entry)
+    {
+        var d = new byte[8 + 4 + entry.Length + 16];
+        d[1] = 1;
+        BinaryPrimitives.WriteUInt16LittleEndian(d.AsSpan(2), (ushort)d.Length);
+        BinaryPrimitives.WriteUInt16LittleEndian(d.AsSpan(6), 8);
+        BinaryPrimitives.WriteUInt16LittleEndian(d.AsSpan(8), (ushort)entry.Length);
+        BinaryPrimitives.WriteUInt16LittleEndian(d.AsSpan(10), (ushort)(4 + entry.Length));
+        entry.CopyTo(d, 12);
+        Encoding.ASCII.GetBytes(name).CopyTo(d, 12 + entry.Length);
+        return d;
+    }
+
+    [Fact]
+    public void Srt_animation_reads_constant_and_sampled_tracks()
+    {
+        // One material over 4 frames: scale 1, no rotation, S scrolls 0, .25, .5, .75 (16-bit), T constant -0.5 (16-bit).
+        static byte[] Track(int flags, uint value) => [4, 0, 0, (byte)flags, (byte)value, (byte)(value >> 8), (byte)(value >> 16), (byte)(value >> 24)];
+        byte[] Anim(uint dataOffset) =>
+        [
+            .. "M AT"u8, 4, 0, 0, 0,
+            .. Dict("sea_mizu1", [.. Track(0x30, 0x1000), .. Track(0x30, 0x1000), .. Track(0x20, 0x1000_0000),
+                .. Track(0x10, dataOffset), .. Track(0x30, 0xF800)]),
+        ];
+        var head = Anim(0).Length;
+        byte[] samples = [0x00, 0x00, 0x00, 0x04, 0x00, 0x08, 0x00, 0x0C];
+        byte[] anim = [.. Anim((uint)head), .. samples];
+
+        var srtDict = Dict("out21", new byte[4]);
+        var srt = new byte[8 + srtDict.Length];
+        "SRT0"u8.CopyTo(srt);
+        srtDict.CopyTo(srt, 8);
+        BinaryPrimitives.WriteUInt32LittleEndian(srt.AsSpan(8 + 12), (uint)srt.Length);   // animation follows the SRT0 header + dictionary
+
+        var header = new byte[0x14];
+        "BTA0"u8.CopyTo(header);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(0x0E), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(0x10), 0x14);
+        byte[] file = [.. header, .. srt, .. anim];
+
+        var a = Assert.Single(Nsbta.Parse(file));
+        Assert.Equal(("out21", 4), (a.Name, a.Frames));
+        var t = Assert.Single(a.Tracks);
+        Assert.Equal("sea_mizu1", t.Material);
+        Assert.Equal([1f], t.ScaleS);
+        Assert.Equal([0f], t.RotationDegrees);
+        Assert.Equal([0f, 0.25f, 0.5f, 0.75f], t.TranslateS);
+        Assert.Equal([-0.5f], t.TranslateT);
+    }
 }

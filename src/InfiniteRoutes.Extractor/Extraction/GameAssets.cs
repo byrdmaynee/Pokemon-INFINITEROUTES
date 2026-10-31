@@ -44,6 +44,13 @@ public sealed class GameAssets
     public string ChunkModelPath(WorldCell cell, Season season = Season.Spring) =>
         Path.Combine(Directory, "maps", "chunks", Gen5WorldExtractor.ChunkFileName(cell.Chunk, cell.AreaFor((int)season)) + ".gltf");
 
+    /// <summary>A map texture animation (<see cref="WorldCell.Animation"/>); empty if missing.</summary>
+    public IReadOnlyList<Nitro3D.SrtAnimation> LoadAnimation(int index)
+    {
+        var path = Path.Combine(Directory, "maps", "anims", $"{index}.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<List<Nitro3D.SrtAnimation>>(File.ReadAllText(path), Json.Indented) ?? [] : [];
+    }
+
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 
     /// <summary>A <see cref="CharacterSheet"/> PNG; <paramref name="name"/> is "hero" or "heroine".</summary>
