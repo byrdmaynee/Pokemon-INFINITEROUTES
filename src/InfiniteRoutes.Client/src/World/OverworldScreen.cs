@@ -44,6 +44,8 @@ public partial class OverworldScreen : Control
     Label _dialogText = null!;
     MeshInstance3D? _overlay;
     float _zoom = 1;
+    // Black/White change season every month: January spring, February summer, March autumn, April winter, …
+    Season _season = (Season)((DateTime.Now.Month - 1) % 4);
 
     Vector2I _tile;
     Vector2I _dir = Vector2I.Down;
@@ -98,7 +100,7 @@ public partial class OverworldScreen : Control
         });
         AddChild(_hud);
         _hud.Position = new Vector2(16, 16);
-        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · Wheel: zoom · F3: collision · Esc: menu", 14, Ui.Ui.Muted);
+        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
         AddChild(help);
         help.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomLeft);
         help.Position = new Vector2(16, -36);
@@ -260,12 +262,31 @@ public partial class OverworldScreen : Control
     {
         if (e is InputEventKey { Pressed: true, Keycode: Key.F3 })
             ShowCollision(_overlay is null);
+        else if (e is InputEventKey { Pressed: true, Keycode: Key.F4 })
+            Season = (Season)(((int)_season + 1) % 4);
     }
 
     public override void _GuiInput(InputEvent e)
     {
         if (e is InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp or MouseButton.WheelDown } wheel)
             Zoom = _zoom * (wheel.ButtonIndex == MouseButton.WheelUp ? 1 / 1.15f : 1.15f);
+    }
+
+    /// <summary>Season the outdoor maps are shown in; changing it reloads the chunks around the player.</summary>
+    public Season Season
+    {
+        get => _season;
+        set
+        {
+            if (_season == value)
+                return;
+            _season = value;
+            foreach (var node in _loaded.Values)
+                node.QueueFree();
+            _loaded.Clear();
+            StreamChunks();
+            UpdateHud();
+        }
     }
 
     /// <summary>Camera distance multiplier (1 = DS framing); mouse wheel adjusts it.</summary>
@@ -555,7 +576,9 @@ public partial class OverworldScreen : Control
             if (node is null)
                 continue;
             _loaded[key] = node;
-            SpawnNpcs(key);
+            // A season change reloads chunks but keeps their NPCs.
+            if (!_npcs.ContainsKey(key))
+                SpawnNpcs(key);
         }
     }
 
@@ -563,7 +586,7 @@ public partial class OverworldScreen : Control
     {
         var doc = new GltfDocument();
         var state = new GltfState();
-        if (doc.AppendFromFile(_assets.ChunkModelPath(cell), state) != Error.Ok)
+        if (doc.AppendFromFile(_assets.ChunkModelPath(cell, _season), state) != Error.Ok)
         {
             GD.PushWarning($"Couldn't load map chunk {cell.Chunk}.");
             return null;
@@ -612,6 +635,6 @@ public partial class OverworldScreen : Control
     void UpdateHud()
     {
         var name = LocationAt(_tile) is { Length: > 0 } location ? location : "Unova";
-        _hud.Text = $"{name}   ·   tile {_tile.X}, {_tile.Y}";
+        _hud.Text = $"{name}   ·   {_season}   ·   tile {_tile.X}, {_tile.Y}";
     }
 }

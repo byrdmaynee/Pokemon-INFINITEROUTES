@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Text;
+using InfiniteRoutes.Extractor;
 using InfiniteRoutes.Extractor.Extraction;
 using InfiniteRoutes.Extractor.Gen5;
 using InfiniteRoutes.Extractor.Graphics;
@@ -281,5 +282,41 @@ public class MapTests
         Assert.Equal(new Vector3(0, 0, 0), pos[0]);
         Assert.Equal(new Vector3(0, 0, -1), pos[1]);
         Assert.Equal(new Vector3(1, 0, 0), pos[2]);
+    }
+
+    [Fact]
+    public void Extraction_lock_is_exclusive_until_released()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ir-lock-" + Guid.NewGuid().ToString("N"));
+        using (ExtractionCache.Lock(dir, out var waited))
+        {
+            Assert.False(waited);
+            using var cts = new CancellationTokenSource(300);
+            Assert.ThrowsAny<OperationCanceledException>(() => ExtractionCache.Lock(dir, out _, cts.Token));
+        }
+        using (ExtractionCache.Lock(dir, out var again))
+            Assert.False(again);
+        Assert.False(File.Exists(dir + ".lock"));
+    }
+
+    [Fact]
+    public void Seasonal_areas_are_groups_of_four_outdoor_entries()
+    {
+        // Areas: 0 indoor (group 28), 1–4 outdoor seasons (32…35), 5 outdoor non-seasonal (32 alone).
+        var areas = new byte[7 * Gen5Layout.AreaSize];
+        byte[] groups = [28, 32, 33, 34, 35, 32, 40];
+        for (var i = 0; i < groups.Length; i++)
+        {
+            areas[i * Gen5Layout.AreaSize + Gen5Layout.AreaSeasonGroup] = groups[i];
+            areas[i * Gen5Layout.AreaSize + Gen5Layout.AreaOutdoorFlag] = (byte)(i == 0 ? 0 : 1);
+        }
+
+        Assert.False(Gen5WorldExtractor.IsSeasonal(areas, 0));
+        Assert.True(Gen5WorldExtractor.IsSeasonal(areas, 1));
+        Assert.False(Gen5WorldExtractor.IsSeasonal(areas, 2));
+        Assert.False(Gen5WorldExtractor.IsSeasonal(areas, 5));
+        var cell = new WorldCell(0, 0, 7, 3, "", 1, Seasons: 4);
+        Assert.Equal(4, cell.AreaFor((int)Season.Winter));
+        Assert.Equal(5, new WorldCell(0, 0, 7, 3, "", 5).AreaFor((int)Season.Winter));
     }
 }

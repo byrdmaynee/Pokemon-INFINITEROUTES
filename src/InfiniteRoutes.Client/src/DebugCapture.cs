@@ -62,6 +62,15 @@ public static class DebugCapture
             Save("09-overworld");
             if (main.CurrentScreen is World.OverworldScreen world)
             {
+                var season = world.Season;
+                world.Zoom = 2.2f;   // far enough out to show Nuvema's houses
+                foreach (var s in Enum.GetValues<Extractor.Extraction.Season>())
+                {
+                    world.Season = s;
+                    await Wait(0.6);
+                    Save($"09s-{s.ToString().ToLowerInvariant()}");
+                }
+                world.Season = season;
                 world.Zoom = 2.6f;
                 world.ShowCollision(true);
                 await Wait(0.6);

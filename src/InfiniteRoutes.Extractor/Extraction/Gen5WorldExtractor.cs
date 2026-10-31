@@ -8,8 +8,17 @@ using static InfiniteRoutes.Extractor.Nitro3D.NitroDict;
 
 namespace InfiniteRoutes.Extractor.Extraction;
 
-/// <summary>One matrix cell of an exported map, in tile units (1 tile = 1 unit, 32 per chunk). Zone is -1 when the map has no per-cell zones.</summary>
-public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area);
+/// <summary>
+/// One matrix cell of an exported map, in tile units (1 tile = 1 unit, 32 per chunk). Zone is -1 when the map has
+/// no per-cell zones. <see cref="Seasons"/> is 4 when the cell has a model per season (area + season), else 1.
+/// </summary>
+public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1)
+{
+    /// <summary>The area whose model to show in <paramref name="season"/> (0 spring … 3 winter).</summary>
+    public int AreaFor(int season) => season > 0 && season < Seasons ? Area + season : Area;
+}
+
+public enum Season { Spring, Summer, Autumn, Winter }
 
 /// <summary>An exported map (one map matrix): the overworld, or an interior, cave, etc.</summary>
 public sealed record WorldIndex(string Key, int Width, int Height, int ChunkTiles, IReadOnlyList<WorldCell> Cells);
@@ -186,15 +195,30 @@ public static class Gen5WorldExtractor
             }
             if (!ctx.ExportChunk((int)chunkIndex, area))
                 continue;
+            var seasons = ctx.IsSeasonal(area) && Enumerable.Range(1, Gen5Layout.Seasons - 1).All(s => ctx.ExportChunk((int)chunkIndex, area + s))
+                ? Gen5Layout.Seasons : 1;
 
             var location = zone >= 0 ? ctx.Zones[zone * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.LocationName] : -1;
             cells.Add(new WorldCell(i % width, i / width, (int)chunkIndex, zone,
-                location >= 0 && location < locationNames.Count ? locationNames[location] : "", area));
+                location >= 0 && location < locationNames.Count ? locationNames[location] : "", area, seasons));
         }
         return new WorldIndex(MapKey(matrixIndex, fixedArea), width, height, Gen5Map.Tiles, cells);
     }
 
     public static string ChunkFileName(int chunk, int area) => $"{chunk:D3}-a{area:D3}";
+
+    public static bool IsSeasonal(ReadOnlySpan<byte> areas, int area)
+    {
+        if ((area + Gen5Layout.Seasons) * Gen5Layout.AreaSize > areas.Length)
+            return false;
+        var group = areas[area * Gen5Layout.AreaSize + Gen5Layout.AreaSeasonGroup];
+        if (group % Gen5Layout.Seasons != 0 || areas[area * Gen5Layout.AreaSize + Gen5Layout.AreaOutdoorFlag] == 0)
+            return false;
+        for (var s = 1; s < Gen5Layout.Seasons; s++)
+            if (areas[(area + s) * Gen5Layout.AreaSize + Gen5Layout.AreaSeasonGroup] != group + s)
+                return false;
+        return true;
+    }
 
     static int NearestZone(int x, int y, int width, int height, Func<int, int> zoneAt)
     {
@@ -242,6 +266,16 @@ public static class Gen5WorldExtractor
 
         public bool MatrixHasZones(int matrix) => U32(Matrices.Read(matrix), 0) != 0;
 
+        /// <summary>True for the spring entry of a four-season group (see <see cref="Gen5Layout.AreaSeasonGroup"/>).</summary>
+        public bool IsSeasonal(int area) => Gen5WorldExtractor.IsSeasonal(Areas, area);
+
+        /// <summary>The spring area of the season group <paramref name="area"/> belongs to, or the area itself.</summary>
+        int SpringArea(int area)
+        {
+            var offset = Areas[area * Gen5Layout.AreaSize + Gen5Layout.AreaSeasonGroup] % Gen5Layout.Seasons;
+            return offset > 0 && area - offset >= 0 && IsSeasonal(area - offset) ? area - offset : area;
+        }
+
         /// <summary>Writes the chunk's glTF (for this area's textures) and collision; false if it can't be decoded.</summary>
         public bool ExportChunk(int chunkIndex, int area)
         {
@@ -271,18 +305,32 @@ public static class Gen5WorldExtractor
 
             if (!_tex0Cache.TryGetValue(texSet, out var tex))
                 _tex0Cache[texSet] = tex = Tex0.FromFile(_textureSets.Read(texSet)) ?? throw new InvalidDataException($"Texture set {texSet} has no TEX0.");
-            if (!_buildingTexCache.TryGetValue((indoor, packIndex), out var bldTex))
-                _buildingTexCache[(indoor, packIndex)] = bldTex = packIndex < packTextures.Count ? Tex0.FromFile(packTextures.Read(packIndex)) : null;
+            Tex0? PackTextures(int pack)
+            {
+                if (!_buildingTexCache.TryGetValue((indoor, pack), out var t))
+                    _buildingTexCache[(indoor, pack)] = t = pack < packTextures.Count ? Tex0.FromFile(packTextures.Read(pack)) : null;
+                return t;
+            }
 
             var map = Gen5Map.Parse(Chunks.Read(chunkIndex));
             var terrain = Nsbmd.Decode(map.Model);
             var parts = new List<GltfPart> { new(terrain, Matrix4x4.CreateScale(UnitScale)) };
 
-            var buildings = BuildingModels(indoor, packs, packIndex);
+            // A summer/autumn/winter pack only holds the buildings that change with the season; the rest come
+            // from the spring area's pack. Each building keeps its own pack's textures.
+            var packOrder = SpringArea(area) is var spring && spring != area ? new[] { U16(Areas, spring * Gen5Layout.AreaSize), packIndex } : [packIndex];
+            var buildings = new Dictionary<int, (NitroModel Model, int Pack)>();
+            foreach (var pack in packOrder)
+            foreach (var (id, m) in BuildingModels(indoor, packs, pack))
+                buildings[id] = (m, pack);
+            var materialPack = new Dictionary<NitroMaterial, int>();
             foreach (var bld in map.Buildings)
             {
-                if (!buildings.TryGetValue(bld.Id, out var model))
+                if (!buildings.TryGetValue(bld.Id, out var entry))
                     continue;
+                var (model, modelPack) = entry;
+                foreach (var m in model.Materials)
+                    materialPack[m] = modelPack;
                 // Building records store Z north-positive, unlike the terrain and collision grid (rows run south).
                 var world = Matrix4x4.CreateRotationY(bld.Rotation / 65536f * MathF.Tau)
                             * Matrix4x4.CreateTranslation(bld.X, bld.Y, -bld.Z)
@@ -293,7 +341,8 @@ public static class Gen5WorldExtractor
             // Terrain materials use the area's texture set; building materials use their pack's set.
             var terrainMaterials = terrain.Materials.ToHashSet();
             (Tex0? Tex, string Folder) SourceFor(NitroMaterial m) =>
-                terrainMaterials.Contains(m) ? (tex, $"set{texSet:D3}") : (bldTex, $"{(indoor ? "ind" : "bld")}{packIndex:D3}");
+                terrainMaterials.Contains(m) ? (tex, $"set{texSet:D3}")
+                : materialPack.GetValueOrDefault(m, packIndex) is var pk ? (PackTextures(pk), $"{(indoor ? "ind" : "bld")}{pk:D3}") : default;
             NitroTexture? Find(NitroMaterial m) =>
                 m.Texture is not null && SourceFor(m).Tex is { } t && t.Textures.TryGetValue(m.Texture, out var nt) ? nt : null;
 

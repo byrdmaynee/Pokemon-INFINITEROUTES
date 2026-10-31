@@ -27,6 +27,9 @@ public static class Gen5Extractor
             throw new NotSupportedException($"Extraction for {game.Name} isn't available yet.");
 
         var target = ExtractionCache.DirectoryFor(gameCode, sha1);
+        using var guard = ExtractionCache.Lock(target, out var waited, ct);
+        if (waited && ExtractionCache.IsComplete(target))
+            return target;
         var temp = target + ".partial";
         if (Directory.Exists(temp))
             Directory.Delete(temp, recursive: true);

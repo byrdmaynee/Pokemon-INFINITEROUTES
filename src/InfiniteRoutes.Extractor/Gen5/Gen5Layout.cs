@@ -21,6 +21,12 @@ public static class Gen5Layout
     public const string AreaTable = "a/0/1/3";
     public const int AreaSize = 10;
     public const int AreaOutdoorFlag = 6;
+    /// <summary>
+    /// Area byte 7: lighting/season group. Seasonal outdoor areas come as four consecutive entries
+    /// (spring, summer, autumn, winter) whose values run n, n+1, n+2, n+3 with n a multiple of 4.
+    /// </summary>
+    public const int AreaSeasonGroup = 7;
+    public const int Seasons = 4;
     public const string MapTextures = "a/0/1/4";
     /// <summary>Outdoor building packs ("AB"): N metadata entries followed by N BMD0 models.</summary>
     public const string BuildingPacks = "a/2/2/9";

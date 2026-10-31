@@ -41,8 +41,8 @@ public sealed class GameAssets
         return File.Exists(path) ? JsonSerializer.Deserialize<List<ZoneInfo>>(File.ReadAllText(path), Json.Indented) ?? [] : [];
     }
 
-    public string ChunkModelPath(WorldCell cell) =>
-        Path.Combine(Directory, "maps", "chunks", Gen5WorldExtractor.ChunkFileName(cell.Chunk, cell.Area) + ".gltf");
+    public string ChunkModelPath(WorldCell cell, Season season = Season.Spring) =>
+        Path.Combine(Directory, "maps", "chunks", Gen5WorldExtractor.ChunkFileName(cell.Chunk, cell.AreaFor((int)season)) + ".gltf");
 
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 

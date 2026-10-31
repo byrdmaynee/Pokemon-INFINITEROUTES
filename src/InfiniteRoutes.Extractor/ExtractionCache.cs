@@ -8,7 +8,7 @@ public sealed record ExtractionStamp(string ExtractorVersion, string GameId, str
 public static class ExtractionCache
 {
     /// <summary>Bump when any converter's output changes; old caches are then rebuilt.</summary>
-    public const string ExtractorVersion = "0.5.0";
+    public const string ExtractorVersion = "0.5.2";
 
     const string StampFile = "extraction.json";
 
@@ -32,6 +32,30 @@ public static class ExtractionCache
         catch (JsonException)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Takes the exclusive lock for extracting into <paramref name="directory"/>, waiting while another process
+    /// (a second client, the CLI) holds it, so two extractions never share a temporary folder.
+    /// <paramref name="waited"/> says whether another extraction held it first; it may have finished the job.
+    /// </summary>
+    public static IDisposable Lock(string directory, out bool waited, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(directory))!);
+        waited = false;
+        while (true)
+        {
+            try
+            {
+                return new FileStream(directory + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+            }
+            catch (IOException)
+            {
+                waited = true;
+                ct.WaitHandle.WaitOne(250);
+                ct.ThrowIfCancellationRequested();
+            }
         }
     }
 
