@@ -22,8 +22,16 @@ public sealed record WarpInfo(int X, int Y, int Width, int Height, int TargetZon
     public bool Contains(int x, int y) => x >= X && y >= Y && x < X + Math.Max(1, Width) && y < Y + Math.Max(1, Height);
 }
 
-/// <summary>A zone (named area with its own scripts and warps) and the map it lives on.</summary>
-public sealed record ZoneInfo(int Id, string Map, string Location, int Parent, IReadOnlyList<WarpInfo> Warps);
+/// <summary>
+/// An NPC or overworld object on its zone's map, in whole tiles. <see cref="Flag"/> is the story flag that
+/// hides it (0 = always there); <see cref="Movement"/> is the ROM's movement code (0 still, 2 looks around,
+/// 3 wanders within <see cref="RangeX"/>/<see cref="RangeY"/> of home, others scripted).
+/// </summary>
+public sealed record NpcInfo(int Id, int Sprite, int X, int Y, float Height, Facing Facing, int Movement,
+    int RangeX, int RangeY, int Script, int Flag);
+
+/// <summary>A zone (named area with its own scripts, warps and NPCs) and the map it lives on.</summary>
+public sealed record ZoneInfo(int Id, string Map, string Location, int Parent, IReadOnlyList<WarpInfo> Warps, IReadOnlyList<NpcInfo> Npcs);
 
 public sealed record WorldData(IReadOnlyList<WorldIndex> Maps, IReadOnlyList<ZoneInfo> Zones);
 
@@ -82,8 +90,8 @@ public static class Gen5WorldExtractor
             if (!exported.Contains(key))
                 continue;
             var eventsFile = ctx.ZoneField(z, Gen5Layout.Zone.Events);
-            var warps = eventsFile < events.Count ? ReadWarps(events.Read(eventsFile)) : [];
-            zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), warps));
+            var file = eventsFile < events.Count ? events.Read(eventsFile) : [];
+            zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file), ReadNpcs(file)));
         }
 
         foreach (var map in maps)
@@ -107,6 +115,45 @@ public static class Gen5WorldExtractor
         return warps.Select(w => new WarpInfo(w.TileX, w.TileY, w.Width, w.Depth, w.OnGrid ? w.TargetZone : -1, w.TargetWarp,
             w.Direction switch { 1 => Facing.Up, 2 => Facing.Down, 3 => Facing.Left, 4 => Facing.Right, _ => null },
             w.Transition switch { 1 => WarpKind.Mat, 2 => WarpKind.Stairs, 3 => WarpKind.Door, 4 => WarpKind.Edge, _ => WarpKind.Other })).ToList();
+    }
+
+    static List<NpcInfo> ReadNpcs(byte[] file)
+    {
+        try
+        {
+            // Rail-placed NPCs (coordinate type 1) need rail support first.
+            return Gen5Events.ParseNpcs(file).Where(n => n.OnGrid).Select(n => new NpcInfo(n.Id, n.Sprite, n.X, n.Y, n.HeightTiles,
+                n.Direction switch { 0 => Facing.Up, 2 => Facing.Left, 3 => Facing.Right, _ => Facing.Down },
+                n.Movement, n.RangeX, n.RangeY, n.Script, n.Flag)).ToList();
+        }
+        catch (InvalidDataException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Writes a <see cref="CharacterSheet"/> per sprite id the zones' NPCs use, as <c>{id}.png</c> in <paramref name="outDir"/>.
+    /// Sprites that are 3D models rather than frame sets are skipped.
+    /// </summary>
+    public static int ExportNpcSprites(NitroFs fs, IEnumerable<ZoneInfo> zones, string outDir)
+    {
+        var table = Gen5OverworldTable.Parse(Narc.Parse(fs.ReadFile(Gen5Layout.OverworldTable)).Read(0));
+        var sprites = Narc.Parse(fs.ReadFile(Gen5Layout.OverworldSprites));
+        Directory.CreateDirectory(outDir);
+        var written = 0;
+        foreach (var id in zones.SelectMany(z => z.Npcs).Select(n => n.Sprite).Distinct())
+        {
+            if (!table.TryGetValue(id, out var member) || member >= sprites.Count)
+                continue;
+            var data = Lz.DecompressIfNeeded(sprites.Read(member));
+            if (data.Length < 4 || data[0] != 'B' || data[1] != 'T' || data[2] != 'X' || Tex0.FromFile(data) is not { } tex
+                || CharacterSheet.FromGen5Npc(tex) is not { } sheet)
+                continue;
+            Png.Save(sheet, Path.Combine(outDir, $"{id}.png"));
+            written++;
+        }
+        return written;
     }
 
     /// <param name="fixedArea">Area for every cell, or -1 to take it from each cell's zone.</param>

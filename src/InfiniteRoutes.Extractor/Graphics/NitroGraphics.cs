@@ -18,6 +18,16 @@ public sealed class Rgba(int width, int height)
         Pixels[i + 3] = (byte)rgba;
     }
 
+    /// <summary>A left-right mirrored copy.</summary>
+    public Rgba FlipX()
+    {
+        var flipped = new Rgba(Width, Height);
+        for (var y = 0; y < Height; y++)
+        for (var x = 0; x < Width; x++)
+            Array.Copy(Pixels, (y * Width + x) * 4, flipped.Pixels, (y * Width + Width - 1 - x) * 4, 4);
+        return flipped;
+    }
+
     /// <summary>Copies <paramref name="src"/> into this image with its top-left corner at (x, y).</summary>
     public void Blit(Rgba src, int x, int y)
     {

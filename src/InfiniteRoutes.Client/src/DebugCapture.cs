@@ -72,7 +72,9 @@ public static class DebugCapture
                 {
                     foreach (var step in path)
                     {
-                        world.TryStep(step, run);
+                        // A wandering NPC may be in the way for a moment.
+                        for (var tries = 0; !world.TryStep(step, run) && tries < 20; tries++)
+                            await Wait(0.1);
                         await Wait(0.05);
                         while (world.Busy)
                             await Wait(0.05);
@@ -92,7 +94,25 @@ public static class DebugCapture
                 world.TryStep(Vector2I.Up);
                 await Settle();
                 Save("10-house");
-                GD.Print($"[capture] door {door.Key} → zone {world.CurrentZone} at {world.PlayerTile}");
+                GD.Print($"[capture] door {door.Key} → zone {world.CurrentZone} at {world.PlayerTile}; {world.Npcs.Count()} NPCs");
+
+                // Talk to the nearest NPC: walk next to it, face it, interact.
+                var sides = new[] { Vector2I.Up, Vector2I.Down, Vector2I.Left, Vector2I.Right };
+                if (world.Npcs.OrderBy(n => (n.Tile - world.PlayerTile).LengthSquared()).FirstOrDefault() is { } npc)
+                {
+                    await Walk(FindPath(world, world.PlayerTile, t => sides.Any(d => t + d == npc.Tile)), run: false);
+                    if (sides.FirstOrDefault(d => world.PlayerTile + d == npc.Tile) is var face && face != Vector2I.Zero)
+                    {
+                        world.TryStep(face);   // blocked by the NPC: just turns
+                        await Wait(0.1);
+                        GD.Print($"[capture] talk to NPC {npc.Info.Id} (sprite {npc.Info.Sprite}): {world.Interact()}");
+                        await Wait(0.3);
+                        Save("10b-talk");
+                        Input.ParseInputEvent(new InputEventAction { Action = "ui_accept", Pressed = true });
+                        await Wait(0.2);
+                        GD.Print($"[capture] dialogue closed: {!world.Talking}");
+                    }
+                }
 
                 // Upstairs and back down.
                 var stairs = world.Warps.FirstOrDefault(w => w.Value.Kind == Extractor.Extraction.WarpKind.Stairs);

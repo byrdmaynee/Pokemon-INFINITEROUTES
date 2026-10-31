@@ -32,6 +32,8 @@ public static class Gen5Layout
     public const string BattleStages = "a/0/1/1";
     /// <summary>Overworld character models (BMD0) and textures (BTX0).</summary>
     public const string OverworldSprites = "a/0/4/9";
+    /// <summary>Sprite id → <see cref="OverworldSprites"/> member (see <see cref="Gen5OverworldTable"/>).</summary>
+    public const string OverworldTable = "a/0/4/8";
 
     /// <summary>The overworld matrix (all of Unova's outdoor map).</summary>
     public const int OverworldMatrix = 0;

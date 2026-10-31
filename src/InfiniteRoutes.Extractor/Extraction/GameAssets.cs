@@ -49,6 +49,9 @@ public sealed class GameAssets
     /// <summary>A <see cref="CharacterSheet"/> PNG; <paramref name="name"/> is "hero" or "heroine".</summary>
     public string OverworldSpritePath(string name) => Path.Combine(Directory, "sprites", "overworld", name + ".png");
 
+    /// <summary>NPC sheet for an overworld sprite id (may not exist: some sprites are 3D models).</summary>
+    public string NpcSpritePath(int sprite) => Path.Combine(Directory, "sprites", "overworld", "npc", $"{sprite}.png");
+
     /// <param name="view">front, back, front-shiny or back-shiny.</param>
     public string BattleSpritePath(int speciesId, string view) =>
         Path.Combine(Directory, "sprites", "battle", view, $"{speciesId:D3}.png");

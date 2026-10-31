@@ -195,6 +195,61 @@ public class MapTests
     }
 
     [Fact]
+    public void Zone_events_yield_npcs_after_furniture()
+    {
+        // Nuvema's first townsperson: sprite 20 wandering 2 tiles east-west at (783, 760), facing down, half a unit up.
+        var file = new byte[8 + Gen5Events.FurnitureSize + Gen5Events.NpcSize];
+        file[4] = 1; file[5] = 1;
+        var o = 8 + Gen5Events.FurnitureSize;
+        foreach (var (at, v) in new[] { (2, 20), (4, 3), (10, 1), (12, 1), (20, 2), (28, 783), (30, 760), (32, 0x8000), (34, 3) })
+            BinaryPrimitives.WriteUInt16LittleEndian(file.AsSpan(o + at), (ushort)v);
+
+        var npc = Assert.Single(Gen5Events.ParseNpcs(file));
+
+        Assert.Equal((20, 3, 1, 1, 2, 0), (npc.Sprite, npc.Movement, npc.Script, npc.Direction, npc.RangeX, npc.RangeY));
+        Assert.Equal((783, 760), (npc.X, npc.Y));
+        Assert.True(npc.OnGrid);
+        Assert.Equal(3.5f / 16, npc.HeightTiles);
+    }
+
+    [Fact]
+    public void Truncated_npc_list_is_rejected()
+    {
+        var file = new byte[8 + Gen5Events.NpcSize - 1];
+        file[5] = 1;
+        Assert.Throws<InvalidDataException>(() => Gen5Events.ParseNpcs(file));
+    }
+
+    [Fact]
+    public void Overworld_table_maps_sprite_ids_to_archive_members()
+    {
+        var table = new byte[4 + 2 * Gen5OverworldTable.EntrySize];
+        BinaryPrimitives.WriteUInt32LittleEndian(table, 2);
+        foreach (var (i, id, member) in new[] { (0, 1, 6), (1, 147, 144) })
+        {
+            BinaryPrimitives.WriteUInt16LittleEndian(table.AsSpan(4 + i * Gen5OverworldTable.EntrySize), (ushort)id);
+            BinaryPrimitives.WriteUInt16LittleEndian(table.AsSpan(4 + i * Gen5OverworldTable.EntrySize + 16), (ushort)member);
+        }
+
+        var map = Gen5OverworldTable.Parse(table);
+
+        Assert.Equal(6, map[1]);
+        Assert.Equal(144, map[147]);
+        Assert.Equal(2, map.Count);
+    }
+
+    [Fact]
+    public void FlipX_mirrors_each_row()
+    {
+        var img = new Rgba(3, 1);
+        img.Set(0, 0, 0x01);
+        img.Set(2, 0, 0x03);
+        var flipped = img.FlipX();
+        Assert.Equal(0x03, flipped.Pixels[3]);
+        Assert.Equal(0x01, flipped.Pixels[2 * 4 + 3]);
+    }
+
+    [Fact]
     public void Warp_rectangle_covers_its_width_and_height()
     {
         var mat = new WarpInfo(5, 10, 3, 1, 389, 0, Facing.Up, WarpKind.Mat);

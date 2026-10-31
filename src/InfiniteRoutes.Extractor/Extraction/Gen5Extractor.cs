@@ -90,8 +90,10 @@ public static class Gen5Extractor
                 if (Tex0.FromFile(Lz.DecompressIfNeeded(characters.Read(index))) is { } tex)
                     Png.Save(CharacterSheet.FromGen5Player(tex), Path.Combine(characterDir, name + ".png"));
 
-            Gen5WorldExtractor.Export(fs, tables["locations"], Directory.CreateDirectory(Path.Combine(temp, "maps")).FullName,
-                progress, 0.4, 0.58, ct);
+            var world = Gen5WorldExtractor.Export(fs, tables["locations"], Directory.CreateDirectory(Path.Combine(temp, "maps")).FullName,
+                progress, 0.4, 0.56, ct);
+            progress?.Report(new("NPC sprites", 0.97));
+            Gen5WorldExtractor.ExportNpcSprites(fs, world.Zones, Path.Combine(characterDir, "npc"));
         }
 
         ExtractionCache.WriteStamp(temp, new ExtractionStamp(ExtractionCache.ExtractorVersion, game.Id, gameCode, sha1, DateTime.UtcNow));

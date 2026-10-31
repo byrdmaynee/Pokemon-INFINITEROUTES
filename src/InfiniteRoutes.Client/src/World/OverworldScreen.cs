@@ -8,7 +8,8 @@ namespace InfiniteRoutes.Client.World;
 /// Offline test world (M1b): walk around Unova as extracted from the player's ROM.
 /// Chunks of the current map stream in around the player; movement is tile-based with the ROM's
 /// collision grid, ground height comes from raycasting the map geometry, and warps (doors, stairs,
-/// exit mats, map edges) move the player between the overworld and interiors.
+/// exit mats, map edges) move the player between the overworld and interiors. NPCs from the zones' event
+/// data stand, look around or wander, block their tiles, and turn to face the player when talked to.
 /// </summary>
 public partial class OverworldScreen : Control
 {
@@ -26,6 +27,9 @@ public partial class OverworldScreen : Control
     readonly Dictionary<(int, int), WorldCell> _cellsByPos = new();
     readonly Dictionary<(int, int), Node3D> _loaded = new();
     readonly Dictionary<Vector2I, WarpInfo> _warps = new();
+    readonly List<NpcInfo> _mapNpcs = new();
+    readonly Dictionary<(int, int), List<NpcActor>> _npcs = new();
+    readonly Dictionary<int, Texture2D?> _npcSheets = new();
     WorldIndex _map = null!;
     int _zone = StartZone;
 
@@ -36,6 +40,8 @@ public partial class OverworldScreen : Control
     Camera3D _camera = null!;
     Label _hud = null!;
     ColorRect _fade = null!;
+    PanelContainer _dialog = null!;
+    Label _dialogText = null!;
     MeshInstance3D? _overlay;
     float _zoom = 1;
 
@@ -92,10 +98,26 @@ public partial class OverworldScreen : Control
         });
         AddChild(_hud);
         _hud.Position = new Vector2(16, 16);
-        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Wheel: zoom · F3: collision · Esc: menu", 14, Ui.Ui.Muted);
+        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · Wheel: zoom · F3: collision · Esc: menu", 14, Ui.Ui.Muted);
         AddChild(help);
         help.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomLeft);
         help.Position = new Vector2(16, -36);
+        _dialog = new PanelContainer { Visible = false };
+        _dialog.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.06f, 0.07f, 0.1f, 0.92f), BorderColor = new Color(1, 1, 1, 0.8f),
+            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+            CornerRadiusTopLeft = 8, CornerRadiusTopRight = 8, CornerRadiusBottomLeft = 8, CornerRadiusBottomRight = 8,
+            ContentMarginLeft = 20, ContentMarginRight = 20, ContentMarginTop = 14, ContentMarginBottom = 14,
+        });
+        _dialogText = Ui.Ui.Text("", 20, wrap: true);
+        _dialog.AddChild(_dialogText);
+        AddChild(_dialog);
+        _dialog.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomWide);
+        _dialog.OffsetLeft = 80;
+        _dialog.OffsetRight = -80;
+        _dialog.OffsetTop = -170;
+        _dialog.OffsetBottom = -60;
         _fade = new ColorRect { Color = Colors.Black, Modulate = Colors.Transparent, MouseFilter = MouseFilterEnum.Ignore };
         AddChild(_fade);
         _fade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
@@ -127,6 +149,8 @@ public partial class OverworldScreen : Control
         foreach (var node in _loaded.Values)
             node.QueueFree();
         _loaded.Clear();
+        foreach (var key in _npcs.Keys.ToList())
+            DespawnNpcs(key);
         _cellsByPos.Clear();
         _map = map;
         foreach (var c in map.Cells)
@@ -135,11 +159,16 @@ public partial class OverworldScreen : Control
         // Maps with per-cell zones (the overworld) gather every zone's warps; interiors use the current zone's.
         _warps.Clear();
         var perCell = map.Cells.Any(c => c.Zone >= 0);
+        _mapNpcs.Clear();
         foreach (var zone in _zones.Values.Where(z => perCell ? z.Map == map.Key : z.Id == _zone))
-        foreach (var w in zone.Warps.Where(w => _zones.ContainsKey(w.TargetZone)))
-        for (var y = w.Y; y < w.Y + Math.Max(1, w.Height); y++)
-        for (var x = w.X; x < w.X + Math.Max(1, w.Width); x++)
-            _warps.TryAdd(new Vector2I(x, y), w);
+        {
+            foreach (var w in zone.Warps.Where(w => _zones.ContainsKey(w.TargetZone)))
+            for (var y = w.Y; y < w.Y + Math.Max(1, w.Height); y++)
+            for (var x = w.X; x < w.X + Math.Max(1, w.Width); x++)
+                _warps.TryAdd(new Vector2I(x, y), w);
+            // Without story progress yet, show only NPCs no event flag can hide.
+            _mapNpcs.AddRange(zone.Npcs.Where(n => n.Flag == 0));
+        }
 
         _environment.BackgroundColor = map.Key == Gen5WorldExtractor.OverworldKey ? new Color(0.55f, 0.75f, 0.95f) : Colors.Black;
     }
@@ -191,7 +220,10 @@ public partial class OverworldScreen : Control
     {
         if (_world is null)
             return;
-        if (!_moving)
+        foreach (var npc in _npcs.Values.SelectMany(l => l).ToList())
+            if (npc.Tick(delta))
+                ActNpc(npc);
+        if (!_moving && !_dialog.Visible)
         {
             var wasRunning = _running;
             var input = Vector2I.Zero;
@@ -208,6 +240,20 @@ public partial class OverworldScreen : Control
             }
         }
         UpdateCamera(snap: false, (float)delta);
+    }
+
+    public override void _UnhandledInput(InputEvent e)
+    {
+        if (_world is null)
+            return;
+        var talk = e.IsActionPressed("ui_accept") || e is InputEventKey { Pressed: true, Keycode: Key.Z, Echo: false };
+        if (_dialog.Visible && (talk || e.IsActionPressed("ui_cancel")))
+        {
+            _dialog.Visible = false;
+            GetViewport().SetInputAsHandled();
+        }
+        else if (talk && Interact())
+            GetViewport().SetInputAsHandled();
     }
 
     public override void _UnhandledKeyInput(InputEvent e)
@@ -290,7 +336,7 @@ public partial class OverworldScreen : Control
             TakeWarp(warp);
             return true;
         }
-        if (IsBlocked(target))
+        if (IsBlocked(target) || NpcAt(target) is not null)
         {
             ShowFrame(0);
             return false;
@@ -355,11 +401,10 @@ public partial class OverworldScreen : Control
         _ => Vector2I.Down,
     };
 
-    void ShowFrame(int step)
-    {
-        var facing = _dir == Vector2I.Up ? Facing.Up : _dir == Vector2I.Left ? Facing.Left : _dir == Vector2I.Right ? Facing.Right : Facing.Down;
-        _sprite.Frame = (int)facing * CharacterSheet.Columns + CharacterSheet.Column(_running, step);
-    }
+    static Facing DirToFacing(Vector2I d) =>
+        d == Vector2I.Up ? Facing.Up : d == Vector2I.Left ? Facing.Left : d == Vector2I.Right ? Facing.Right : Facing.Down;
+
+    void ShowFrame(int step) => _sprite.Frame = (int)DirToFacing(_dir) * CharacterSheet.Columns + CharacterSheet.Column(_running, step);
 
     public Vector2I PlayerTile => _tile;
 
@@ -369,7 +414,95 @@ public partial class OverworldScreen : Control
     /// <summary>True while a step, warp or fade is in progress.</summary>
     public bool Busy => _moving;
 
-    public bool IsWalkable(Vector2I t) => !IsBlocked(t);
+    public bool IsWalkable(Vector2I t) => !IsBlocked(t) && NpcAt(t) is null;
+
+    /// <summary>NPCs currently spawned around the player; for smoke tests.</summary>
+    public IEnumerable<NpcActor> Npcs => _npcs.Values.SelectMany(l => l);
+
+    /// <summary>True while a dialogue box is open.</summary>
+    public bool Talking => _dialog.Visible;
+
+    /// <summary>
+    /// Talks to the NPC the player faces: it turns toward the player and a dialogue box opens. Real lines need
+    /// the script engine, so for now the box says which script would run. False when nobody is there.
+    /// </summary>
+    public bool Interact()
+    {
+        if (_moving || _dialog.Visible || NpcAt(_tile + _dir) is not { } npc)
+            return false;
+        npc.Facing = DirToFacing(-_dir);
+        npc.Pause(2);
+        _dialogText.Text = $"…\n[NPC {npc.Info.Id} · script {npc.Info.Script} · sprite {npc.Info.Sprite}: dialogue arrives with the script engine]";
+        _dialog.Visible = true;
+        ShowFrame(0);
+        return true;
+    }
+
+    NpcActor? NpcAt(Vector2I t)
+    {
+        foreach (var list in _npcs.Values)
+        foreach (var npc in list)
+            if (npc.Tile == t)
+                return npc;
+        return null;
+    }
+
+    /// <summary>Idle behaviour: movement 2 looks around; 3 wanders inside its leash (or just turns without one).</summary>
+    void ActNpc(NpcActor npc)
+    {
+        // Someone being talked to keeps facing the player.
+        if (npc.Info.Movement is not (2 or 3) || (_dialog.Visible && _tile + _dir == npc.Tile))
+            return;
+        Vector2I[] dirs = [Vector2I.Up, Vector2I.Down, Vector2I.Left, Vector2I.Right];
+        var dir = dirs[GD.Randi() % 4];
+        npc.Facing = DirToFacing(dir);
+        if (npc.Info.Movement != 3)
+            return;
+        var target = npc.Tile + dir;
+        var off = target - npc.Home;
+        if (Math.Abs(off.X) > npc.Info.RangeX || Math.Abs(off.Y) > npc.Info.RangeY
+            || IsBlocked(target) || _warps.ContainsKey(target) || target == _tile || NpcAt(target) is not null)
+            return;
+        npc.StepTo(target, GroundHeight(target, npc.Position.Y));
+    }
+
+    void SpawnNpcs((int X, int Y) cell)
+    {
+        var list = new List<NpcActor>();
+        foreach (var info in _mapNpcs.Where(n => CellOf(new Vector2I(n.X, n.Y)) == cell))
+        {
+            if (!_npcSheets.TryGetValue(info.Sprite, out var sheet))
+            {
+                var path = _assets.NpcSpritePath(info.Sprite);
+                _npcSheets[info.Sprite] = sheet = File.Exists(path) && Image.LoadFromFile(path) is { } image ? ImageTexture.CreateFromImage(image) : null;
+            }
+            var npc = new NpcActor(info, sheet) { Position = TileCenter(new Vector2I(info.X, info.Y), info.Height) };
+            _world.AddChild(npc);
+            list.Add(npc);
+        }
+        _npcs[cell] = list;
+        if (list.Count > 0)
+            PlaceNpcs(list);
+    }
+
+    /// <summary>Drops NPCs onto the ground once their chunk's collision is in the physics space.</summary>
+    async void PlaceNpcs(List<NpcActor> list)
+    {
+        await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+        await ToSignal(GetTree(), SceneTree.SignalName.PhysicsFrame);
+        if (!IsInstanceValid(this))
+            return;
+        foreach (var npc in list.Where(n => IsInstanceValid(n) && !n.Moving))
+            npc.Position = TileCenter(npc.Tile, GroundHeight(npc.Tile, npc.Info.Height));
+    }
+
+    void DespawnNpcs((int, int) cell)
+    {
+        if (!_npcs.Remove(cell, out var list))
+            return;
+        foreach (var npc in list)
+            npc.QueueFree();
+    }
 
     public bool IsWarp(Vector2I t) => _warps.ContainsKey(t);
 
@@ -414,12 +547,15 @@ public partial class OverworldScreen : Control
         {
             _loaded[key].QueueFree();
             _loaded.Remove(key);
+            DespawnNpcs(key);
         }
         foreach (var key in wanted.Where(k => !_loaded.ContainsKey(k)))
         {
             var node = LoadChunk(_cellsByPos[key]);
-            if (node is not null)
-                _loaded[key] = node;
+            if (node is null)
+                continue;
+            _loaded[key] = node;
+            SpawnNpcs(key);
         }
     }
 
