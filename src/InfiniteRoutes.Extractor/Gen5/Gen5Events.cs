@@ -29,6 +29,15 @@ public sealed record Gen5Npc(int Id, int Sprite, int Movement, int Type, int Fla
 }
 
 /// <summary>
+/// One piece of furniture from a zone's event file: an interactable tile (PCs, signs, bookshelves) running
+/// <see cref="Script"/> when the player faces it and presses A. X/Y are whole tiles.
+/// </summary>
+public sealed record Gen5Furniture(int Script, int Condition, int Interaction, int CoordType, int X, int Y, int Height)
+{
+    public bool OnGrid => CoordType == 0;
+}
+
+/// <summary>
 /// Zone event files ("zone entities", <see cref="Gen5Layout.ZoneEvents"/>): u32 size, then counts of
 /// furniture (20 bytes each), NPCs (36), warps (20) and triggers (22), each list following the last.
 /// </summary>
@@ -37,6 +46,19 @@ public static class Gen5Events
     public const int FurnitureSize = 20;
     public const int NpcSize = 36;
     public const int WarpSize = 20;
+
+    public static List<Gen5Furniture> ParseFurniture(byte[] file)
+    {
+        if (file.Length < 8)
+            return [];
+        int count = file[4];
+        var o = Need(file, 8, count * FurnitureSize, "furniture");
+        var result = new List<Gen5Furniture>(count);
+        for (var i = 0; i < count; i++, o += FurnitureSize)
+            result.Add(new Gen5Furniture(U16(file, o), U16(file, o + 2), U16(file, o + 4), U16(file, o + 6),
+                U16(file, o + 8), U16(file, o + 12), (int)U32(file, o + 16)));
+        return result;
+    }
 
     public static List<Gen5Npc> ParseNpcs(byte[] file)
     {

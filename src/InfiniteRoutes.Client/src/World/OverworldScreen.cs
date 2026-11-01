@@ -1,6 +1,7 @@
 using Godot;
 using InfiniteRoutes.Client.Ui;
 using InfiniteRoutes.Extractor.Extraction;
+using InfiniteRoutes.Extractor.Gen5;
 
 namespace InfiniteRoutes.Client.World;
 
@@ -50,6 +51,7 @@ public partial class OverworldScreen : Control
     GameMenu? _menu;
     Label _questHud = null!;
     Label _toast = null!;
+    Label _saved = null!;
     Tween? _toastTween;
     /// <summary>False when the cache has no battle data (extracted before 0.6.0): no encounters then.</summary>
     bool _battles;
@@ -136,6 +138,13 @@ public partial class OverworldScreen : Control
         _toast.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterTop);
         _toast.GrowHorizontal = GrowDirection.Both;
         _toast.OffsetTop = 70;
+        _saved = Ui.Ui.Text("", 15, Ui.Ui.Good);
+        _saved.Modulate = Colors.Transparent;
+        AddChild(_saved);
+        _saved.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomRight);
+        _saved.GrowHorizontal = GrowDirection.Begin;
+        _saved.OffsetRight = -16;
+        _saved.OffsetBottom = -12;
         var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · X: menu · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
         AddChild(help);
         help.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomLeft);
@@ -160,11 +169,53 @@ public partial class OverworldScreen : Control
         AddChild(_fade);
         _fade.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
-        EnterMap(overworld);
-        _tile = FindStartTile();
+        // Continue where the save left off, or start at home.
+        Facing? facing = null;
+        if (_battles && OfflineSession.State.Location is { } saved && _zones.TryGetValue(saved.Zone, out var savedZone)
+            && assets.LoadMap(savedZone.Map) is { } savedMap)
+        {
+            _zone = saved.Zone;
+            EnterMap(savedMap);
+            _tile = new Vector2I(saved.X, saved.Y);
+            facing = (Facing)Math.Clamp(saved.Facing, 0, 3);
+            _dir = FacingToDir(facing.Value);
+        }
+        else
+        {
+            EnterMap(overworld);
+            _tile = FindStartTile();
+        }
         StreamChunks();
         UpdateHud();
-        Arrive(_tile, null, autoStep: false);
+        Arrive(_tile, facing, autoStep: false);
+        if (_battles && OfflineSession.Continued && OfflineSession.LastSaved is { } when)
+            Toast($"Welcome back! Continuing your save from {when:g}.");
+    }
+
+    /// <summary>Seconds between autosaves while walking around.</summary>
+    const double AutosaveSeconds = 60;
+    double _sinceSave;
+
+    /// <summary>Saves the game (offline) and flashes "Saved" in the corner. Public so smoke tests can force one.</summary>
+    public void SaveGame()
+    {
+        if (!_battles || _battle is not null)
+            return;
+        _sinceSave = 0;
+        if (!OfflineSession.Save())
+            return;
+        _saved.Text = "✓ Saved";
+        var tween = CreateTween();
+        _saved.Modulate = Colors.White;
+        tween.TweenInterval(1.2);
+        tween.TweenProperty(_saved, "modulate", Colors.Transparent, 0.6);
+    }
+
+    public override void _Notification(int what)
+    {
+        // Closing the window or leaving the world (back to the main menu) saves.
+        if (what is (int)NotificationWMCloseRequest or (int)NotificationExitTree && _world is not null && _battles)
+            OfflineSession.Save();
     }
 
     static Sprite3D BuildSprite(string spritePath) => new()
@@ -282,6 +333,8 @@ public partial class OverworldScreen : Control
             }
         }
         UpdateCamera(snap: false, (float)delta);
+        if ((_sinceSave += delta) >= AutosaveSeconds && !_moving && _battle is null)
+            SaveGame();
     }
 
     public override void _UnhandledInput(InputEvent e)
@@ -589,17 +642,24 @@ public partial class OverworldScreen : Control
         {
             // Black out back home to Nuvema Town, fully healed (the games use the last Pokémon Center visited).
             OfflineSession.HealParty();
-            _zone = StartZone;
-            if (_assets.LoadOverworld() is { } overworld)
-                EnterMap(overworld);
-            _tile = FindStartTile();
-            StreamChunks();
-            UpdateHud();
-            Arrive(_tile, Facing.Down, autoStep: false);
+            GoHome();
         }
         else
             _moving = false;
         CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, 0.3).SetDelay(0.05);
+    }
+
+    /// <summary>Puts the player back at the start in Nuvema Town (blacking out, starting over).</summary>
+    void GoHome()
+    {
+        _zone = StartZone;
+        if (_assets.LoadOverworld() is { } overworld)
+            EnterMap(overworld);
+        _tile = FindStartTile();
+        StreamChunks();
+        UpdateHud();
+        UpdateQuestHud();
+        Arrive(_tile, Facing.Down, autoStep: false);
     }
 
     /// <summary>Whether steps in tall grass can start wild battles (smoke tests turn it off while walking).</summary>
@@ -633,6 +693,7 @@ public partial class OverworldScreen : Control
         UpdateHud();
         Arrive(_tile, dest.Facing, autoStep: dest.Kind is WarpKind.Door or WarpKind.Stairs);
         CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, FadeSeconds).SetDelay(0.05);
+        SaveGame();
     }
 
     /// <summary>Moves the player straight to <paramref name="tile"/> in <paramref name="zone"/>'s map (debugging and smoke tests).</summary>
@@ -651,6 +712,8 @@ public partial class OverworldScreen : Control
 
     /// <summary>NPCs of a zone as placed in its event data; for smoke tests.</summary>
     public IReadOnlyList<NpcInfo> ZoneNpcs(int zone) => _zones.TryGetValue(zone, out var z) ? z.Npcs : [];
+
+    public IReadOnlyList<FurnitureInfo> ZoneFurniture(int zone) => _zones.TryGetValue(zone, out var z) ? z.Furniture ?? [] : [];
 
     static Vector2I FacingToDir(Facing f) => f switch
     {
@@ -702,7 +765,7 @@ public partial class OverworldScreen : Control
         if (npc is null && IsBlocked(_tile + _dir))
             npc = NpcAt(_tile + _dir * 2);   // across a counter
         if (npc is null)
-            return false;
+            return _battles && FurnitureAt(_tile + _dir) is { Script: Gen5Layout.PcScript } && OpenPc();
         npc.Facing = DirToFacing(-_dir);
         npc.Pause(2);
         ShowFrame(0);
@@ -727,6 +790,18 @@ public partial class OverworldScreen : Control
         return true;
     }
 
+    FurnitureInfo? FurnitureAt(Vector2I t) =>
+        _zones.TryGetValue(_zone, out var zone) ? zone.Furniture?.FirstOrDefault(f => f.X == t.X && f.Y == t.Y) : null;
+
+    /// <summary>Boots up the Pokémon Center PC: the menu opens on its PC tab. Public so smoke tests can open it.</summary>
+    public bool OpenPc()
+    {
+        if (_menu is not null || !_battles || _moving || _dialog.Visible || _battle is not null)
+            return false;
+        OpenMenu(GameMenu.Tab.Pc, atPc: true);
+        return true;
+    }
+
     /// <summary>The shared script every Pokémon Center nurse runs (the middle of the counter in every Center).</summary>
     const int NurseScript = 10100;
 
@@ -748,13 +823,19 @@ public partial class OverworldScreen : Control
         }
         if (!_battles || _moving || _dialog.Visible || _battle is not null)
             return;
+        OpenMenu(tab, atPc: false);
+    }
+
+    void OpenMenu(GameMenu.Tab tab, bool atPc)
+    {
         CheckQuests();
-        _menu = new GameMenu(_assets, tab);
+        _menu = new GameMenu(_assets, tab, atPc);
         _menu.Closed += () =>
         {
             _menu = null;
             CheckQuests();
         };
+        _menu.StartedOver += GoHome;
         AddChild(_menu);
         MoveChild(_fade, -1);
     }
@@ -771,6 +852,7 @@ public partial class OverworldScreen : Control
         if (lines.Count > 0)
             Toast(string.Join("\n", lines) + "\nRewards are in your Mail (X → Mail).");
         UpdateQuestHud();
+        SaveGame();
     }
 
     void Toast(string text)
@@ -1020,6 +1102,8 @@ public partial class OverworldScreen : Control
     {
         var name = LocationAt(_tile) is { Length: > 0 } location ? location : "Unova";
         _hud.Text = $"{name}   ·   {_season}   ·   tile {_tile.X}, {_tile.Y}";
+        if (_battles)
+            OfflineSession.State.Location = new Core.Player.PlayerLocation(_zone, _tile.X, _tile.Y, (int)DirToFacing(_dir));
         UpdateQuestHud();
     }
 }

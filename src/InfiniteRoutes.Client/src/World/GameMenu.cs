@@ -8,22 +8,29 @@ using U = InfiniteRoutes.Client.Ui.Ui;
 namespace InfiniteRoutes.Client.World;
 
 /// <summary>
-/// The overworld X menu, in tabs: Party, Bag, Badges, Quests, Mail, Friends, Market and the Trainer Card.
+/// The overworld X menu, in tabs: Party, Bag, Badges, Quests, Mail, Friends, Market and the Trainer Card, plus a PC
+/// tab when opened at a Pokémon Center PC.
 /// Q / E (or Page Up / Down) switch tabs; Esc steps back out of a choice, then closes; X closes.
 /// Friends and the market run on sample data offline (the server brings the real ones in M4/M5).
 /// </summary>
 public partial class GameMenu : Control
 {
-    public enum Tab { Party, Bag, Badges, Quests, Mail, Friends, Market, Card }
+    public enum Tab { Party, Bag, Badges, Quests, Mail, Friends, Market, Card, Pc }
 
     enum MarketView { Buy, Mine, Sell }
 
     [Signal]
     public delegate void ClosedEventHandler();
 
+    /// <summary>The player threw their save away; the world sends them home.</summary>
+    [Signal]
+    public delegate void StartedOverEventHandler();
+
     static readonly Dictionary<string, Texture2D?> Icons = new();
 
     readonly GameAssets _assets;
+    /// <summary>Opened at a Pokémon Center PC: the PC tab is there.</summary>
+    readonly bool _atPc;
     Tab _tab;
     readonly Dictionary<Tab, Button> _tabButtons = new();
     VBoxContainer _body = null!;
@@ -36,14 +43,20 @@ public partial class GameMenu : Control
     MarketView _marketView;
     MarketQuery _query = new();
     (ListingKind Kind, int Item, Pokemon? Mon)? _selling;
+    bool _confirmStartOver;
+    int _box, _pcPick = -1;
+    bool _confirmRelease;
 
     public GameMenu() : this(null!) { }
 
-    public GameMenu(GameAssets assets, Tab tab = Tab.Party)
+    public GameMenu(GameAssets assets, Tab tab = Tab.Party, bool atPc = false)
     {
         _assets = assets;
-        _tab = tab;
+        _atPc = atPc;
+        _tab = tab == Tab.Pc && !atPc ? Tab.Party : tab;
     }
+
+    Tab[] Tabs => Enum.GetValues<Tab>().Where(t => _atPc || t != Tab.Pc).ToArray();
 
     public Tab Current => _tab;
 
@@ -63,7 +76,7 @@ public partial class GameMenu : Control
 
         var tabs = U.HBox(4);
         var group = new ButtonGroup();
-        foreach (var tab in Enum.GetValues<Tab>())
+        foreach (var tab in Tabs)
         {
             var t = tab;
             var button = U.Button(TabTitle(tab), () => Show(t), 17);
@@ -91,6 +104,7 @@ public partial class GameMenu : Control
         Tab.Mail when OfflineSession.Mail.Unread > 0 => $"Mail ({OfflineSession.Mail.Unread})",
         Tab.Friends when OfflineSession.Friends.OnlineCount > 0 => $"Friends ({OfflineSession.Friends.OnlineCount})",
         Tab.Card => "Trainer Card",
+        Tab.Pc => "PC",
         _ => tab.ToString(),
     };
 
@@ -98,7 +112,12 @@ public partial class GameMenu : Control
     public void Show(Tab tab)
     {
         if (tab != _tab)
+        {
             _useItem = 0;
+            _confirmStartOver = false;
+            _pcPick = -1;
+            _confirmRelease = false;
+        }
         _tab = tab;
         Rebuild(null);
     }
@@ -122,6 +141,7 @@ public partial class GameMenu : Control
             Tab.Mail => BuildMail(),
             Tab.Friends => BuildFriends(),
             Tab.Market => BuildMarket(),
+            Tab.Pc => BuildPc(),
             _ => BuildCard(),
         };
         _hint.Text = (message is null ? "" : message + "\n") + hint + "   ·   Q / E: switch tabs   ·   X / Esc: close";
@@ -163,7 +183,7 @@ public partial class GameMenu : Control
             list.AddChild(button);
         }
         if (OfflineSession.Box.Count > 0)
-            list.AddChild(U.Text($"In the PC: {string.Join(", ", OfflineSession.Box.Select(m => $"{m.Name} Lv{m.Level}"))}", 15, U.Muted, wrap: true));
+            list.AddChild(U.Text($"{OfflineSession.Box.Count} Pokémon in the PC: use the PC in any Pokémon Center to swap them in.", 15, U.Muted, wrap: true));
         return _useItem != 0
             ? $"Use the {OfflineSession.Data.ItemName(_useItem)} on which Pokémon?  Esc: cancel"
             : "Pick a Pokémon to make it lead. To use medicine, pick it in the Bag.";
@@ -185,6 +205,125 @@ public partial class GameMenu : Control
         if (index > 0)
             (party[0], party[index]) = (party[index], party[0]);
         Rebuild(index > 0 ? $"{party[0].Name} now leads the party." : null);
+    }
+
+    // ── PC ────────────────────────────────────────────────────────────────────────────────────────────────────
+
+    string BuildPc()
+    {
+        var state = OfflineSession.State;
+        var columns = U.HBox(24);
+        columns.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _body.AddChild(columns);
+
+        var party = U.VBox(6, U.Text($"Party   {state.Party.Count} / {GameState.PartySize}", 19, U.Accent));
+        party.CustomMinimumSize = new Vector2(330, 0);
+        for (var i = 0; i < state.Party.Count; i++)
+        {
+            var index = i;
+            var mon = state.Party[i];
+            var status = mon.Fainted ? "  FNT" : mon.Status == Ailment.None ? "" : $"  {mon.Status}";
+            party.AddChild(Row($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level}\nHP {mon.Hp}/{mon.MaxHp}{status}", () => PcDone(state.Deposit(index)), Icon(mon), 16));
+        }
+        columns.AddChild(party);
+
+        var box = U.VBox(8);
+        box.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+        columns.AddChild(box);
+        var start = _box * GameState.BoxSize;
+        box.AddChild(U.HBox(10,
+            U.Button("◀", () => TurnBox(-1)),
+            U.Text($"Box {_box + 1}   {Math.Clamp(state.Box.Count - start, 0, GameState.BoxSize)} / {GameState.BoxSize}", 19, U.Accent),
+            U.Button("▶", () => TurnBox(1)),
+            U.Spacer(),
+            U.Text($"{state.Box.Count} stored in {GameState.BoxCount} boxes", 15, U.Muted)));
+        var grid = new GridContainer { Columns = 6 };
+        grid.AddThemeConstantOverride("h_separation", 6);
+        grid.AddThemeConstantOverride("v_separation", 6);
+        for (var slot = 0; slot < GameState.BoxSize; slot++)
+        {
+            var index = start + slot;
+            if (index >= state.Box.Count)
+            {
+                var empty = new Panel { CustomMinimumSize = new Vector2(112, 62) };
+                empty.AddThemeStyleboxOverride("panel", Box(new Color(1, 1, 1, 0.03f), new Color(1, 1, 1, 0.08f), 1, 6, 0));
+                grid.AddChild(empty);
+                continue;
+            }
+            var mon = state.Box[index];
+            var button = U.Button($"Lv{mon.Level}", () =>
+            {
+                _pcPick = index;
+                _confirmRelease = false;
+                Rebuild(null);
+            }, 14);
+            button.CustomMinimumSize = new Vector2(112, 62);
+            button.Icon = Icon(mon);
+            button.ExpandIcon = false;
+            button.AddThemeConstantOverride("icon_max_width", 52);
+            button.Alignment = HorizontalAlignment.Left;
+            button.TooltipText = $"{mon.Name}{GenderMark(mon)} Lv{mon.Level}";
+            if (index == _pcPick)
+                button.Modulate = new Color(1.25f, 1.15f, 0.8f);
+            grid.AddChild(button);
+        }
+        box.AddChild(grid);
+
+        if (_pcPick >= 0 && _pcPick < state.Box.Count)
+        {
+            var mon = state.Box[_pcPick];
+            var pick = _pcPick;
+            var about = U.Text($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level} · {mon.Nature}\n{string.Join(", ", mon.Moves.Select(m => m.Move.Name))}", 16, wrap: true);
+            about.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            var withdraw = U.Button("Withdraw", () => PcDone(state.Withdraw(pick)));
+            withdraw.Disabled = state.Party.Count >= GameState.PartySize;
+            var release = U.Button(_confirmRelease ? $"Really release {mon.Name}?" : "Release…", () =>
+            {
+                if (!_confirmRelease)
+                {
+                    _confirmRelease = true;
+                    Rebuild($"Released Pokémon don't come back. Press again to release {mon.Name}.");
+                    return;
+                }
+                PcDone(state.Release(pick));
+            });
+            if (_confirmRelease)
+                release.Modulate = new Color(1.3f, 0.7f, 0.7f);
+            box.AddChild(U.HBox(10, about, withdraw, release));
+        }
+        return _pcPick >= 0
+            ? "Withdraw it to your party, or release it.  Esc: cancel"
+            : "Pick a party Pokémon to deposit it (the PC heals it), or a box Pokémon to withdraw or release it.";
+    }
+
+    /// <summary>Selects a PC Pokémon by its place in the PC. Public so smoke tests can show the choice.</summary>
+    public void PickPc(int index)
+    {
+        if (!_atPc)
+            return;
+        _box = Math.Clamp(index / GameState.BoxSize, 0, GameState.BoxCount - 1);
+        _pcPick = index;
+        _confirmRelease = false;
+        _tab = Tab.Pc;
+        Rebuild(null);
+    }
+
+    void TurnBox(int step)
+    {
+        _box = (_box + step + GameState.BoxCount) % GameState.BoxCount;
+        _pcPick = -1;
+        _confirmRelease = false;
+        Rebuild(null);
+    }
+
+    void PcDone((bool Ok, string Message) result)
+    {
+        if (result.Ok)
+        {
+            _pcPick = -1;
+            _confirmRelease = false;
+        }
+        Rebuild(result.Message);
     }
 
     // ── Bag ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -659,7 +798,7 @@ public partial class GameMenu : Control
     string BuildCard()
     {
         var p = OfflineSession.Progress;
-        var played = DateTime.Now - p.Started;
+        var played = OfflineSession.PlayTime;
         var card = new PanelContainer();
         card.AddThemeStyleboxOverride("panel", Box(new Color(0.16f, 0.26f, 0.42f), new Color(0.55f, 0.75f, 1f), 3, 14, 22));
         var info = U.VBox(6,
@@ -680,6 +819,26 @@ public partial class GameMenu : Control
         card.AddChild(U.VBox(14, info, badges, team));
         card.SizeFlagsHorizontal = SizeFlags.ShrinkCenter;
         _body.AddChild(card);
+
+        var saved = OfflineSession.LastSaved is { } when ? $"Last saved {When(when)} ({when:g})" : "Not saved yet";
+        var startOver = U.Button(_confirmStartOver ? "Really start over? Everything is lost" : "Start over…", () =>
+        {
+            if (!_confirmStartOver)
+            {
+                _confirmStartOver = true;
+                Rebuild("Press again to delete your save and start a new game. Esc to keep playing.");
+                return;
+            }
+            _confirmStartOver = false;
+            OfflineSession.StartOver();
+            EmitSignal(SignalName.StartedOver);
+            Rebuild("A new game begins. Your starter is waiting at home.");
+        });
+        if (_confirmStartOver)
+            startOver.AddThemeColorOverride("font_color", U.Bad);
+        var actions = U.HBox(12, U.Text(saved, 15, U.Muted), U.Spacer(),
+            U.Button("Save now", () => Rebuild(OfflineSession.Save() ? "Game saved." : "Couldn't save — see the log.")), startOver);
+        _body.AddChild(actions);
         return "Your trainer card. Online, other players see it when they inspect you (PvP rating, guild and showcase come later).";
     }
 
@@ -755,8 +914,8 @@ public partial class GameMenu : Control
             var step = key.Keycode switch { Key.Q or Key.Pageup => -1, Key.E or Key.Pagedown => 1, _ => 0 };
             if (step != 0)
             {
-                var count = Enum.GetValues<Tab>().Length;
-                Show((Tab)(((int)_tab + step + count) % count));
+                var tabs = Tabs;
+                Show(tabs[(Array.IndexOf(tabs, _tab) + step + tabs.Length) % tabs.Length]);
                 GetViewport().SetInputAsHandled();
                 return;
             }
@@ -766,8 +925,11 @@ public partial class GameMenu : Control
         if (!close)
             return;
         GetViewport().SetInputAsHandled();
-        if (cancel && (_useItem != 0 || _selling is not null || _mail is not null))
+        if (cancel && (_useItem != 0 || _selling is not null || _mail is not null || _confirmStartOver || _pcPick >= 0))
         {
+            _confirmStartOver = false;
+            _pcPick = -1;
+            _confirmRelease = false;
             _useItem = 0;
             _selling = null;
             _mail = null;

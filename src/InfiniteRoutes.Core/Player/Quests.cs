@@ -60,11 +60,20 @@ public sealed class ActiveQuest
     readonly int[] _baseline;
 
     public ActiveQuest(QuestInfo info, PlayerProgress progress, DateTime started)
+        : this(info, started, info.Objectives.Select(o => o.CountsFromStart ? o.Counter(progress) : 0).ToArray()) { }
+
+    ActiveQuest(QuestInfo info, DateTime started, int[] baseline)
     {
         Info = info;
         Started = started;
-        _baseline = info.Objectives.Select(o => o.CountsFromStart ? o.Counter(progress) : 0).ToArray();
+        _baseline = baseline;
     }
+
+    public ActiveQuestSave ToSave() => new(Info.Id, Started, [.. _baseline]);
+
+    /// <summary>Null when the quest no longer exists or its objectives changed shape.</summary>
+    public static ActiveQuest? FromSave(QuestInfo info, ActiveQuestSave save) =>
+        save.Baseline.Length == info.Objectives.Count ? new ActiveQuest(info, save.Started, [.. save.Baseline]) : null;
 
     public QuestInfo Info { get; }
     public DateTime Started { get; }
@@ -99,6 +108,23 @@ public sealed class QuestLog
         ?? _active.FirstOrDefault(q => q.Info.Category == QuestCategory.Story) ?? _active.FirstOrDefault();
 
     public bool IsDone(string id) => _completed.ContainsKey(id);
+
+    public QuestLogSave ToSave() =>
+        new(_active.Select(q => q.ToSave()).ToList(), _completed.ToDictionary(c => c.Key, c => c.Value), TrackedId);
+
+    /// <summary>Restores saved quests; ones no longer in the catalog are dropped.</summary>
+    public void Load(QuestLogSave save)
+    {
+        _active.Clear();
+        _completed.Clear();
+        foreach (var q in save.Active)
+            if (_catalog.TryGetValue(q.Id, out var info) && ActiveQuest.FromSave(info, q) is { } active && _active.All(a => a.Info.Id != q.Id))
+                _active.Add(active);
+        foreach (var (id, when) in save.Completed)
+            if (_catalog.ContainsKey(id))
+                _completed[id] = when;
+        TrackedId = save.Tracked;
+    }
 
     /// <summary>Starts a quest from the catalog unless it's already active or (for non-dailies) done.</summary>
     public bool Start(string id, PlayerProgress progress, DateTime now)
@@ -147,6 +173,10 @@ public sealed class QuestLog
         return finished;
     }
 }
+
+public sealed record ActiveQuestSave(string Id, DateTime Started, int[] Baseline);
+
+public sealed record QuestLogSave(List<ActiveQuestSave> Active, Dictionary<string, DateTime> Completed, string? Tracked);
 
 /// <summary>The quests the offline test world offers, built from the ROM's trainers so names match the game.</summary>
 public static class StarterQuests

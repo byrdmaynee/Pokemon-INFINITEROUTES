@@ -33,6 +33,14 @@ public sealed class Market
 
     public IReadOnlyList<MarketListing> Listings => _listings;
 
+    /// <summary>Puts saved listings back.</summary>
+    public void Load(IEnumerable<MarketListing> listings)
+    {
+        _listings.Clear();
+        _listings.AddRange(listings);
+        _nextId = _listings.Count == 0 ? 1 : _listings.Max(l => l.Id) + 1;
+    }
+
     public static int ListingFee(int price) => Math.Max(MinListingFee, (int)Math.Ceiling(price * ListingFeeRate));
     public static int Proceeds(int price) => price - (int)Math.Ceiling(price * SalesTaxRate);
 

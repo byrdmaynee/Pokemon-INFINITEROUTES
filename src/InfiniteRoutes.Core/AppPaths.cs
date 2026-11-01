@@ -18,6 +18,11 @@ public static class AppPaths
         ? Path.Combine(h, "cache")
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppFolderName, "cache");
 
+    /// <summary>Offline saves (roaming, like config: a cache clear must never lose them).</summary>
+    public static string SaveDir => HomeOverride is { } h
+        ? Path.Combine(h, "saves")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName, "saves");
+
     public static string RomLibraryFile => Path.Combine(ConfigDir, "roms.pkir");
 
     public static string ServersFile => Path.Combine(ConfigDir, "servers.pkir");

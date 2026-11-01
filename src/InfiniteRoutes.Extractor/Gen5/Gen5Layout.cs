@@ -22,6 +22,9 @@ public static class Gen5Layout
     /// <summary>Trainer NPCs run script <c>TrainerScriptBase + trainer id</c>.</summary>
     public const int TrainerScriptBase = 3000;
 
+    /// <summary>The shared script every Pokémon Center PC (furniture) runs.</summary>
+    public const int PcScript = 2108;
+
     public const string MapChunks = "a/0/0/8";
     public const string MapMatrices = "a/0/0/9";
     /// <summary>NARC whose first member holds every zone header, <see cref="ZoneHeaderSize"/> bytes each.</summary>

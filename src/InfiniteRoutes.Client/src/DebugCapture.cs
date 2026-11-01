@@ -6,15 +6,53 @@ namespace InfiniteRoutes.Client;
 /// <summary>
 /// Scripted smoke test: <c>godot --path . -- --capture=&lt;dir&gt;</c> walks through the main screens,
 /// saves a PNG of each into &lt;dir&gt;, then quits. Used to check UI without clicking through it.
+/// The offline game saves into &lt;dir&gt;/save (never the user's own save) and starts fresh;
+/// <c>--capture-continue=&lt;dir&gt;</c> then reopens the world from that save to check it loads.
 /// </summary>
 public static class DebugCapture
 {
     public static void StartIfRequested(Main main)
     {
-        var arg = OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--capture=", StringComparison.Ordinal));
-        if (arg is null)
-            return;
-        Run(main, arg["--capture=".Length..]);
+        var args = OS.GetCmdlineUserArgs();
+        if (args.FirstOrDefault(a => a.StartsWith("--capture-continue=", StringComparison.Ordinal)) is { } cont)
+        {
+            var dir = cont["--capture-continue=".Length..];
+            World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
+            Continue(main, dir);
+        }
+        else if (args.FirstOrDefault(a => a.StartsWith("--capture=", StringComparison.Ordinal)) is { } arg)
+        {
+            var dir = arg["--capture=".Length..];
+            var save = System.IO.Path.Combine(dir, "save");
+            if (Directory.Exists(save))
+                Directory.Delete(save, recursive: true);
+            World.OfflineSession.SaveDirOverride = save;
+            Run(main, dir);
+        }
+    }
+
+    /// <summary>Opens the world from the save a previous capture left and reports what came back.</summary>
+    static async void Continue(Main main, string dir)
+    {
+        var tree = main.GetTree();
+        async Task Wait(double seconds) => await main.ToSignal(tree.CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
+        main.Push(() => new World.OverworldScreen());
+        await Wait(2.5);
+        main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, "30-continued.png"));
+        var s = World.OfflineSession.State;
+        GD.Print($"[capture] continued {World.OfflineSession.Continued} from {World.OfflineSession.SavePath}; at {s.Location}; party {string.Join(", ", s.Party.Select(p => $"{p.Name} Lv{p.Level} {p.Hp}/{p.MaxHp}"))}; box {s.Box.Count}; money {s.Progress.Money}; badges {string.Join(",", s.Progress.Badges.Keys)}; beaten {string.Join(",", s.Progress.DefeatedTrainers)}; quests {string.Join(",", s.Quests.Active.Select(q => q.Info.Id))}; done {s.Quests.Completed.Count()}; mail {s.Mail.Messages.Count} ({s.Mail.Unread} unread); listings {s.Market.Listings.Count}; friends {s.Friends.Friends.Count()}; play {World.OfflineSession.PlayTime}");
+        if (main.CurrentScreen is World.OverworldScreen world)
+        {
+            world.ToggleMenu(World.GameMenu.Tab.Card);
+            await Wait(0.5);
+            main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, "31-continued-card.png"));
+            world.ToggleMenu();
+        }
+        GD.Print("[capture] done");
+        tree.Quit();
     }
 
     static async void Run(Main main, string dir)
@@ -286,6 +324,35 @@ public static class DebugCapture
                     Save("20-nurse");
                     GD.Print($"[capture] nurse at {nurseTile}, player {world.PlayerTile}: talked {talked}; party HP {string.Join(", ", World.OfflineSession.Party.Select(p => $"{p.Hp}/{p.MaxHp}"))}");
                     Press("ui_accept");
+                    await Wait(0.3);
+
+                    // The Center's PC (furniture script 2108): stand next to it, face it and boot it up.
+                    var pcs = world.ZoneFurniture(accumulaCenter).Where(f => f.Script == Extractor.Gen5.Gen5Layout.PcScript)
+                        .Select(f => new Vector2I(f.X, f.Y)).ToHashSet();
+                    var dirs = new[] { Vector2I.Up, Vector2I.Left, Vector2I.Right, Vector2I.Down };
+                    var data = World.OfflineSession.Data;
+                    foreach (var (species, level) in new[] { (504, 4), (506, 6), (519, 5), (509, 7) })
+                        World.OfflineSession.Box.Add(Core.Battle.Pokemon.Create(data, species, level, new Random(species)));
+                    await Walk(FindPath(world, world.PlayerTile, t => dirs.Any(d => pcs.Contains(t + d))), run: false);
+                    var face = dirs.FirstOrDefault(d => pcs.Contains(world.PlayerTile + d));
+                    world.TryStep(face);
+                    await Wait(0.3);
+                    var booted = world.Interact();
+                    await Wait(0.5);
+                    Save("20b-pc");
+                    var pcMenu = world.Menu;
+                    var deposit = World.OfflineSession.State.Deposit(World.OfflineSession.Party.Count - 1);
+                    pcMenu?.Show(World.GameMenu.Tab.Pc);
+                    await Wait(0.3);
+                    Save("20c-pc-deposited");
+                    pcMenu?.PickPc(World.OfflineSession.Box.Count - 1);
+                    await Wait(0.3);
+                    Save("20d-pc-picked");
+                    var withdraw = World.OfflineSession.State.Withdraw(World.OfflineSession.Box.Count - 1);
+                    GD.Print($"[capture] PC tiles {string.Join(" ", pcs)}; player {world.PlayerTile} facing {face}: booted {booted}, tab {pcMenu?.Current}; {deposit.Message} / {withdraw.Message}; box {World.OfflineSession.Box.Count}");
+                    if (world.MenuOpen)
+                        world.ToggleMenu();
+                    await Wait(0.2);
                 }
 
                 // Trainer: Youngster Jimmy on Route 2 spots the player, walks up and battles a levelled-up Snivy.
@@ -387,6 +454,11 @@ public static class DebugCapture
                     world.ToggleMenu();
                     await Wait(0.3);
                 }
+            }
+            if (main.CurrentScreen is World.OverworldScreen last)
+            {
+                last.SaveGame();
+                GD.Print($"[capture] saved to {World.OfflineSession.SavePath}: {File.Exists(World.OfflineSession.SavePath)}; at {World.OfflineSession.State.Location}");
             }
             main.Back();
         }

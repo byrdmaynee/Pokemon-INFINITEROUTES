@@ -6,7 +6,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Before you start
 
 - [ ] Launch the client after pulling: the loading screen re-extracts your Black/White ROM once
-      (extractor 0.7.0, ~20 s, ~245 MB in the cache). Later launches skip it.
+      (extractor 0.7.1, ~20 s, ~245 MB in the cache). Later launches skip it.
 - [ ] Opening two clients at once: the second waits for the first's extraction, then starts without
       extracting again.
 - [ ] With no ROM extracted, the screen says to re-extract in Settings → ROM Library instead of crashing.
@@ -120,6 +120,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       next battle. X or Esc closes; you can't walk while it is open.
 - [ ] Pokémon Center (e.g. Accumula Town): talk to the nurse in the middle of the counter → "Your
       Pokémon have been restored to full health" and HP, PP and status are all restored.
+- [ ] PC: stand beside the computer at the right end of the counter, face it and press Z/Enter → the menu
+      opens on a PC tab (only there). Pick a party Pokémon to deposit it (healed; the last Pokémon that can
+      battle stays). Pick one in the box grid → Withdraw (greyed out with six in the party) or Release… (press
+      twice). ◀ ▶ page through 24 boxes of 30. Catches with a full party land in the PC and can be withdrawn.
 
 ## Trainers
 
@@ -162,6 +166,18 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       two minutes and the proceeds arrive by mail.
 - [ ] Trainer Card tab: money, badges, catches, trainers beaten, quests done, play time, badge row and party.
 
+## Saving
+
+- [ ] The game saves by itself: after battles, warps, Pokémon Center visits and closing the menu, every
+      minute while walking, and when you quit or go back to the main menu. "✓ Saved" flashes bottom right.
+- [ ] Quit and relaunch, then open the Offline Test World: "Welcome back! Continuing your save from …",
+      standing on the same tile facing the same way, with the same party (levels, HP, PP, status), PC box,
+      Bag, money, badges, beaten trainers, quests (with their progress), mail, friends and market listings.
+- [ ] Trainer Card shows "Last saved …" and the total play time across launches. "Save now" saves at once.
+      "Start over…" asks once more (Esc keeps playing), then deletes the save and starts a new game at home.
+- [ ] Saves live in `%APPDATA%\InfiniteRoutes\saves\offline\<game code>-<ROM hash>.json`, one per ROM,
+      with the previous save kept as `.bak`. Re-extracting the ROM or deleting the cache keeps the save.
+
 ## Things that are expected to be missing (not bugs yet)
 
 - Frame-swap animations (swaying flowers, blinking lights) and animated objects are still static.
@@ -170,8 +186,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - In battle: no nicknames, abilities, held items, weather or move animations; moves with
   special effects beyond damage, status and stat changes just deal damage. A fifth move is skipped with a
   message instead of asking which to forget. The battle background is a placeholder.
-- Other Pokémon Center staff and shop clerks only show their script number. No PC to move Pokémon around.
-- No saving or other players. Friends and market sellers are sample data; mail between players,
+- Other Pokémon Center staff and shop clerks only show their script number. The PC can't sort, move
+  Pokémon between boxes or rename boxes, and other furniture (signs, bookshelves, TVs) does nothing yet.
+- No other players; one save slot per ROM. Friends and market sellers are sample data; mail between players,
   whispers, trades, price history and IV/EV market filters need the server. Badges are drawn shapes,
   not the ROM's badge art, and quests are a starter set rather than ROM story flags.
 - No sound or music.

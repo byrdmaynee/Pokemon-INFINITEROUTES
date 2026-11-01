@@ -15,7 +15,9 @@ public sealed class PlayerProgress
     public int CenterVisits { get; set; }
     /// <summary>Pokémon in the party right now; set by whoever owns the party before quests are checked.</summary>
     public int PartyCount { get; set; }
-    public DateTime Started { get; } = DateTime.Now;
+    public DateTime Started { get; init; } = DateTime.Now;
+    /// <summary>Time played before this session (the session adds its own on top when it saves).</summary>
+    public TimeSpan PlayTime { get; set; }
 
     /// <summary>Counts a beaten trainer, and earns the badge if they were a gym leader. Returns the new badge, if any.</summary>
     public BadgeInfo? Defeated(Data.TrainerInfo trainer, DateTime now)

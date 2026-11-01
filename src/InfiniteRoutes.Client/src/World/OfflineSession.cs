@@ -1,3 +1,4 @@
+using InfiniteRoutes.Core;
 using InfiniteRoutes.Core.Battle;
 using InfiniteRoutes.Core.Data;
 using InfiniteRoutes.Core.Player;
@@ -6,40 +7,56 @@ using InfiniteRoutes.Extractor.Extraction;
 namespace InfiniteRoutes.Client.World;
 
 /// <summary>
-/// The offline test world's game state: battle data from the extracted ROM, the player's party, PC box, Bag, progress
-/// (money, badges, trainers beaten), quests, mail, friends and the market.
-/// Lives for the whole client session (leaving to the menu and coming back keeps them) until the assets change.
-/// Nothing is saved to disk yet. Friends and market sellers are sample data until the server exists (M4/M5).
+/// The offline test world's game: battle data from the extracted ROM and the player's <see cref="GameState"/> (party,
+/// PC box, Bag, progress, quests, mail, friends and the market). It is saved to <see cref="SavePath"/> after battles,
+/// warps, Pokémon Center visits, menu use, every minute and on quit, and loaded again on the next launch.
+/// Friends and market sellers are sample data until the server exists (M4/M5).
 /// </summary>
 public static class OfflineSession
 {
     /// <summary>Snivy, Black/White's grass starter; the test world hands it out at level 5.</summary>
     const int StarterSpecies = 495;
     const int StarterLevel = 5;
-    public const int PartySize = 6;
+    public const int PartySize = GameState.PartySize;
     public const string PlayerName = "Player";
     const string Juniper = "Prof. Juniper", MarketDesk = "Global Market", QuestDesk = "Quest Board";
 
     static GameAssets? _assets;
+    static DateTime _playClock = DateTime.Now;
 
     public static BattleData Data { get; private set; } = null!;
     public static IReadOnlyList<EncounterTable> Encounters { get; private set; } = [];
-    public static List<Pokemon> Party { get; } = new();
-    /// <summary>Caught Pokémon that didn't fit in the party.</summary>
-    public static List<Pokemon> Box { get; } = new();
-    public static Bag Bag { get; private set; } = new();
     public static IReadOnlyList<TrainerInfo> Trainers { get; private set; } = [];
-    public static PlayerProgress Progress { get; private set; } = new();
+    public static GameState State { get; private set; } = new(new QuestLog([]));
+    public static List<Pokemon> Party => State.Party;
+    /// <summary>Caught Pokémon that didn't fit in the party.</summary>
+    public static List<Pokemon> Box => State.Box;
+    public static Bag Bag => State.Bag;
+    public static PlayerProgress Progress => State.Progress;
     /// <summary>Trainers already beaten: they don't challenge again.</summary>
     public static HashSet<int> DefeatedTrainers => Progress.DefeatedTrainers;
     public static int Money { get => Progress.Money; set => Progress.Money = value; }
-    public static QuestLog Quests { get; private set; } = new([]);
-    public static Mailbox Mail { get; private set; } = new();
-    public static FriendList Friends { get; private set; } = new();
-    public static Market Market { get; private set; } = new();
+    public static QuestLog Quests => State.Quests;
+    public static Mailbox Mail => State.Mail;
+    public static FriendList Friends => State.Friends;
+    public static Market Market => State.Market;
     public static Random Rng { get; } = new();
 
-    /// <summary>Loads the battle data for <paramref name="assets"/> (once) and hands out a starter and items if the party is empty.</summary>
+    /// <summary>Saves go here instead of the user's save folder (smoke tests); set before the world opens.</summary>
+    public static string? SaveDirOverride { get; set; }
+
+    /// <summary>The save file for the loaded game: one per ROM (game code and SHA-1).</summary>
+    public static string SavePath { get; private set; } = "";
+    public static DateTime? LastSaved { get; private set; }
+    /// <summary>Whether this launch continued a save (false for a new game).</summary>
+    public static bool Continued { get; private set; }
+    /// <summary>Time played in total, this session included.</summary>
+    public static TimeSpan PlayTime => Progress.PlayTime + (DateTime.Now - _playClock);
+
+    /// <summary>
+    /// Loads the battle data for <paramref name="assets"/> (once), then the save for that game, or starts a new game
+    /// with a starter and items when there is none.
+    /// </summary>
     public static bool Ensure(GameAssets assets)
     {
         if (!ReferenceEquals(assets, _assets))
@@ -50,36 +67,83 @@ public static class OfflineSession
             Data = new BattleData(assets.LoadSpecies(), moves, assets.LoadLearnsets(), assets.LoadText("items"));
             Encounters = assets.LoadEncounters();
             Trainers = assets.LoadTrainers();
-            Party.Clear();
-            Box.Clear();
             _assets = assets;
+            SavePath = Path.Combine(SaveDirOverride ?? Path.Combine(AppPaths.SaveDir, "offline"), $"{assets.Stamp.GameCode}-{assets.Stamp.Sha1[..Math.Min(12, assets.Stamp.Sha1.Length)]}.json");
+            State = new GameState(new QuestLog([]));
+            Continued = Load();
         }
         if (Party.Count == 0)
             NewGame();
         return true;
     }
 
+    static QuestLog NewQuestLog() => new(StarterQuests.Unova(Trainers));
+
+    static bool Load()
+    {
+        if (SaveGame.Read(SavePath) is not { } save)
+            return false;
+        var state = save.Restore(Data, NewQuestLog());
+        if (state.Party.Count == 0)
+            return false;
+        State = state;
+        LastSaved = save.Saved;
+        _playClock = DateTime.Now;
+        return true;
+    }
+
+    /// <summary>Writes the save. False (and the game carries on) when the disk refuses.</summary>
+    public static bool Save()
+    {
+        if (_assets is null || Party.Count == 0)
+            return false;
+        var now = DateTime.Now;
+        Progress.PlayTime = PlayTime;
+        _playClock = now;
+        try
+        {
+            SaveGame.From(State, $"{_assets.Stamp.GameCode}:{_assets.Stamp.Sha1}", now).Write(SavePath);
+            LastSaved = now;
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Godot.GD.PushWarning($"Couldn't save to {SavePath}: {e.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Throws away the current game (and its save) and starts over with a new starter.</summary>
+    public static void StartOver()
+    {
+        foreach (var file in new[] { SavePath, SavePath + ".bak" })
+            if (File.Exists(file))
+                File.Delete(file);
+        State = new GameState(new QuestLog([]));
+        LastSaved = null;
+        Continued = false;
+        NewGame();
+    }
+
     static void NewGame()
     {
         var now = DateTime.Now;
+        _playClock = now;
+        State = new GameState(NewQuestLog());
         Party.Add(Pokemon.Create(Data, StarterSpecies, StarterLevel, Rng));
-        Bag = new Bag();
         Bag.Add(ItemEffect.PokeBall, 10);
         Bag.Add(ItemEffect.GreatBall, 3);
         Bag.Add(ItemEffect.Potion, 5);
         Bag.Add(ItemEffect.Antidote, 2);
         Bag.Add(ItemEffect.ParlyzHeal, 2);
         Bag.Add(ItemEffect.ReviveItem, 1);
-        Progress = new PlayerProgress { PartyCount = Party.Count };
-        Quests = new QuestLog(StarterQuests.Unova(Trainers));
+        Progress.PartyCount = Party.Count;
         foreach (var id in StarterQuests.Initial)
             Quests.Start(id, Progress, now);
-        Mail = new Mailbox();
         Mail.Send(Juniper, "Welcome to Unova!",
-            $"Hello, {PlayerName}! {Party[0].Name} is yours now. Take good care of each other.\n\nYour quests are in the menu (X → Quests): the one you track shows at the top right. Rewards arrive here in your Mail, so check back after finishing one.\n\nI've enclosed a little something for the road.",
+            $"Hello, {PlayerName}! {Party[0].Name} is yours now. Take good care of each other.\n\nYour quests are in the menu (X → Quests): the one you track shows at the top right. Rewards arrive here in your Mail, so check back after finishing one.\n\nYour game saves by itself as you play.\n\nI've enclosed a little something for the road.",
             now, new MailAttachment(Money: 500), new MailAttachment(Item: ItemEffect.Potion, Count: 3));
-        Friends = SampleFriends(now);
-        Market = new Market();
+        AddSampleFriends(now);
         SeedMarket(now);
     }
 
@@ -306,13 +370,11 @@ public static class OfflineSession
         }
     }
 
-    static FriendList SampleFriends(DateTime now)
+    static void AddSampleFriends(DateTime now)
     {
-        var friends = new FriendList();
-        friends.Set(new Friend("Kestrel", FriendState.Online, "Unova", 1, "Castelia City", Note: "sample"));
-        friends.Set(new Friend("Mako", FriendState.Away, "Unova", 2, "Route 4", Note: "sample"));
-        friends.Set(new Friend("Tamsin", FriendState.Offline, "Unova", LastSeen: now.AddHours(-5), Note: "sample"));
-        friends.Set(new Friend("Orrin-77", FriendState.RequestReceived, Note: "sample"));
-        return friends;
+        Friends.Set(new Friend("Kestrel", FriendState.Online, "Unova", 1, "Castelia City", Note: "sample"));
+        Friends.Set(new Friend("Mako", FriendState.Away, "Unova", 2, "Route 4", Note: "sample"));
+        Friends.Set(new Friend("Tamsin", FriendState.Offline, "Unova", LastSeen: now.AddHours(-5), Note: "sample"));
+        Friends.Set(new Friend("Orrin-77", FriendState.RequestReceived, Note: "sample"));
     }
 }

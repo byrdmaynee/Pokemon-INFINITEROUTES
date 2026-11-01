@@ -63,6 +63,14 @@ public sealed class Mailbox
         return message.Attachments;
     }
 
+    /// <summary>Puts saved letters back (newest first, as <see cref="Messages"/> lists them).</summary>
+    public void Load(IEnumerable<MailMessage> messages)
+    {
+        _messages.Clear();
+        _messages.AddRange(messages);
+        _nextId = _messages.Count == 0 ? 1 : _messages.Max(m => m.Id) + 1;
+    }
+
     /// <summary>Deletes a letter. Letters with uncollected attachments are kept.</summary>
     public bool Delete(MailMessage message) => !message.HasUnclaimed && _messages.Remove(message);
 }

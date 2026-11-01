@@ -11,6 +11,8 @@ public sealed class BattleData(IReadOnlyList<SpeciesInfo> species, IReadOnlyList
     readonly Dictionary<int, SpeciesInfo> _species = species.ToDictionary(s => s.Id);
     readonly Dictionary<int, MoveInfo> _moves = moves.ToDictionary(m => m.Id);
 
+    public bool HasSpecies(int id) => _species.ContainsKey(id);
+
     public SpeciesInfo Species(int id) => _species.TryGetValue(id, out var s) ? s : throw new KeyNotFoundException($"No species {id}.");
 
     public MoveInfo? Move(int id) => _moves.GetValueOrDefault(id);
@@ -96,6 +98,32 @@ public sealed class Pokemon
         return mon;
     }
 
+    /// <summary>Everything needed to rebuild this Pokémon later (saves, mail, market listings).</summary>
+    public PokemonSave ToSave() =>
+        new(Species.Id, Level, Exp, Nature, Gender, Shiny, [.. Ivs], [.. Evs], Hp, Status, SleepTurns,
+            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList());
+
+    /// <summary>Rebuilds a saved Pokémon; null when its species isn't in <paramref name="data"/> (a different ROM).</summary>
+    public static Pokemon? FromSave(BattleData data, PokemonSave save)
+    {
+        if (!data.HasSpecies(save.Species) || save.Ivs.Length != 6 || save.Evs.Length != 6)
+            return null;
+        var species = data.Species(save.Species);
+        var level = Math.Clamp(save.Level, 1, 100);
+        var mon = new Pokemon(species, level, save.Nature, save.Gender, save.Shiny, [.. save.Ivs])
+        {
+            Exp = Math.Max(save.Exp, ExpCurve.ForLevel(species.GrowthRate, level)),
+            Status = save.Status,
+            SleepTurns = save.SleepTurns,
+        };
+        save.Evs.CopyTo(mon.Evs, 0);
+        foreach (var m in save.Moves.Take(4))
+            if (data.Move(m.Move) is { } move)
+                mon.Moves.Add(new MoveSlot(move) { Pp = Math.Clamp(m.Pp, 0, move.Pp) });
+        mon.Hp = Math.Clamp(save.Hp, 0, mon.MaxHp);
+        return mon;
+    }
+
     public int StatValue(Stat stat)
     {
         var b = stat switch
@@ -162,6 +190,11 @@ public sealed class Pokemon
         return gained;
     }
 }
+
+public sealed record MoveSave(int Move, int Pp);
+
+public sealed record PokemonSave(int Species, int Level, int Exp, Nature Nature, Gender Gender, bool Shiny, int[] Ivs, int[] Evs,
+    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves);
 
 /// <summary>Total experience needed to reach a level, for the six growth rates (personal byte 0x15).</summary>
 public static class ExpCurve

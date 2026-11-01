@@ -46,12 +46,15 @@ public sealed record NpcInfo(int Id, int Sprite, int X, int Y, float Height, Fac
         ? Script - Gen5Layout.TrainerScriptBase : -1;
 }
 
+/// <summary>An interactable tile (furniture event) and the script it runs, e.g. <see cref="Gen5Layout.PcScript"/>.</summary>
+public sealed record FurnitureInfo(int X, int Y, int Script);
+
 /// <summary>
 /// A zone (named area with its own scripts, warps and NPCs) and the map it lives on. <see cref="Encounters"/> is its
 /// wild encounter table (<c>data/encounters.json</c> id), or -1.
 /// </summary>
 public sealed record ZoneInfo(int Id, string Map, string Location, int Parent, IReadOnlyList<WarpInfo> Warps, IReadOnlyList<NpcInfo> Npcs,
-    int Encounters = -1);
+    int Encounters = -1, IReadOnlyList<FurnitureInfo>? Furniture = null);
 
 public sealed record WorldData(IReadOnlyList<WorldIndex> Maps, IReadOnlyList<ZoneInfo> Zones);
 
@@ -113,7 +116,7 @@ public static class Gen5WorldExtractor
             var file = eventsFile < events.Count ? events.Read(eventsFile) : [];
             var encounters = ctx.ZoneField(z, Gen5Layout.Zone.Encounters);
             zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file), ReadNpcs(file),
-                encounters == 0xFFFF ? -1 : encounters));
+                encounters == 0xFFFF ? -1 : encounters, ReadFurniture(file)));
         }
 
         foreach (var map in maps)
@@ -137,6 +140,18 @@ public static class Gen5WorldExtractor
         return warps.Select(w => new WarpInfo(w.TileX, w.TileY, w.Width, w.Depth, w.OnGrid ? w.TargetZone : -1, w.TargetWarp,
             w.Direction switch { 1 => Facing.Up, 2 => Facing.Down, 3 => Facing.Left, 4 => Facing.Right, _ => null },
             w.Transition switch { 1 => WarpKind.Mat, 2 => WarpKind.Stairs, 3 => WarpKind.Door, 4 => WarpKind.Edge, _ => WarpKind.Other })).ToList();
+    }
+
+    static List<FurnitureInfo> ReadFurniture(byte[] file)
+    {
+        try
+        {
+            return Gen5Events.ParseFurniture(file).Where(f => f.OnGrid).Select(f => new FurnitureInfo(f.X, f.Y, f.Script)).ToList();
+        }
+        catch (InvalidDataException)
+        {
+            return [];
+        }
     }
 
     static List<NpcInfo> ReadNpcs(byte[] file)
