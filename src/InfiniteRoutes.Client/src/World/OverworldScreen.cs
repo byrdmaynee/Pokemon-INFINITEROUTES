@@ -32,6 +32,8 @@ public partial class OverworldScreen : Control
     readonly Dictionary<int, Texture2D?> _npcSheets = new();
     readonly Dictionary<int, IReadOnlyList<Extractor.Nitro3D.SrtAnimation>> _animations = new();
     readonly Dictionary<(int, int), TextureAnimator> _animators = new();
+    readonly Dictionary<int, IReadOnlyList<Extractor.Gen5.TexturePattern>> _patterns = new();
+    readonly Dictionary<string, Texture2D?> _patternFrames = new();
     WorldIndex _map = null!;
     int _zone = StartZone;
 
@@ -737,6 +739,9 @@ public partial class OverworldScreen : Control
     /// <summary>Materials currently animated by the ROM's texture scroll animations; for smoke tests.</summary>
     public int AnimatedMaterials => _loaded.Keys.Sum(k => _animators.TryGetValue(k, out var a) ? a.Count : 0);
 
+    /// <summary>Materials of loaded chunks whose texture is swapped frame by frame (flowers, sea foam); for smoke tests.</summary>
+    public int SwappedMaterials => _loaded.Keys.Sum(k => _animators.TryGetValue(k, out var a) ? a.SwapCount : 0);
+
     /// <summary>True while a dialogue box is open.</summary>
     public bool Talking => _dialog.Visible;
 
@@ -1044,14 +1049,53 @@ public partial class OverworldScreen : Control
         }
         // Replaces any animator left from a chunk this cell held before (another map or season).
         _animators.Remove((cell.X, cell.Y));
-        if (cell.Animation >= 0)
+        if (cell.Animation >= 0 || cell.Pattern >= 0)
         {
-            if (!_animations.TryGetValue(cell.Animation, out var anims))
+            IReadOnlyList<Extractor.Nitro3D.SrtAnimation> anims = [];
+            if (cell.Animation >= 0 && !_animations.TryGetValue(cell.Animation, out anims!))
                 _animations[cell.Animation] = anims = _assets.LoadAnimation(cell.Animation);
-            if (TextureAnimator.Attach(scene, anims) is { } animator)
+            IReadOnlyList<Extractor.Gen5.TexturePattern> patterns = [];
+            if (cell.Pattern >= 0 && !_patterns.TryGetValue(cell.Pattern, out patterns!))
+                _patterns[cell.Pattern] = patterns = _assets.LoadPatterns(cell.Pattern);
+            var textures = MaterialTextures(state);
+            if (TextureAnimator.Attach(scene, anims, patterns, m => textures.GetValueOrDefault(m), image => PatternFrame(cell.Pattern, image))
+                is { } animator)
                 _animators[(cell.X, cell.Y)] = animator;
         }
         return scene;
+    }
+
+    /// <summary>Each material of a loaded glTF → the ROM texture name its base colour image was decoded from.</summary>
+    static Dictionary<Material, string> MaterialTextures(GltfState state)
+    {
+        var result = new Dictionary<Material, string>();
+        var json = state.Json;
+        if (!json.TryGetValue("materials", out var materials) || !json.TryGetValue("textures", out var textures)
+            || !json.TryGetValue("images", out var images))
+            return result;
+        var loaded = state.GetMaterials();
+        var mats = materials.AsGodotArray();
+        for (var i = 0; i < mats.Count && i < loaded.Count; i++)
+        {
+            if (!mats[i].AsGodotDictionary().TryGetValue("pbrMetallicRoughness", out var pbr)
+                || !pbr.AsGodotDictionary().TryGetValue("baseColorTexture", out var color))
+                continue;
+            var texture = textures.AsGodotArray()[color.AsGodotDictionary()["index"].AsInt32()].AsGodotDictionary();
+            var uri = images.AsGodotArray()[texture["source"].AsInt32()].AsGodotDictionary()["uri"].AsString();
+            // Chunk images are "{texture}__{palette}.png" (see Gen5WorldExtractor).
+            var name = uri.GetFile();
+            var split = name.IndexOf("__", StringComparison.Ordinal);
+            result[loaded[i]] = split > 0 ? name[..split] : name.GetBaseName();
+        }
+        return result;
+    }
+
+    Texture2D? PatternFrame(int pattern, string image)
+    {
+        var path = _assets.PatternImagePath(pattern, image);
+        if (!_patternFrames.TryGetValue(path, out var texture))
+            _patternFrames[path] = texture = File.Exists(path) && Image.LoadFromFile(path) is { } img ? ImageTexture.CreateFromImage(img) : null;
+        return texture;
     }
 
     static void ForcePixelArt(MeshInstance3D mesh)

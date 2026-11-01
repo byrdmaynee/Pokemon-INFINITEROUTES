@@ -370,4 +370,53 @@ public class MapTests
         Assert.Equal([0f, 0.25f, 0.5f, 0.75f], t.TranslateS);
         Assert.Equal([-0.5f], t.TranslateT);
     }
+
+    [Fact]
+    public void Texture_pattern_splits_frames_into_tracks_and_saves_each_frame()
+    {
+        // TEX0 with one 8×8 4-colour texture "hana01.1" and one palette.
+        var texDict = Dict("hana01.1", [0, 0, 0, 2 << 2, 0, 0, 0, 0]);   // params: 8×8, format 2, data offset 0
+        var plttDict = Dict("hana01.1_pl", new byte[4]);
+        var tex0 = new byte[0x3C];
+        "TEX0"u8.CopyTo(tex0);
+        var texData = 0x3C + texDict.Length + plttDict.Length;
+        BinaryPrimitives.WriteUInt16LittleEndian(tex0.AsSpan(0x0E), 0x3C);
+        BinaryPrimitives.WriteUInt32LittleEndian(tex0.AsSpan(0x14), (uint)texData);
+        BinaryPrimitives.WriteUInt32LittleEndian(tex0.AsSpan(0x34), (uint)(0x3C + texDict.Length));
+        BinaryPrimitives.WriteUInt32LittleEndian(tex0.AsSpan(0x38), (uint)(texData + 16));
+        byte[] tex = [.. tex0, .. texDict, .. plttDict, .. new byte[16], 0xFF, 0x7F, 0x1F, 0x00, 0xE0, 0x03, 0x00, 0x7C];
+        var btxHeader = new byte[0x14];
+        "BTX0"u8.CopyTo(btxHeader);
+        BinaryPrimitives.WriteUInt16LittleEndian(btxHeader.AsSpan(0x0E), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(btxHeader.AsSpan(0x10), 0x14);
+        byte[] btx = [.. btxHeader, .. tex];
+
+        // Three frames in two tracks (frames 0–1 and 2), 8 ticks long.
+        byte[] table = [3, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 8, 0, 0, 0];
+        var header = new byte[16];
+        BinaryPrimitives.WriteUInt32LittleEndian(header, 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(4), 16);
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(8), (uint)(16 + table.Length));
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(12), (uint)(16 + table.Length + btx.Length));
+        byte[] file = [.. header, .. table, .. btx];
+
+        var dir = Path.Combine(Path.GetTempPath(), $"ir-pattern-{Guid.NewGuid():N}");
+        try
+        {
+            var patterns = Gen5TexturePatterns.Parse(file, dir);
+            Assert.Equal(2, patterns.Count);
+            Assert.All(patterns, p => Assert.Equal(("hana01", 8), (p.Texture, p.Length)));
+            Assert.Equal([0, 4], patterns[0].Frames.Select(f => f.Start));
+            Assert.Equal([0], patterns[1].Frames.Select(f => f.Start));
+            Assert.Equal("hana01.1__hana01.1_pl.png", patterns[0].Frames[0].Image);
+            Assert.True(File.Exists(Path.Combine(dir, "hana01.1__hana01.1_pl.png")));
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, true);
+        }
+        Assert.Equal("hana01", Gen5TexturePatterns.BaseName("hana01.12"));
+        Assert.Equal("sea_mizu1", Gen5TexturePatterns.BaseName("sea_mizu1"));
+    }
 }

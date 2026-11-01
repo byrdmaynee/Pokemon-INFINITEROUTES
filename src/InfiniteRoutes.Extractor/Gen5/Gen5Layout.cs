@@ -39,10 +39,15 @@ public static class Gen5Layout
     /// (spring, summer, autumn, winter) whose values run n, n+1, n+2, n+3 with n a multiple of 4.
     /// </summary>
     public const int AreaSeasonGroup = 7;
-    /// <summary>Area u16 at 4: low byte = SRT texture animation in <see cref="MapSrtAnimations"/>, high byte = ? (0xFF = none).</summary>
+    /// <summary>
+    /// Area u16 at 4: low byte = SRT texture animation in <see cref="MapSrtAnimations"/>, high byte = frame-swap
+    /// animation in <see cref="MapPatternAnimations"/> (0xFF = none).
+    /// </summary>
     public const int AreaAnimations = 4;
     /// <summary>BTA0 texture-scroll animations for map terrain (water, rivers, clouds), indexed by the area table.</summary>
     public const string MapSrtAnimations = "a/0/6/9";
+    /// <summary>Frame-swap texture animations for map terrain (flowers, sea foam, river banks); see <see cref="Gen5TexturePatterns"/>.</summary>
+    public const string MapPatternAnimations = "a/0/7/0";
     public const int Seasons = 4;
     public const string MapTextures = "a/0/1/4";
     /// <summary>Outdoor building packs ("AB"): N metadata entries followed by N BMD0 models.</summary>

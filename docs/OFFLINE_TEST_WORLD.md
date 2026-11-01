@@ -81,6 +81,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] The sea south of Nuvema scrolls and the surf line moves on the beach.
 - [ ] Rivers and ponds along the routes flow; fountains in cities animate.
 - [ ] Water stays continuous across chunk seams (no visible jump at chunk edges).
+- [ ] Flowers in Nuvema sway, and the white foam on the beach comes and goes.
 - [ ] Animation keeps running after a season change (F4) and after going indoors and back out.
 
 ## Wild battles
@@ -191,7 +192,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 
 ## Things that are expected to be missing (not bugs yet)
 
-- Frame-swap animations (swaying flowers, blinking lights) and animated objects are still static.
+- Animated objects (a/2/1/0) are still static.
 - Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
   trainers fight as single battles.
 - In battle: no nicknames, abilities, held items, weather or move animations; moves with

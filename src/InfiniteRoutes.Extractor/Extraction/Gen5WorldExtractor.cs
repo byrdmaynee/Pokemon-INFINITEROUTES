@@ -12,8 +12,10 @@ namespace InfiniteRoutes.Extractor.Extraction;
 /// One matrix cell of an exported map, in tile units (1 tile = 1 unit, 32 per chunk). Zone is -1 when the map has
 /// no per-cell zones. <see cref="Seasons"/> is 4 when the cell has a model per season (area + season), else 1.
 /// </summary>
-/// <see cref="Animation"/> is the map texture animation (<c>anims/{n}.json</c>) for its materials, or -1.
-public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1, int Animation = -1)
+/// <see cref="Animation"/> is the map texture animation (<c>anims/{n}.json</c>) for its materials, or -1;
+/// <see cref="Pattern"/> its frame-swap texture animation (<c>anims/pat{n}.json</c>), or -1.
+public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1, int Animation = -1,
+    int Pattern = -1)
 {
     /// <summary>The area whose model to show in <paramref name="season"/> (0 spring … 3 winter).</summary>
     public int AreaFor(int season) => season > 0 && season < Seasons ? Area + season : Area;
@@ -228,7 +230,8 @@ public static class Gen5WorldExtractor
 
             var location = zone >= 0 ? ctx.Zones[zone * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.LocationName] : -1;
             cells.Add(new WorldCell(i % width, i / width, (int)chunkIndex, zone,
-                location >= 0 && location < locationNames.Count ? locationNames[location] : "", area, seasons, ctx.AnimationFor(area)));
+                location >= 0 && location < locationNames.Count ? locationNames[location] : "", area, seasons, ctx.AnimationFor(area),
+                ctx.PatternFor(area)));
         }
         return new WorldIndex(MapKey(matrixIndex, fixedArea), width, height, Gen5Map.Tiles, cells);
     }
@@ -278,6 +281,8 @@ public static class Gen5WorldExtractor
         readonly HashSet<int> _tilesWritten = new();
         readonly Narc _srtAnimations;
         readonly Dictionary<int, bool> _animationsWritten = new();
+        readonly Narc _patternAnimations;
+        readonly Dictionary<int, bool> _patternsWritten = new();
 
         public Context(NitroFs fs, string outDir)
         {
@@ -287,6 +292,7 @@ public static class Gen5WorldExtractor
             Chunks = Narc.Parse(fs.ReadFile(Gen5Layout.MapChunks));
             _textureSets = Narc.Parse(fs.ReadFile(Gen5Layout.MapTextures));
             _srtAnimations = Narc.Parse(fs.ReadFile(Gen5Layout.MapSrtAnimations));
+            _patternAnimations = Narc.Parse(fs.ReadFile(Gen5Layout.MapPatternAnimations));
             _outdoor = (Narc.Parse(fs.ReadFile(Gen5Layout.BuildingPacks)), Narc.Parse(fs.ReadFile(Gen5Layout.BuildingTextures)));
             _indoor = (Narc.Parse(fs.ReadFile(Gen5Layout.IndoorBuildingPacks)), Narc.Parse(fs.ReadFile(Gen5Layout.IndoorBuildingTextures)));
             _outDir = outDir;
@@ -320,6 +326,29 @@ public static class Gen5WorldExtractor
                 ok = false;
             }
             _animationsWritten[index] = ok;
+            return ok ? index : -1;
+        }
+
+        /// <summary>The area's frame-swap texture animation index (exported on first use), or -1 for none.</summary>
+        public int PatternFor(int area)
+        {
+            var index = Areas[area * Gen5Layout.AreaSize + Gen5Layout.AreaAnimations + 1];
+            if (index == 0xFF || index >= _patternAnimations.Count)
+                return -1;
+            if (_patternsWritten.TryGetValue(index, out var ok))
+                return ok ? index : -1;
+            try
+            {
+                var dir = Directory.CreateDirectory(Path.Combine(_outDir, "anims")).FullName;
+                var patterns = Gen5TexturePatterns.Parse(Lz.DecompressIfNeeded(_patternAnimations.Read(index)), Path.Combine(dir, $"pat{index}"));
+                File.WriteAllText(Path.Combine(dir, $"pat{index}.json"), JsonSerializer.Serialize(patterns, Json.Compact));
+                ok = patterns.Count > 0;
+            }
+            catch (InvalidDataException)
+            {
+                ok = false;
+            }
+            _patternsWritten[index] = ok;
             return ok ? index : -1;
         }
 

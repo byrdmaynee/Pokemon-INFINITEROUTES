@@ -112,7 +112,7 @@ public static class DebugCapture
                 }
                 world.Season = season;
                 await Wait(0.6);
-                GD.Print($"[capture] animated materials: {world.AnimatedMaterials}");
+                GD.Print($"[capture] animated materials: {world.AnimatedMaterials} ({world.SwappedMaterials} frame-swapped)");
                 Save("09w-water-a");
                 await Wait(0.7);
                 Save("09w-water-b");

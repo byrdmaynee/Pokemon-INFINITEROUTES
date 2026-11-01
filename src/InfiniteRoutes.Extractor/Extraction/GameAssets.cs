@@ -72,6 +72,16 @@ public sealed class GameAssets
         return File.Exists(path) ? JsonSerializer.Deserialize<List<Nitro3D.SrtAnimation>>(File.ReadAllText(path), Json.Indented) ?? [] : [];
     }
 
+    /// <summary>A map's frame-swap texture animations (<see cref="WorldCell.Pattern"/>); empty if missing.</summary>
+    public IReadOnlyList<Gen5.TexturePattern> LoadPatterns(int index)
+    {
+        var path = Path.Combine(Directory, "maps", "anims", $"pat{index}.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<List<Gen5.TexturePattern>>(File.ReadAllText(path), Json.Indented) ?? [] : [];
+    }
+
+    /// <summary>The PNG of one <see cref="Gen5.PatternFrame"/> of pattern file <paramref name="index"/>.</summary>
+    public string PatternImagePath(int index, string image) => Path.Combine(Directory, "maps", "anims", $"pat{index}", image);
+
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 
     /// <summary>A <see cref="CharacterSheet"/> PNG; <paramref name="name"/> is "hero" or "heroine".</summary>
