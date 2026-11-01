@@ -6,7 +6,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Before you start
 
 - [ ] Launch the client after pulling: the loading screen re-extracts your Black/White ROM once
-      (extractor 0.7.1, ~20 s, ~245 MB in the cache). Later launches skip it.
+      (extractor 0.7.2, ~20 s, ~245 MB in the cache). Later launches skip it.
 - [ ] Opening two clients at once: the second waits for the first's extraction, then starts without
       extracting again.
 - [ ] With no ROM extracted, the screen says to re-extract in Settings → ROM Library instead of crashing.
@@ -124,6 +124,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       opens on a PC tab (only there). Pick a party Pokémon to deposit it (healed; the last Pokémon that can
       battle stays). Pick one in the box grid → Withdraw (greyed out with six in the party) or Release… (press
       twice). ◀ ▶ page through 24 boxes of 30. Catches with a full party land in the PC and can be withdrawn.
+- [ ] Poké Mart: talk to either clerk behind the counter below the PC (across the counter is fine) → the
+      menu opens on a Poké Mart tab. Prices match the games (Poké Ball ₽200, Potion ₽300). Buying ×10 Poké
+      Balls adds a free Premier Ball; buttons you can't afford are greyed out. Selling pays half. Earning a
+      badge adds stock (Great Ball and Super Potion after the first); each town has its own specialty balls.
 
 ## Trainers
 
@@ -186,7 +190,8 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - In battle: no nicknames, abilities, held items, weather or move animations; moves with
   special effects beyond damage, status and stat changes just deal damage. A fifth move is skipped with a
   message instead of asking which to forget. The battle background is a placeholder.
-- Other Pokémon Center staff and shop clerks only show their script number. The PC can't sort, move
+- Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
+  town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't sort, move
   Pokémon between boxes or rename boxes, and other furniture (signs, bookshelves, TVs) does nothing yet.
 - No other players; one save slot per ROM. Friends and market sellers are sample data; mail between players,
   whispers, trades, price history and IV/EV market filters need the server. Badges are drawn shapes,

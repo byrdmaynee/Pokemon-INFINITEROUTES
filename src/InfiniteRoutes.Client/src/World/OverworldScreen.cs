@@ -786,6 +786,8 @@ public partial class OverworldScreen : Control
             CheckQuests();
             return true;
         }
+        if (_battles && npc.Info.Sprite == ClerkSprite && ZoneNpcs(_zone).Any(n => n.Script == NurseScript))
+            return OpenMart();
         ShowMessage($"…\n[NPC {npc.Info.Id} · script {npc.Info.Script} · sprite {npc.Info.Sprite}: dialogue arrives with the script engine]");
         return true;
     }
@@ -798,9 +800,21 @@ public partial class OverworldScreen : Control
     {
         if (_menu is not null || !_battles || _moving || _dialog.Visible || _battle is not null)
             return false;
-        OpenMenu(GameMenu.Tab.Pc, atPc: true);
+        OpenMenu(GameMenu.Tab.Pc, GameMenu.Tab.Pc);
         return true;
     }
+
+    /// <summary>Opens the Poké Mart counter (the clerks beside the PC in every Pokémon Center). Public so smoke tests can open it.</summary>
+    public bool OpenMart()
+    {
+        if (_menu is not null || !_battles || _moving || _dialog.Visible || _battle is not null)
+            return false;
+        OpenMenu(GameMenu.Tab.Mart, GameMenu.Tab.Mart);
+        return true;
+    }
+
+    /// <summary>The overworld sprite of a Poké Mart clerk; the two behind the right-hand counter in every Pokémon Center.</summary>
+    const int ClerkSprite = 77;
 
     /// <summary>The shared script every Pokémon Center nurse runs (the middle of the counter in every Center).</summary>
     const int NurseScript = 10100;
@@ -823,13 +837,13 @@ public partial class OverworldScreen : Control
         }
         if (!_battles || _moving || _dialog.Visible || _battle is not null)
             return;
-        OpenMenu(tab, atPc: false);
+        OpenMenu(tab, null);
     }
 
-    void OpenMenu(GameMenu.Tab tab, bool atPc)
+    void OpenMenu(GameMenu.Tab tab, GameMenu.Tab? counter)
     {
         CheckQuests();
-        _menu = new GameMenu(_assets, tab, atPc);
+        _menu = new GameMenu(_assets, tab, counter, ZoneLocation);
         _menu.Closed += () =>
         {
             _menu = null;

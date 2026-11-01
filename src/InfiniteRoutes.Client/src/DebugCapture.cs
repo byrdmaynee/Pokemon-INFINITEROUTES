@@ -353,6 +353,27 @@ public static class DebugCapture
                     if (world.MenuOpen)
                         world.ToggleMenu();
                     await Wait(0.2);
+
+                    // The Poké Mart clerks behind the right-hand counter: talk across it, buy ten Poké Balls.
+                    if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Sprite == 77) is { } clerk)
+                    {
+                        var clerkTile = new Vector2I(clerk.X, clerk.Y);
+                        await Walk(FindPath(world, world.PlayerTile, t => dirs.Any(d => t + d == clerkTile || (t + d * 2 == clerkTile && !world.IsWalkable(t + d)))), run: false);
+                        var toward = dirs.First(d => world.PlayerTile + d == clerkTile || world.PlayerTile + d * 2 == clerkTile);
+                        world.TryStep(toward);
+                        await Wait(0.3);
+                        var shopping = world.Interact();
+                        await Wait(0.5);
+                        Save("20e-mart");
+                        var bought = Core.Player.PokeMart.Buy(World.OfflineSession.State, data, Core.Battle.ItemEffect.PokeBall, 10);
+                        world.Menu?.Show(World.GameMenu.Tab.Mart);
+                        await Wait(0.3);
+                        Save("20f-mart-bought");
+                        GD.Print($"[capture] clerk at {clerkTile}, player {world.PlayerTile}: shop {shopping}, tab {world.Menu?.Current}; {bought.Message} money {World.OfflineSession.Money}");
+                        if (world.MenuOpen)
+                            world.ToggleMenu();
+                        await Wait(0.2);
+                    }
                 }
 
                 // Trainer: Youngster Jimmy on Route 2 spots the player, walks up and battles a levelled-up Snivy.

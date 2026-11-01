@@ -38,6 +38,9 @@ public sealed class GameAssets
     /// <summary>Trainers indexed by id (<see cref="NpcInfo.TrainerId"/>).</summary>
     public IReadOnlyList<TrainerInfo> LoadTrainers() => LoadData<List<TrainerInfo>>("trainers") ?? [];
 
+    /// <summary>Shop prices in ₽ indexed by item id (0 = can't be bought or sold).</summary>
+    public IReadOnlyList<int> LoadItemPrices() => LoadData<List<int>>("item-prices") ?? [];
+
     T? LoadData<T>(string name)
     {
         var path = Path.Combine(Directory, "data", name + ".json");

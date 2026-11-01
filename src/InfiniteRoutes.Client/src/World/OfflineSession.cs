@@ -64,7 +64,7 @@ public static class OfflineSession
             var moves = assets.LoadMoves();
             if (moves.Count == 0)
                 return false;
-            Data = new BattleData(assets.LoadSpecies(), moves, assets.LoadLearnsets(), assets.LoadText("items"));
+            Data = new BattleData(assets.LoadSpecies(), moves, assets.LoadLearnsets(), assets.LoadText("items"), assets.LoadItemPrices());
             Encounters = assets.LoadEncounters();
             Trainers = assets.LoadTrainers();
             _assets = assets;

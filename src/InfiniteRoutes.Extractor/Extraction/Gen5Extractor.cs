@@ -91,6 +91,13 @@ public static class Gen5Extractor
                 trainers.Add(Gen5Battle.DecodeTrainer(id, trainerData.Read(id), trainerParties.Read(id), tables["trainers"], tables["trainer-classes"]));
             WriteJson(Path.Combine(temp, "data", "trainers.json"), trainers);
 
+            // Item prices by item id, in ₽ (the ROM stores tenths).
+            var itemData = Narc.Parse(fs.ReadFile(Gen5Layout.Items));
+            var prices = new List<int>();
+            for (var id = 0; id < itemData.Count; id++)
+                prices.Add(itemData.Read(id) is { Length: >= 2 } item ? (item[0] | item[1] << 8) * 10 : 0);
+            WriteJson(Path.Combine(temp, "data", "item-prices.json"), prices);
+
             var sprites = Narc.Parse(fs.ReadFile(Gen5Layout.BattleSprites));
             var spriteDir = Path.Combine(temp, "sprites", "battle");
             foreach (var sub in new[] { "front", "back", "front-shiny", "back-shiny" })

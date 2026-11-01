@@ -19,6 +19,8 @@ public static class Gen5Layout
     /// <summary>Trainer records and their parties, same index (see <see cref="Gen5Battle.DecodeTrainer"/>).</summary>
     public const string Trainers = "a/0/9/2";
     public const string TrainerParties = "a/0/9/3";
+    /// <summary>Item data, one 36-byte member per item id; u16 @0 is the price in units of ₽10.</summary>
+    public const string Items = "a/0/2/4";
     /// <summary>Trainer NPCs run script <c>TrainerScriptBase + trainer id</c>.</summary>
     public const int TrainerScriptBase = 3000;
 

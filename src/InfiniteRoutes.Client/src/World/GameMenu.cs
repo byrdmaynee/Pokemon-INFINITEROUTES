@@ -9,13 +9,13 @@ namespace InfiniteRoutes.Client.World;
 
 /// <summary>
 /// The overworld X menu, in tabs: Party, Bag, Badges, Quests, Mail, Friends, Market and the Trainer Card, plus a PC
-/// tab when opened at a Pokémon Center PC.
+/// or Poké Mart tab when opened at a Pokémon Center's PC or shop counter.
 /// Q / E (or Page Up / Down) switch tabs; Esc steps back out of a choice, then closes; X closes.
 /// Friends and the market run on sample data offline (the server brings the real ones in M4/M5).
 /// </summary>
 public partial class GameMenu : Control
 {
-    public enum Tab { Party, Bag, Badges, Quests, Mail, Friends, Market, Card, Pc }
+    public enum Tab { Party, Bag, Badges, Quests, Mail, Friends, Market, Card, Pc, Mart }
 
     enum MarketView { Buy, Mine, Sell }
 
@@ -29,8 +29,10 @@ public partial class GameMenu : Control
     static readonly Dictionary<string, Texture2D?> Icons = new();
 
     readonly GameAssets _assets;
-    /// <summary>Opened at a Pokémon Center PC: the PC tab is there.</summary>
-    readonly bool _atPc;
+    /// <summary>The counter the menu was opened at (<see cref="Tab.Pc"/> or <see cref="Tab.Mart"/>): only then is its tab there.</summary>
+    readonly Tab? _counter;
+    /// <summary>The town the player is in, for the Mart's specialty shelf.</summary>
+    readonly string _town;
     Tab _tab;
     readonly Dictionary<Tab, Button> _tabButtons = new();
     VBoxContainer _body = null!;
@@ -49,14 +51,15 @@ public partial class GameMenu : Control
 
     public GameMenu() : this(null!) { }
 
-    public GameMenu(GameAssets assets, Tab tab = Tab.Party, bool atPc = false)
+    public GameMenu(GameAssets assets, Tab tab = Tab.Party, Tab? counter = null, string town = "")
     {
         _assets = assets;
-        _atPc = atPc;
-        _tab = tab == Tab.Pc && !atPc ? Tab.Party : tab;
+        _counter = counter;
+        _town = town;
+        _tab = tab is Tab.Pc or Tab.Mart && tab != counter ? Tab.Party : tab;
     }
 
-    Tab[] Tabs => Enum.GetValues<Tab>().Where(t => _atPc || t != Tab.Pc).ToArray();
+    Tab[] Tabs => Enum.GetValues<Tab>().Where(t => t is not (Tab.Pc or Tab.Mart) || t == _counter).ToArray();
 
     public Tab Current => _tab;
 
@@ -105,6 +108,7 @@ public partial class GameMenu : Control
         Tab.Friends when OfflineSession.Friends.OnlineCount > 0 => $"Friends ({OfflineSession.Friends.OnlineCount})",
         Tab.Card => "Trainer Card",
         Tab.Pc => "PC",
+        Tab.Mart => "Poké Mart",
         _ => tab.ToString(),
     };
 
@@ -142,6 +146,7 @@ public partial class GameMenu : Control
             Tab.Friends => BuildFriends(),
             Tab.Market => BuildMarket(),
             Tab.Pc => BuildPc(),
+            Tab.Mart => BuildMart(),
             _ => BuildCard(),
         };
         _hint.Text = (message is null ? "" : message + "\n") + hint + "   ·   Q / E: switch tabs   ·   X / Esc: close";
@@ -299,7 +304,7 @@ public partial class GameMenu : Control
     /// <summary>Selects a PC Pokémon by its place in the PC. Public so smoke tests can show the choice.</summary>
     public void PickPc(int index)
     {
-        if (!_atPc)
+        if (_counter != Tab.Pc)
             return;
         _box = Math.Clamp(index / GameState.BoxSize, 0, GameState.BoxCount - 1);
         _pcPick = index;
@@ -324,6 +329,65 @@ public partial class GameMenu : Control
             _confirmRelease = false;
         }
         Rebuild(result.Message);
+    }
+
+    // ── Poké Mart ─────────────────────────────────────────────────────────────────────────────────────────────
+
+    string BuildMart()
+    {
+        var data = OfflineSession.Data;
+        var state = OfflineSession.State;
+        var columns = U.HBox(24);
+        columns.SizeFlagsVertical = SizeFlags.ExpandFill;
+        _body.AddChild(columns);
+
+        var buy = U.VBox(6);
+        void Shelf(string title, IEnumerable<int> items)
+        {
+            buy.AddChild(U.Text(title, 19, U.Accent));
+            foreach (var item in items.Where(i => data.ItemPrice(i) > 0))
+            {
+                var id = item;
+                var name = U.Text(data.ItemName(item), 17);
+                name.CustomMinimumSize = new Vector2(150, 0);
+                var row = U.HBox(8, name, U.Text($"₽{data.ItemPrice(item):N0}", 17, U.Accent), U.Spacer(),
+                    U.Text($"have {state.Bag.Count(item)}", 15, U.Muted));
+                foreach (var n in new[] { 1, 5, 10 })
+                {
+                    var count = n;
+                    var button = U.Button($"×{n}", () => Rebuild(PokeMart.Buy(state, data, id, count).Message), 15);
+                    button.Disabled = state.Progress.Money < data.ItemPrice(item) * n;
+                    row.AddChild(button);
+                }
+                buy.AddChild(row);
+            }
+        }
+        Shelf("For sale", PokeMart.StandardStock(state.Progress.Badges.Count));
+        buy.AddChild(new HSeparator());
+        Shelf(_town == "" ? "Specialties" : $"{_town} specialties", PokeMart.SpecialtyStock(_town));
+        var left = WrapScroll(buy);
+        left.SizeFlagsStretchRatio = 1.3f;
+        columns.AddChild(left);
+
+        var sell = U.VBox(6, U.Text("Sell from your Bag", 19, U.Accent));
+        foreach (var (item, count) in state.Bag.Items.ToList())
+        {
+            var id = item;
+            var have = count;
+            var each = PokeMart.SellPrice(data, item);
+            var row = U.HBox(8, U.Text($"{data.ItemName(item)}  ×{count}", 17), U.Spacer(),
+                U.Text(each > 0 ? $"₽{each:N0} each" : "can't be sold", 15, each > 0 ? U.Accent : U.Muted));
+            if (each > 0)
+            {
+                row.AddChild(U.Button("Sell 1", () => Rebuild(PokeMart.Sell(state, data, id, 1).Message), 15));
+                row.AddChild(U.Button("All", () => Rebuild(PokeMart.Sell(state, data, id, have).Message), 15));
+            }
+            sell.AddChild(row);
+        }
+        if (!state.Bag.Items.Any())
+            sell.AddChild(U.Text("Your Bag is empty.", 15, U.Muted));
+        columns.AddChild(WrapScroll(sell));
+        return $"Ten Poké Balls come with a free Premier Ball. Items sell for half. Badges unlock stock ({state.Progress.Badges.Count}/8).";
     }
 
     // ── Bag ───────────────────────────────────────────────────────────────────────────────────────────────────
