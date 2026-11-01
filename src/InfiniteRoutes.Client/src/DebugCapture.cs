@@ -375,6 +375,21 @@ public static class DebugCapture
                             world.ToggleMenu();
                         await Wait(0.2);
                     }
+
+                    // Ride the right-hand escalator up to the raised floor: the sprite must stay whole on the steps.
+                    var climb = FindPath(world, world.PlayerTile, t => t == new Vector2I(12, 7));
+                    for (var i = 0; i < climb.Count; i++)
+                    {
+                        world.TryStep(climb[i], run: false);
+                        await Wait(0.12);
+                        if (world.PlayerTile.Y is >= 7 and <= 12)
+                            Save($"20g-stairs-{i:D2}");
+                        while (world.Busy)
+                            await Wait(0.05);
+                    }
+                    await Wait(0.3);
+                    Save("20h-upstairs");
+                    GD.Print($"[capture] escalator: {climb.Count} steps to {world.PlayerTile}, height {world.PlayerHeight:0.00}");
                 }
 
                 // Trainer: Youngster Jimmy on Route 2 spots the player, walks up and battles a levelled-up Snivy.

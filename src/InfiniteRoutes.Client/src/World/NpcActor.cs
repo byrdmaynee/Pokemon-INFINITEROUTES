@@ -28,18 +28,7 @@ public partial class NpcActor : Node3D
         _facing = info.Facing;
         _idle = GD.RandRange(1.0, 4.0);
         var frame = sheet is null ? CharacterSheet.FrameSize : sheet.GetWidth() / CharacterSheet.Columns;
-        _sprite = new Sprite3D
-        {
-            Texture = sheet,
-            Hframes = CharacterSheet.Columns,
-            Vframes = CharacterSheet.Rows,
-            PixelSize = 1f / 16,
-            Offset = new Vector2(0, frame / 2f - 2),
-            Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-            TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
-            AlphaCut = SpriteBase3D.AlphaCutMode.Discard,
-            Shaded = false,
-        };
+        _sprite = CharacterSprite.Create(sheet, frame);
         AddChild(_sprite);
         ShowFrame(0);
     }

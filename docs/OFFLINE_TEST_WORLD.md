@@ -37,6 +37,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       and the HUD location changes at the boundary.
 - [ ] Walk far (e.g. along Route 1 to Accumula Town): no stutter build-up or missing chunks.
 - [ ] Zoom out fully and in fully: the camera keeps the player centred.
+- [ ] Ride a Pokémon Center escalator up to the raised floor and back: the player stays whole on every
+      step (no legs or head cut off, never hidden inside the stairs), while counters and walls in front of a
+      character still hide the part behind them (the nurse's legs behind her counter).
 
 ## Warps
 

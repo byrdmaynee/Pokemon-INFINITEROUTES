@@ -217,19 +217,8 @@ public partial class OverworldScreen : Control
             OfflineSession.Save();
     }
 
-    static Sprite3D BuildSprite(string spritePath) => new()
-    {
-        Texture = File.Exists(spritePath) && Image.LoadFromFile(spritePath) is { } image ? ImageTexture.CreateFromImage(image) : null,
-        Hframes = CharacterSheet.Columns,
-        Vframes = CharacterSheet.Rows,
-        // 32 px frames on a 16 px tile grid: 1/16 world units per pixel, feet on the ground.
-        PixelSize = 1f / 16,
-        Offset = new Vector2(0, CharacterSheet.FrameSize / 2f - 2),
-        Billboard = BaseMaterial3D.BillboardModeEnum.Enabled,
-        TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest,
-        AlphaCut = SpriteBase3D.AlphaCutMode.Discard,
-        Shaded = false,
-    };
+    static Sprite3D BuildSprite(string spritePath) =>
+        CharacterSprite.Create(File.Exists(spritePath) && Image.LoadFromFile(spritePath) is { } image ? ImageTexture.CreateFromImage(image) : null);
 
     /// <summary>Switches to another map: drops loaded chunks and indexes the new map's cells and warps.</summary>
     void EnterMap(WorldIndex map)
