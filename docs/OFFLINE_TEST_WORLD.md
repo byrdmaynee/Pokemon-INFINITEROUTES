@@ -97,6 +97,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Leer/Growl/Tail Whip lower stats ("…'s Defense fell!") and later hits do more/less damage.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
+- [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
+      forget, showing the new move's type, power and PP. Forgetting one → "1, 2, and… … Poof!", the old move
+      is gone and the new one has full PP; "Don't learn" keeps the four. Esc doesn't close the list.
 - [ ] Run: usually gets away; "Can't escape!" sometimes against faster Pokémon, and then the wild
       Pokémon attacks.
 - [ ] Losing: "You blacked out!", then you are back in Nuvema Town with Snivy fully healed.
@@ -192,8 +195,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
   trainers fight as single battles.
 - In battle: no nicknames, abilities, held items, weather or move animations; moves with
-  special effects beyond damage, status and stat changes just deal damage. A fifth move is skipped with a
-  message instead of asking which to forget. The battle background is a placeholder.
+  special effects beyond damage, status and stat changes just deal damage. The battle background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
   town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't sort, move
   Pokémon between boxes or rename boxes, and other furniture (signs, bookshelves, TVs) does nothing yet.

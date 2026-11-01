@@ -397,7 +397,8 @@ public static class DebugCapture
                 if (world.ZoneNpcs(route2).FirstOrDefault(n => n.TrainerId == 1) is { } jimmy)
                 {
                     var data = World.OfflineSession.Data;
-                    lead.GainExp(Core.Battle.ExpCurve.ForLevel(lead.Species.GrowthRate, 14) - lead.Exp, data);
+                    // One point short of Lv 16, where Snivy learns a fifth move: the win asks which to forget.
+                    lead.GainExp(Core.Battle.ExpCurve.ForLevel(lead.Species.GrowthRate, 16) - 1 - lead.Exp, data);
                     World.OfflineSession.HealParty();
                     await Wait(0.5);
                     var eye = new Vector2I(jimmy.X, jimmy.Y);
@@ -420,11 +421,22 @@ public static class DebugCapture
                     await Wait(1.6);
                     Save("22-trainer-battle");
                     var trainerBattle = world.CurrentBattle?.Battle;
+                    var learnedMoves = "";
                     for (var turn = 0; turn < 30 && world.CurrentBattle is not null; turn++)
                     {
-                        for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                        for (var waited = 0.0; world.CurrentBattle is { Busy: true, Asking: false } && waited < 20; waited += 0.1)
                             await Wait(0.1);
                         await Wait(0.2);
+                        if (world.CurrentBattle is { Asking: true })
+                        {
+                            // A fifth move: forget the first one (the focused choice).
+                            Save("22b-learn-move");
+                            Press("ui_accept");
+                            await Wait(0.3);
+                            learnedMoves = string.Join(", ", lead.Moves.Select(m => m.Move.Name));
+                            turn--;
+                            continue;
+                        }
                         if (world.CurrentBattle is not { Battle.Over: false })
                             break;
                         Press("ui_accept");   // Fight
@@ -436,6 +448,7 @@ public static class DebugCapture
                         await Wait(0.1);
                     await Wait(0.6);
                     Save("23-after-trainer");
+                    GD.Print($"[capture] learn-move prompt answered: {(learnedMoves == "" ? "never asked" : learnedMoves)}");
                     GD.Print($"[capture] trainer battle {trainerBattle?.Outcome} vs {trainerBattle?.Trainer?.Title}; money {World.OfflineSession.Money}; beaten {string.Join(",", World.OfflineSession.DefeatedTrainers)}; spotted again: {world.Busy}");
                 }
 
@@ -451,9 +464,16 @@ public static class DebugCapture
                     var gym = world.CurrentBattle?.Battle;
                     for (var turn = 0; turn < 30 && world.CurrentBattle is not null; turn++)
                     {
-                        for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                        for (var waited = 0.0; world.CurrentBattle is { Busy: true, Asking: false } && waited < 20; waited += 0.1)
                             await Wait(0.1);
                         await Wait(0.2);
+                        if (world.CurrentBattle is { Asking: true })
+                        {
+                            Press("ui_accept");   // forget the first move
+                            await Wait(0.3);
+                            turn--;
+                            continue;
+                        }
                         if (world.CurrentBattle is not { Battle.Over: false })
                             break;
                         Press("ui_accept");

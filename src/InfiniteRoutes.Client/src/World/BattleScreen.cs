@@ -39,6 +39,9 @@ public partial class BattleScreen : Control
     /// <summary>True while events are playing back (the menu is hidden).</summary>
     public bool Busy => _busy;
 
+    /// <summary>True while the player is choosing a move to forget for a new one. Public so smoke tests can answer.</summary>
+    public bool Asking { get; private set; }
+
     // Godot needs a parameterless constructor to recreate script instances.
     public BattleScreen() : this(null!, null!) { }
 
@@ -380,6 +383,9 @@ public partial class BattleScreen : Control
                 case CatchEvent c:
                     await ThrowBall(c);
                     break;
+                case LearnMoveEvent learn:
+                    await AskToLearn(_battle.Party[learn.PartyIndex], learn.Move);
+                    break;
             }
         }
         if (!IsInstanceValid(this))
@@ -395,6 +401,41 @@ public partial class BattleScreen : Control
         else
             ShowCommands();
     }
+
+    /// <summary>
+    /// A Pokémon that knows four moves reached a new one: the player picks a move to forget, or keeps the four. As in the
+    /// games, the choice can't be backed out of; "Don't learn" is the way out.
+    /// </summary>
+    async Task AskToLearn(Pokemon mon, MoveInfo move)
+    {
+        _message.Text = $"{mon.Name} wants to learn the move {move.Name}.\nBut {mon.Name} can't learn more than four moves.";
+        await Wait(MessageSeconds);
+        if (!IsInstanceValid(this))
+            return;
+        var choice = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var options = mon.Moves.Select((slot, i) =>
+                ($"Forget {slot.Move.Name}   {TypeName(slot.Move.Type)}  PP {slot.Pp}/{slot.MaxPp}", true, (Action)(() => choice.TrySetResult(i))))
+            .Append(($"Don't learn {move.Name}", true, () => choice.TrySetResult(-1)));
+        var power = move.Power > 1 ? $"power {move.Power}, " : "";
+        Asking = true;
+        ShowPicker($"{move.Name}: {TypeName(move.Type)}, {power}PP {move.Pp}. Forget which move?", options, null);
+        _message.Text = $"Should a move be forgotten to make space for {move.Name}?";
+        var forget = await choice.Task;
+        Asking = false;
+        if (!IsInstanceValid(this))
+            return;
+        if (forget >= 0 && mon.LearnMove(move, forget) is { } old)
+        {
+            _message.Text = $"1, 2, and… … Poof!\n{mon.Name} forgot {old.Name}.";
+            await Wait(MessageSeconds);
+            _message.Text = $"And… {mon.Name} learned {move.Name}!";
+        }
+        else
+            _message.Text = $"{mon.Name} did not learn {move.Name}.";
+        await Wait(MessageSeconds);
+    }
+
+    string TypeName(int type) => type < _typeNames.Count ? _typeNames[type] : "";
 
     /// <summary>Recalls the Pokémon on the near platform (if still there) and sends <paramref name="mon"/> out in its place.</summary>
     async Task SendOut(Pokemon mon)

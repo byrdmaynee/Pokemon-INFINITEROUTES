@@ -16,6 +16,9 @@ public sealed record FaintEvent(BattleSide Side) : BattleEvent;
 /// <summary>Party member <see cref="PartyIndex"/> gained experience; <see cref="Level"/> is its level afterwards.</summary>
 public sealed record ExpEvent(int PartyIndex, int Gained, int Level) : BattleEvent;
 public sealed record LevelUpEvent(int PartyIndex, int Level, int MaxHp, int Hp) : BattleEvent;
+/// <summary>A party Pokémon reached a move it could learn but already knows four: the player picks one to forget
+/// (<see cref="Pokemon.LearnMove"/>) or skips it.</summary>
+public sealed record LearnMoveEvent(int PartyIndex, MoveInfo Move) : BattleEvent;
 /// <summary>Party member <see cref="PartyIndex"/> of <see cref="Side"/> came out (the player's or a trainer's).</summary>
 public sealed record SwitchEvent(int PartyIndex, BattleSide Side = BattleSide.Player) : BattleEvent;
 /// <summary>A Poké Ball was thrown: it shook <see cref="Shakes"/> times (0–3) and caught the Pokémon or not.</summary>
@@ -763,7 +766,7 @@ public sealed class SingleBattle
                 foreach (var move in learned)
                     events.Add(new MessageEvent($"{mon.Name} learned {move.Name}!"));
                 foreach (var move in skipped)
-                    events.Add(new MessageEvent($"{mon.Name} wants to learn {move.Name}, but it already knows four moves."));
+                    events.Add(new LearnMoveEvent(index, move));
             }
         }
     }

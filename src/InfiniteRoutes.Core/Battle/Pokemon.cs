@@ -162,6 +162,21 @@ public sealed class Pokemon
             slot.Pp = slot.MaxPp;
     }
 
+    public const int MaxMoves = 4;
+
+    /// <summary>
+    /// Learns <paramref name="move"/> in place of the move in slot <paramref name="forget"/>, with full PP. Returns the
+    /// forgotten move, or null (nothing changes) when the slot is empty or the move is already known.
+    /// </summary>
+    public MoveInfo? LearnMove(MoveInfo move, int forget)
+    {
+        if (forget < 0 || forget >= Moves.Count || Moves.Any(s => s.Move.Id == move.Id))
+            return null;
+        var old = Moves[forget].Move;
+        Moves[forget] = new MoveSlot(move);
+        return old;
+    }
+
     /// <summary>Adds experience; returns the levels gained (each with the moves learned there, already added if a slot was free).</summary>
     public List<(int Level, List<MoveInfo> Learned, List<MoveInfo> Skipped)> GainExp(int amount, BattleData data)
     {
@@ -178,7 +193,7 @@ public sealed class Pokemon
             {
                 if (data.Move(lm.Move) is not { } move || Moves.Any(s => s.Move.Id == move.Id))
                     continue;
-                if (Moves.Count < 4)
+                if (Moves.Count < MaxMoves)
                 {
                     Moves.Add(new MoveSlot(move));
                     learned.Add(move);
