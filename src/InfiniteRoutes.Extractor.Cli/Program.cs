@@ -46,6 +46,7 @@ try
         "bmd" when args.Length >= 5 => BmdExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "btx" when args.Length >= 5 => BtxExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "map" when args.Length >= 5 => MapExport(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]),
+        "tiles" when args.Length >= 3 => Tiles(args[1], int.Parse(args[2])),
         "text" when args.Length >= 4 => Text(args[1], args[2], int.Parse(args[3])),
         "sprite" when args.Length >= 7 => Sprite(args[1], args[2], int.Parse(args[3]), int.Parse(args[4]), int.Parse(args[5]), args[6]),
         "hex" when args.Length >= 4 => Hex(args[1], args[2], int.Parse(args[3]), args.Length >= 5 ? int.Parse(args[4]) : 256),
@@ -182,6 +183,23 @@ int BtxExport(string rom, string narcPath, int index, string outDir)
         x += t.Width;
     }
     InfiniteRoutes.Extractor.Graphics.Png.Save(sheet, Path.Combine(outDir, "_sheet.png"));
+    return 0;
+}
+
+int Tiles(string rom, int chunk)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    var map = InfiniteRoutes.Extractor.Gen5.Gen5Map.Parse(Narc.Parse(fs.ReadFile("a/0/0/8")).Read(chunk));
+    if (map.Collision is null)
+        return Fail("That chunk has no collision.");
+    Console.WriteLine("Behaviour per tile (hex; '.' = 0), then flags; rows are y, columns x 0-31:");
+    for (var y = 0; y < 32; y++)
+        Console.WriteLine($"{y,2}  " + string.Join(" ", Enumerable.Range(0, 32).Select(x => map.Tile(x, y).Behaviour is var b and > 0 ? b.ToString("X3") : "  .")));
+    Console.WriteLine();
+    for (var y = 0; y < 32; y++)
+        Console.WriteLine($"{y,2}  " + string.Join(" ", Enumerable.Range(0, 32).Select(x => map.Tile(x, y).Flags.ToString("X2"))));
+    foreach (var b in map.Buildings)
+        Console.WriteLine($"building {b.Id} at ({b.X:0.##}, {b.Y:0.##}, {b.Z:0.##}) rotation {b.Rotation}");
     return 0;
 }
 

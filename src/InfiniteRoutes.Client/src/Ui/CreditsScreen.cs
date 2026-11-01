@@ -8,7 +8,7 @@ public partial class CreditsScreen : Control
     {
         var content = Ui.VBox(14,
             Ui.Text($"{ClientInfo.Title}  ·  v{ClientInfo.Version}", 20),
-            Ui.Text("An unofficial fan project. Infinite Routes ships no game graphics, maps, music or text: " +
+            Ui.Text("An unofficial fan project. Made by Rodney Hall(bYRD) and his company TalonWingForge.com. Infinite Routes ships no game graphics, maps, music or text: " +
                     "it reads them on your computer from DS games you own.", 16, wrap: true),
             Ui.Text("Pokémon and all related names are trademarks of Nintendo, Game Freak and The Pokémon Company. " +
                     "This project is not affiliated with or endorsed by them.", 15, Ui.Muted, wrap: true),

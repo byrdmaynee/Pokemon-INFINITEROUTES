@@ -309,7 +309,7 @@ public static class DebugCapture
 
                 // Pokémon Center: hurt the party, talk to the nurse across the counter in Accumula Town's Center.
                 const int accumulaCenter = 398;
-                if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Script == 10100) is { } nurse)
+                if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Script == 2100) is { } nurse)
                 {
                     foreach (var mon in World.OfflineSession.Party)
                         mon.Hp = 1;
@@ -319,6 +319,7 @@ public static class DebugCapture
                     await Walk(FindPath(world, world.PlayerTile, t => t + Vector2I.Up == nurseTile || (t + Vector2I.Up * 2 == nurseTile && !world.IsWalkable(t + Vector2I.Up))), run: false);
                     world.TryStep(Vector2I.Up);   // faces the counter
                     await Wait(0.2);
+                    Save("20a-nurse-counter");
                     var talked = world.Interact();
                     await Wait(0.4);
                     Save("20-nurse");
@@ -326,17 +327,17 @@ public static class DebugCapture
                     Press("ui_accept");
                     await Wait(0.3);
 
-                    // The Center's PC (furniture script 2108): stand next to it, face it and boot it up.
-                    var pcs = world.ZoneFurniture(accumulaCenter).Where(f => f.Script == Extractor.Gen5.Gen5Layout.PcScript)
-                        .Select(f => new Vector2I(f.X, f.Y)).ToHashSet();
+                    // The Center's PC, left of the nurse's counter: walk up in front of it, face it and boot it up.
+                    var pcs = world.CenterPcTiles(accumulaCenter).ToHashSet();
                     var dirs = new[] { Vector2I.Up, Vector2I.Left, Vector2I.Right, Vector2I.Down };
                     var data = World.OfflineSession.Data;
                     foreach (var (species, level) in new[] { (504, 4), (506, 6), (519, 5), (509, 7) })
                         World.OfflineSession.Box.Add(Core.Battle.Pokemon.Create(data, species, level, new Random(species)));
-                    await Walk(FindPath(world, world.PlayerTile, t => dirs.Any(d => pcs.Contains(t + d))), run: false);
+                    await Walk(FindPath(world, world.PlayerTile, t => pcs.Contains(t + Vector2I.Up)), run: false);
                     var face = dirs.FirstOrDefault(d => pcs.Contains(world.PlayerTile + d));
                     world.TryStep(face);
                     await Wait(0.3);
+                    Save("20ab-pc-front");
                     var booted = world.Interact();
                     await Wait(0.5);
                     Save("20b-pc");
@@ -460,7 +461,7 @@ public static class DebugCapture
                 await Wait(0.4);
                 if (world.Menu is { } menu)
                 {
-                    foreach (var tab in Enum.GetValues<World.GameMenu.Tab>())
+                    foreach (var tab in Enum.GetValues<World.GameMenu.Tab>().Except([World.GameMenu.Tab.Pc, World.GameMenu.Tab.Mart]))
                     {
                         menu.Show(tab);
                         await Wait(0.3);

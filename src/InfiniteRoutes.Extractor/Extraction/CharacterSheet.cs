@@ -41,8 +41,9 @@ public static class CharacterSheet
     /// <summary>
     /// Builds a sheet from a Gen 5 NPC BTX0. Three layouts occur: 12 or more frames (three per direction,
     /// up, down, left, right), 7 frames whose missing poses are mirrors (up stand/walk, down stand/walk,
-    /// left stand/walk/walk; right mirrors left), and single-frame objects. NPCs don't run, so the run
-    /// columns repeat the walk ones. Null when the sprite has no frames.
+    /// left stand/walk/walk; right mirrors left), and single-frame objects. Sheets of 8–11 frames are the
+    /// 7-frame layout plus extra poses (the Pokémon Center nurse's 9 add a bow), which are left out. NPCs don't
+    /// run, so the run columns repeat the walk ones. Null when the sprite has no frames.
     /// </summary>
     public static Rgba? FromGen5Npc(Tex0 tex)
     {
@@ -63,7 +64,7 @@ public static class CharacterSheet
             for (var d = 0; d < 4; d++)
                 poses[(int)romOrder[d]] = [frames[d * 3], frames[d * 3 + 1], frames[d * 3 + 2]];
         }
-        else if (frames.Count == 7)
+        else if (frames.Count >= 7)
         {
             poses[(int)Facing.Up] = [frames[0], frames[1], frames[1].FlipX()];
             poses[(int)Facing.Down] = [frames[2], frames[3], frames[3].FlipX()];

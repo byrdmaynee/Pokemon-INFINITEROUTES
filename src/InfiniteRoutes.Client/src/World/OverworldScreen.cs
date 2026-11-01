@@ -1,7 +1,6 @@
 using Godot;
 using InfiniteRoutes.Client.Ui;
 using InfiniteRoutes.Extractor.Extraction;
-using InfiniteRoutes.Extractor.Gen5;
 
 namespace InfiniteRoutes.Client.World;
 
@@ -765,7 +764,7 @@ public partial class OverworldScreen : Control
         if (npc is null && IsBlocked(_tile + _dir))
             npc = NpcAt(_tile + _dir * 2);   // across a counter
         if (npc is null)
-            return _battles && FurnitureAt(_tile + _dir) is { Script: Gen5Layout.PcScript } && OpenPc();
+            return _battles && CenterPcTiles(_zone).Contains(_tile + _dir) && OpenPc();
         npc.Facing = DirToFacing(-_dir);
         npc.Pause(2);
         ShowFrame(0);
@@ -792,8 +791,15 @@ public partial class OverworldScreen : Control
         return true;
     }
 
-    FurnitureInfo? FurnitureAt(Vector2I t) =>
-        _zones.TryGetValue(_zone, out var zone) ? zone.Furniture?.FirstOrDefault(f => f.X == t.X && f.Y == t.Y) : null;
+    /// <summary>
+    /// The Pokémon Center PC's tiles: the terminal left of the nurse's counter and the counter end in front of it, so it
+    /// can be used from in front of the counter. No zone event marks it (the room's only furniture is elsewhere), so
+    /// it is placed from the nurse, who stands at the same spot in every Unova Center. Empty outside Centers.
+    /// </summary>
+    public IReadOnlyList<Vector2I> CenterPcTiles(int zone) =>
+        ZoneNpcs(zone).FirstOrDefault(n => n.Script == NurseScript) is { } nurse
+            ? [new(nurse.X - 3, nurse.Y - 1), new(nurse.X - 3, nurse.Y), new(nurse.X - 3, nurse.Y + 1)]
+            : [];
 
     /// <summary>Boots up the Pokémon Center PC: the menu opens on its PC tab. Public so smoke tests can open it.</summary>
     public bool OpenPc()
@@ -816,8 +822,11 @@ public partial class OverworldScreen : Control
     /// <summary>The overworld sprite of a Poké Mart clerk; the two behind the right-hand counter in every Pokémon Center.</summary>
     const int ClerkSprite = 77;
 
-    /// <summary>The shared script every Pokémon Center nurse runs (the middle of the counter in every Center).</summary>
-    const int NurseScript = 10100;
+    /// <summary>
+    /// The shared script every Pokémon Center nurse runs: the nurse behind the ground-floor counter, at (7, 10) in every
+    /// Unova Center. (Script 10100 is the Wi-Fi staff in the middle of the raised back counter.)
+    /// </summary>
+    const int NurseScript = 2100;
 
     void ShowMessage(string text)
     {

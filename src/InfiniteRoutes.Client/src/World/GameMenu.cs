@@ -115,6 +115,8 @@ public partial class GameMenu : Control
     /// <summary>Switches to <paramref name="tab"/>. Public so smoke tests can visit each tab.</summary>
     public void Show(Tab tab)
     {
+        if (!Tabs.Contains(tab))
+            return;
         if (tab != _tab)
         {
             _useItem = 0;

@@ -6,7 +6,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Before you start
 
 - [ ] Launch the client after pulling: the loading screen re-extracts your Black/White ROM once
-      (extractor 0.7.2, ~20 s, ~245 MB in the cache). Later launches skip it.
+      (extractor 0.7.3, ~20 s, ~245 MB in the cache). Later launches skip it.
 - [ ] Opening two clients at once: the second waits for the first's extraction, then starts without
       extracting again.
 - [ ] With no ROM extracted, the screen says to re-extract in Settings → ROM Library instead of crashing.
@@ -118,9 +118,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] X in the overworld opens the menu on the Party tab (icon, level, HP, status, moves, stats). Bag tab:
       pick Potion → it jumps to Party to choose who to heal; pick a Pokémon on its own to make it lead the
       next battle. X or Esc closes; you can't walk while it is open.
-- [ ] Pokémon Center (e.g. Accumula Town): talk to the nurse in the middle of the counter → "Your
+- [ ] Pokémon Center (e.g. Accumula Town): the nurse stands behind the ground-floor counter
+      facing you (not her back). Talk to her across the counter → "Your
       Pokémon have been restored to full health" and HP, PP and status are all restored.
-- [ ] PC: stand beside the computer at the right end of the counter, face it and press Z/Enter → the menu
+- [ ] PC: stand in front of the computer left of the nurse's counter, face it and press Z/Enter → the menu
       opens on a PC tab (only there). Pick a party Pokémon to deposit it (healed; the last Pokémon that can
       battle stays). Pick one in the box grid → Withdraw (greyed out with six in the party) or Release… (press
       twice). ◀ ▶ page through 24 boxes of 30. Catches with a full party land in the PC and can be withdrawn.

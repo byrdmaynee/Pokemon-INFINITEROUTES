@@ -46,7 +46,7 @@ public sealed record NpcInfo(int Id, int Sprite, int X, int Y, float Height, Fac
         ? Script - Gen5Layout.TrainerScriptBase : -1;
 }
 
-/// <summary>An interactable tile (furniture event) and the script it runs, e.g. <see cref="Gen5Layout.PcScript"/>.</summary>
+/// <summary>An interactable tile (furniture event: signs, machines) and the script it runs.</summary>
 public sealed record FurnitureInfo(int X, int Y, int Script);
 
 /// <summary>
