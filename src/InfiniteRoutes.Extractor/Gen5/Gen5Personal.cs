@@ -23,9 +23,10 @@ public static class Gen5Personal
         if (r[7] != r[6])
             types.Add(Name(typeNames, r[7]));
 
-        var abilities = new List<string> { Name(abilityNames, r[0x18]) };
+        var abilityIds = new List<int> { r[0x18] };
         if (r[0x19] != 0 && r[0x19] != r[0x18])
-            abilities.Add(Name(abilityNames, r[0x19]));
+            abilityIds.Add(r[0x19]);
+        var abilities = abilityIds.Select(a => Name(abilityNames, a)).ToList();
 
         return new SpeciesInfo(
             Id: id,
@@ -45,6 +46,8 @@ public static class Gen5Personal
             HeightDecimetres: BinaryPrimitives.ReadUInt16LittleEndian(r[0x24..]),
             WeightHectograms: BinaryPrimitives.ReadUInt16LittleEndian(r[0x26..]),
             FormCount: r[0x20],
-            TypeIds: r[7] != r[6] ? [r[6], r[7]] : [r[6]]);
+            TypeIds: r[7] != r[6] ? [r[6], r[7]] : [r[6]],
+            AbilityIds: abilityIds,
+            HiddenAbilityId: r[0x1A]);
     }
 }

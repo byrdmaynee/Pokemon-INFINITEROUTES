@@ -96,6 +96,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Fight shows Snivy's moves with type and PP; Esc goes back to Fight/Bag/Pokémon/Run.
 - [ ] Using a move: messages play, HP bars drain, the hit Pokémon blinks. Z/Enter or a click skips ahead.
 - [ ] Leer/Growl/Tail Whip lower stats ("…'s Defense fell!") and later hits do more/less damage.
+- [ ] Abilities: when one takes effect, a banner names it by that side's info box ("Sandile's Intimidate")
+      and the messages say what it did. Try a Sandile (Intimidate: Snivy's Attack falls as it comes out),
+      a Patrat with Keen Eye, a Lillipup with Vital Spirit (can't be put to sleep), and Snivy below ⅓ HP
+      (Overgrow: Vine Whip hits harder). The party tab in X lists each Pokémon's ability.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -195,7 +199,8 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - Animated objects (a/2/1/0) are still static.
 - Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
   trainers fight as single battles.
-- In battle: no nicknames, abilities, held items, weather or move animations; moves with
+- In battle: no nicknames, held items, weather or move animations; abilities that need weather, held items,
+  double battles or the field (Drizzle, Chlorophyll, Pickup, Frisk…) do nothing yet; moves with
   special effects beyond damage, status and stat changes just deal damage. The battle background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
   town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't sort, move

@@ -225,11 +225,18 @@ public static class DebugCapture
                 world.Zoom = 1;
                 GD.Print($"[capture] tall grass at {world.PlayerTile}: height {world.PlayerHeight:F2} (beside it {outside:F2})");
 
-                // A wild battle: a Route 1 Patrat against the starter, fought with the first move until it ends.
+                // A wild battle: a Sandile with Intimidate against the starter, fought with the first move until it ends.
                 var lead = World.OfflineSession.Lead!;
-                world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 504, 3, new Random(7)));
+                var sandile = Core.Battle.Pokemon.Create(World.OfflineSession.Data, 551, 3, new Random(7));
+                sandile.SetAbilitySlot(0);
+                world.StartBattle(sandile);
                 await Wait(1.2);
                 Save("15-battle-intro");
+                for (var waited = 0.0; world.CurrentBattle is { LastAbility: null } && waited < 8; waited += 0.1)
+                    await Wait(0.1);
+                await Wait(0.3);
+                Save("15a-ability");
+                GD.Print($"[capture] ability banner: {world.CurrentBattle?.LastAbility ?? "none"}; {lead.Name}'s ability {lead.AbilityName}");
                 void Press(string action)
                 {
                     Input.ParseInputEvent(new InputEventAction { Action = action, Pressed = true });

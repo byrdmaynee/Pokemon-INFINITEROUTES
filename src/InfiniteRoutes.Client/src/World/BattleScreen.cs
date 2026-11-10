@@ -42,6 +42,9 @@ public partial class BattleScreen : Control
     /// <summary>True while the player is choosing a move to forget for a new one. Public so smoke tests can answer.</summary>
     public bool Asking { get; private set; }
 
+    /// <summary>The last ability banner shown ("Sandile's Intimidate"), for smoke tests.</summary>
+    public string? LastAbility { get; private set; }
+
     // Godot needs a parameterless constructor to recreate script instances.
     public BattleScreen() : this(null!, null!) { }
 
@@ -386,6 +389,9 @@ public partial class BattleScreen : Control
                 case LearnMoveEvent learn:
                     await AskToLearn(_battle.Party[learn.PartyIndex], learn.Move);
                     break;
+                case AbilityEvent ability:
+                    await ShowAbility(ability);
+                    break;
             }
         }
         if (!IsInstanceValid(this))
@@ -400,6 +406,34 @@ public partial class BattleScreen : Control
             ShowParty(forced: true);
         else
             ShowCommands();
+    }
+
+    /// <summary>
+    /// A banner by the side's info box naming the ability that just took effect ("Snivy's Overgrow"); it slides in,
+    /// holds while the next messages play, then fades.
+    /// </summary>
+    async Task ShowAbility(AbilityEvent e)
+    {
+        var player = e.Side == BattleSide.Player;
+        var mon = player ? _battle.Player.Mon : _battle.Foe.Mon;
+        var box = player ? _playerBox : _foeBox;
+        LastAbility = $"{mon.Name}'s {e.Ability}";
+        var banner = new PanelContainer { Modulate = Colors.Transparent, MouseFilter = MouseFilterEnum.Ignore };
+        banner.AddThemeStyleboxOverride("panel", Box(new Color(0.12f, 0.16f, 0.22f, 0.95f), Ui.Ui.Accent, 2));
+        banner.AddChild(Ui.Ui.VBox(0, Ui.Ui.Text($"{mon.Name}'s", 15), Ui.Ui.Text(e.Ability, 21, Ui.Ui.Accent)));
+        AddChild(banner);
+        var end = player ? new Vector2(box.Position.X, box.Position.Y - 78) : new Vector2(box.Position.X, box.Position.Y + box.Size.Y + 10);
+        banner.Position = end + new Vector2(player ? 40 : -40, 0);
+        var slide = CreateTween().SetParallel();
+        slide.TweenProperty(banner, "position", end, 0.2);
+        slide.TweenProperty(banner, "modulate", Colors.White, 0.2);
+        await Wait(0.6f);
+        if (!IsInstanceValid(banner))
+            return;
+        var fade = banner.CreateTween();
+        fade.TweenInterval(1.2);
+        fade.TweenProperty(banner, "modulate", Colors.Transparent, 0.3);
+        fade.TweenCallback(Callable.From(banner.QueueFree));
     }
 
     /// <summary>

@@ -23,8 +23,13 @@ public sealed record LearnMoveEvent(int PartyIndex, MoveInfo Move) : BattleEvent
 public sealed record SwitchEvent(int PartyIndex, BattleSide Side = BattleSide.Player) : BattleEvent;
 /// <summary>A Poké Ball was thrown: it shook <see cref="Shakes"/> times (0–3) and caught the Pokémon or not.</summary>
 public sealed record CatchEvent(int Ball, int Shakes, bool Caught) : BattleEvent;
+/// <summary><see cref="Side"/>'s ability <see cref="Ability"/> takes effect; the messages that follow say what it did.</summary>
+public sealed record AbilityEvent(BattleSide Side, string Ability) : BattleEvent;
 
-/// <summary>A Pokémon on the field: the Pokémon plus what resets when it leaves (stat stages, confusion, flinch).</summary>
+/// <summary>
+/// A Pokémon on the field: the Pokémon plus what resets when it leaves (stat stages, confusion, flinch, a traced
+/// ability, Flash Fire's boost, Truant's loafing, turns on the field).
+/// </summary>
 public sealed class Battler(Pokemon mon, BattleSide side)
 {
     public Pokemon Mon { get; } = mon;
@@ -33,6 +38,16 @@ public sealed class Battler(Pokemon mon, BattleSide side)
     public int[] Stages { get; } = new int[8];
     public int ConfusionTurns { get; set; }
     public bool Flinched { get; set; }
+    /// <summary>The ability in effect: the Pokémon's own, or one it traced.</summary>
+    public int Ability { get; set; } = mon.AbilityId;
+    public string AbilityName { get; set; } = mon.AbilityName;
+    public IReadOnlyList<int> Types => Mon.Types;
+    /// <summary>Flash Fire took a Fire move: its own Fire moves are 1.5× stronger.</summary>
+    public bool FlashFire { get; set; }
+    /// <summary>Truant: it moved last turn, so it loafs around this one.</summary>
+    public bool Loafing { get; set; }
+    /// <summary>Ends of turn survived since coming out (Speed Boost, Slow Start).</summary>
+    public int TurnsOut { get; set; }
 
     public int Stage(BattleStat stat) => Stages[(int)stat];
 }
@@ -42,10 +57,10 @@ public sealed class Battler(Pokemon mon, BattleSide side)
 /// accuracy and evasion, critical hits, STAB, type effectiveness, random damage roll, burn, poison, paralysis, sleep,
 /// freeze, confusion, flinching, stat stages, multi-hit, recoil, drain, healing, one-hit KOs, escape odds, Poké
 /// Balls and medicine, switching, experience shared between the Pokémon that fought (×1.5 from trainers) and prize
-/// money. Trainers pick moves at random for now. Moves whose special effects aren't implemented yet still deal
-/// their damage.
+/// money, and abilities (see <see cref="Abilities.Implemented"/>). Trainers pick moves at random for now. Moves whose
+/// special effects aren't implemented yet still deal their damage.
 /// </summary>
-public sealed class SingleBattle
+public sealed partial class SingleBattle
 {
     readonly BattleData _data;
     readonly Random _rng;
@@ -100,7 +115,8 @@ public sealed class SingleBattle
 
     /// <summary>
     /// A trainer's team as Pokémon: each at its level with every IV at difficulty × 31 / 255, knowing its listed moves
-    /// or else the last four it learned by that level.
+    /// or else the last four it learned by that level. The high nibble of the gender/ability byte picks the ability
+    /// (1 first, 2 second, 3 hidden); otherwise it's random like a wild one's.
     /// </summary>
     public static List<Pokemon> TrainerParty(BattleData data, TrainerInfo trainer, Random rng)
     {
@@ -111,6 +127,8 @@ public sealed class SingleBattle
                 continue;
             var mon = Pokemon.Create(data, p.Species, p.Level, rng);
             Array.Fill(mon.Ivs, p.Difficulty * 31 / 255);
+            if ((p.GenderAbility >> 4) is var ability and >= 1 and <= 3)
+                mon.SetAbilitySlot(ability - 1);
             if (p.Moves is { Count: > 0 } moves)
             {
                 mon.Moves.Clear();
@@ -127,14 +145,22 @@ public sealed class SingleBattle
     /// <summary>A one-on-one battle with no items (for tests and simple uses).</summary>
     public SingleBattle(BattleData data, Pokemon player, Pokemon wild, Random rng) : this(data, [player], new Bag(), wild, rng) { }
 
-    public IReadOnlyList<BattleEvent> Start() => Trainer is { } trainer
-        ?
-        [
-            new MessageEvent($"You are challenged by {trainer.Title}!"),
-            new MessageEvent($"{trainer.Title} sent out {Foe.Mon.Name}!"),
-            new MessageEvent($"Go! {Player.Mon.Name}!"),
-        ]
-        : [new MessageEvent($"A wild {Foe.Mon.Name} appeared!"), new MessageEvent($"Go! {Player.Mon.Name}!")];
+    public IReadOnlyList<BattleEvent> Start()
+    {
+        List<BattleEvent> events = Trainer is { } trainer
+            ?
+            [
+                new MessageEvent($"You are challenged by {trainer.Title}!"),
+                new MessageEvent($"{trainer.Title} sent out {Foe.Mon.Name}!"),
+                new MessageEvent($"Go! {Player.Mon.Name}!"),
+            ]
+            : [new MessageEvent($"A wild {Foe.Mon.Name} appeared!"), new MessageEvent($"Go! {Player.Mon.Name}!")];
+        // Entry abilities (Intimidate, Pressure, …) go off fastest first.
+        var playerFirst = EffectiveSpeed(Player) >= EffectiveSpeed(Foe);
+        OnEntry(playerFirst ? Player : Foe, events);
+        OnEntry(playerFirst ? Foe : Player, events);
+        return events;
+    }
 
     /// <summary>True when no move has PP left: <see cref="Fight"/> then uses Struggle whatever the slot.</summary>
     public bool MustStruggle => Player.Mon.Moves.All(m => m.Pp <= 0);
@@ -184,12 +210,15 @@ public sealed class SingleBattle
             return [];
         if (Trainer is not null)
             return [new MessageEvent("No! There's no running from a Trainer battle!")];
+        var runAway = Has(Player, Abilities.RunAway);
+        if (!runAway && Trapped(Player) is { } trap)
+            return [new AbilityEvent(BattleSide.Foe, Foe.AbilityName), new MessageEvent(trap)];
         var events = new List<BattleEvent>();
         _escapeAttempts++;
         _turns++;
         int mine = EffectiveSpeed(Player), theirs = Math.Max(1, EffectiveSpeed(Foe));
         var odds = (mine * 128 / theirs + 30 * _escapeAttempts) % 256;
-        if (mine >= theirs || _rng.Next(256) < odds)
+        if (runAway || mine >= theirs || _rng.Next(256) < odds)
         {
             events.Add(new MessageEvent("Got away safely!"));
             Outcome = BattleOutcome.Escaped;
@@ -205,7 +234,10 @@ public sealed class SingleBattle
     {
         if (Waiting || !CanSendOut(index) || index == ActiveIndex)
             return [];
+        if (Trapped(Player) is { } trap)
+            return [new AbilityEvent(BattleSide.Foe, Foe.AbilityName), new MessageEvent(trap)];
         var events = new List<BattleEvent> { new MessageEvent($"{Player.Mon.Name}, come back!") };
+        OnSwitchOut(Player);
         _turns++;
         Enter(index, events);
         FoeTurn(events);
@@ -231,6 +263,7 @@ public sealed class SingleBattle
         _participants.Add(Player.Mon);
         events.Add(new SwitchEvent(index));
         events.Add(new MessageEvent($"Go! {Player.Mon.Name}!"));
+        OnEntry(Player, events);
     }
 
     /// <summary>
@@ -366,8 +399,13 @@ public sealed class SingleBattle
     {
         if (theirs is null)
             return true;
-        if (mine.Priority != theirs.Priority)
-            return mine.Priority > theirs.Priority;
+        int mp = Priority(Player, mine), tp = Priority(Foe, theirs);
+        if (mp != tp)
+            return mp > tp;
+        // Stall moves last within its priority bracket.
+        bool stallMine = Has(Player, Abilities.Stall), stallTheirs = Has(Foe, Abilities.Stall);
+        if (stallMine != stallTheirs)
+            return stallTheirs;
         int a = EffectiveSpeed(Player), b = EffectiveSpeed(Foe);
         return a != b ? a > b : _rng.Next(2) == 0;
     }
@@ -375,6 +413,10 @@ public sealed class SingleBattle
     int EffectiveSpeed(Battler b)
     {
         var speed = Staged(b.Mon.StatValue(Stat.Speed), b.Stage(BattleStat.Speed));
+        if (Has(b, Abilities.SlowStart) && b.TurnsOut < 5)
+            speed /= 2;
+        if (Has(b, Abilities.QuickFeet) && b.Mon.Status != Ailment.None)
+            return speed * 3 / 2;
         return b.Mon.Status == Ailment.Paralysis ? speed / 4 : speed;
     }
 
@@ -386,8 +428,12 @@ public sealed class SingleBattle
         if (!CanAct(user, events))
             return;
         if (slot >= 0)
-            user.Mon.Moves[slot].Pp--;
+        {
+            var pp = user.Mon.Moves[slot];
+            pp.Pp = Math.Max(0, pp.Pp - (Has(target, Abilities.Pressure) ? 2 : 1));
+        }
         events.Add(new MessageEvent($"{name} used {move.Name}!"));
+        var type = MoveType(user, move);
 
         var selfTargeted = move.Target == 7 || (move.Kind == MoveKind.StatChange && move.StatChanges.All(c => c.Stages > 0))
             || move.Kind == MoveKind.Heal;
@@ -396,12 +442,20 @@ public sealed class SingleBattle
             events.Add(new MessageEvent(move.Kind == MoveKind.OneHitKo ? $"{Label(target)} is unaffected!" : $"{name}'s attack missed!"));
             return;
         }
+        if (!selfTargeted && Absorbs(user, target, move, type, events))
+            return;
 
         if (move.Kind == MoveKind.OneHitKo)
         {
-            if (TypeChart.Against(move.Type, target.Mon.Types) == 0 || user.Mon.Level < target.Mon.Level)
+            if (Effectiveness(user, target, type) == 0 || user.Mon.Level < target.Mon.Level)
             {
                 events.Add(new MessageEvent($"It doesn't affect {Label(target)}..."));
+                return;
+            }
+            if (Defends(target, user, Abilities.Sturdy))
+            {
+                events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                events.Add(new MessageEvent($"{Label(target)} is unaffected!"));
                 return;
             }
             Damage(target, target.Mon.Hp, events);
@@ -412,23 +466,37 @@ public sealed class SingleBattle
         var dealt = 0;
         if (move.Category != MoveCategory.Status && move.Power > 0)
         {
-            var effectiveness = TypeChart.Against(move.Type, target.Mon.Types);
-            if (move.Id == BattleData.Struggle)
-                effectiveness = 1;
+            var effectiveness = move.Id == BattleData.Struggle ? 1 : Effectiveness(user, target, type);
             if (effectiveness == 0)
             {
                 events.Add(new MessageEvent($"It doesn't affect {Label(target)}..."));
                 return;
             }
-            var hits = HitCount(move);
+            if (effectiveness <= 1 && move.Id != BattleData.Struggle && Defends(target, user, Abilities.WonderGuard))
+            {
+                events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                events.Add(new MessageEvent($"It doesn't affect {Label(target)}..."));
+                return;
+            }
+            var hits = HitCount(user, move);
             var landed = 0;
             for (var h = 0; h < hits && !target.Mon.Fainted && !user.Mon.Fainted; h++, landed++)
             {
-                var crit = IsCritical(move);
-                var damage = CalculateDamage(user, target, move, crit, effectiveness);
+                var crit = IsCritical(user, target, move);
+                var damage = CalculateDamage(user, target, move, type, crit, effectiveness, movedFirst);
+                // Sturdy: a Pokémon at full HP survives any one hit with 1 HP.
+                var endured = target.Mon.Hp == target.Mon.MaxHp && damage >= target.Mon.Hp && Defends(target, user, Abilities.Sturdy);
+                if (endured)
+                    damage = target.Mon.Hp - 1;
                 dealt += Damage(target, damage, events);
                 if (crit)
                     events.Add(new MessageEvent("A critical hit!"));
+                if (endured)
+                {
+                    events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                    events.Add(new MessageEvent($"{Label(target)} endured the hit!"));
+                }
+                AfterHit(user, target, move, type, crit, events);
             }
             if (effectiveness > 1)
                 events.Add(new MessageEvent("It's super effective!"));
@@ -439,10 +507,22 @@ public sealed class SingleBattle
 
             if (move.Id == BattleData.Struggle)
                 Damage(user, Math.Max(1, user.Mon.MaxHp / 4), events, $"{name} is hit with recoil!");
-            else if (move.Recoil < 0 && dealt > 0)
+            else if (move.Recoil < 0 && dealt > 0 && !Has(user, Abilities.RockHead) && !Has(user, Abilities.MagicGuard))
                 Damage(user, Math.Max(1, dealt * -move.Recoil / 100), events, $"{name} is hit with recoil!");
             else if (move.Recoil > 0 && dealt > 0)
-                Heal(user, Math.Max(1, dealt * move.Recoil / 100), events, $"{Label(target)} had its energy drained!");
+            {
+                var drained = Math.Max(1, dealt * move.Recoil / 100);
+                if (Has(target, Abilities.LiquidOoze))
+                {
+                    events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                    if (!Has(user, Abilities.MagicGuard))
+                        Damage(user, drained, events, $"{name} sucked up the liquid ooze!");
+                }
+                else
+                    Heal(user, drained, events, $"{Label(target)} had its energy drained!");
+            }
+            if (target.Mon.Fainted)
+                OnKnockOut(user, target, move, events);
         }
 
         if (move.Kind == MoveKind.Heal && move.Heal > 0)
@@ -457,7 +537,10 @@ public sealed class SingleBattle
             return;
         ApplyAilment(user, target, move, events);
         ApplyStatChanges(user, target, move, events);
-        if (move.FlinchChance > 0 && movedFirst && !target.Mon.Fainted && Roll(move.FlinchChance))
+        var flinch = move.FlinchChance > 0 ? move.FlinchChance
+            : Has(user, Abilities.Stench) && move.Category != MoveCategory.Status && dealt > 0 ? 10 : 0;
+        if (flinch > 0 && movedFirst && !target.Mon.Fainted && SecondaryLands(user, target, flinch)
+            && !Defends(target, user, Abilities.InnerFocus))
             target.Flinched = true;
 
         if (move.Category == MoveCategory.Status && move.Ailment == Ailment.None && move.StatChanges.Count == 0
@@ -473,12 +556,26 @@ public sealed class SingleBattle
         {
             user.Flinched = false;
             events.Add(new MessageEvent($"{name} flinched and couldn't move!"));
+            if (Has(user, Abilities.Steadfast))
+            {
+                events.Add(new AbilityEvent(user.Side, user.AbilityName));
+                ChangeStage(user, BattleStat.Speed, 1, null, events);
+            }
+            return false;
+        }
+        if (Has(user, Abilities.Truant) && user.Loafing)
+        {
+            user.Loafing = false;
+            events.Add(new AbilityEvent(user.Side, user.AbilityName));
+            events.Add(new MessageEvent($"{name} is loafing around!"));
             return false;
         }
         switch (user.Mon.Status)
         {
             case Ailment.Sleep:
-                if (--user.Mon.SleepTurns > 0)
+                // Early Bird wakes up twice as fast.
+                user.Mon.SleepTurns -= Has(user, Abilities.EarlyBird) ? 2 : 1;
+                if (user.Mon.SleepTurns > 0)
                 {
                     events.Add(new MessageEvent($"{name} is fast asleep."));
                     return false;
@@ -515,24 +612,37 @@ public sealed class SingleBattle
                 }
             }
         }
+        user.Loafing = Has(user, Abilities.Truant);
         return true;
     }
 
     bool Hits(Battler user, Battler target, MoveInfo move)
     {
-        if (move.NeverMisses || move.Accuracy == 0)
+        if (move.NeverMisses || move.Accuracy == 0 || Has(user, Abilities.NoGuard) || Has(target, Abilities.NoGuard))
             return true;
         if (move.Kind == MoveKind.OneHitKo)
             return _rng.Next(100) < move.Accuracy + user.Mon.Level - target.Mon.Level;
-        var stage = Math.Clamp(user.Stage(BattleStat.Accuracy) - target.Stage(BattleStat.Evasion), -6, 6);
-        var chance = stage >= 0 ? move.Accuracy * (3 + stage) / 3 : move.Accuracy * 3 / (3 - stage);
+        var accuracy = move.Category == MoveCategory.Status && Defends(target, user, Abilities.WonderSkin) ? Math.Min(50, move.Accuracy) : move.Accuracy;
+        // Unaware ignores the other side's accuracy or evasion stages.
+        var accStage = Defends(target, user, Abilities.Unaware) ? 0 : user.Stage(BattleStat.Accuracy);
+        var evaStage = Has(user, Abilities.Unaware) ? 0 : target.Stage(BattleStat.Evasion);
+        var stage = Math.Clamp(accStage - evaStage, -6, 6);
+        var chance = stage >= 0 ? accuracy * (3 + stage) / 3 : accuracy * 3 / (3 - stage);
+        if (Has(user, Abilities.CompoundEyes))
+            chance = chance * 13 / 10;
+        if (Has(user, Abilities.VictoryStar))
+            chance = chance * 11 / 10;
+        if (Has(user, Abilities.Hustle) && move.Category == MoveCategory.Physical)
+            chance = chance * 4 / 5;
         return _rng.Next(100) < chance;
     }
 
-    int HitCount(MoveInfo move)
+    int HitCount(Battler user, MoveInfo move)
     {
         if (move.MaxHits <= 1)
             return 1;
+        if (Has(user, Abilities.SkillLink))
+            return move.MaxHits;
         if (move.MinHits == move.MaxHits)
             return move.MinHits;
         if (move is { MinHits: 2, MaxHits: 5 })
@@ -540,25 +650,29 @@ public sealed class SingleBattle
         return _rng.Next(move.MinHits, move.MaxHits + 1);
     }
 
-    bool IsCritical(MoveInfo move)
+    bool IsCritical(Battler user, Battler target, MoveInfo move)
     {
+        if (Defends(target, user, Abilities.BattleArmor) || Defends(target, user, Abilities.ShellArmor))
+            return false;
         // Gen 5 stages: 1/16, 1/8, 1/4, 1/3, 1/2.
         int[] odds = [16, 8, 4, 3, 2];
-        return _rng.Next(odds[Math.Clamp(move.CritStage, 0, odds.Length - 1)]) == 0;
+        var stage = move.CritStage + (Has(user, Abilities.SuperLuck) ? 1 : 0);
+        return _rng.Next(odds[Math.Clamp(stage, 0, odds.Length - 1)]) == 0;
     }
 
     static int BaseDamage(int level, int power, int attack, int defense) => (2 * level / 5 + 2) * power * attack / defense / 50 + 2;
 
     /// <summary>
-    /// Gen 5 damage: base damage, then ×2 on a critical hit, the 85–100% random roll, ×1.5 STAB, type effectiveness
-    /// and ×0.5 for a burned physical attacker, flooring after each step. Critical hits ignore the attacker's
-    /// negative and the defender's positive stat stages.
+    /// Gen 5 damage: base damage, then ×2 on a critical hit (×3 with Sniper), the 85–100% random roll, ×1.5 STAB (×2 with
+    /// Adaptability), type effectiveness and ×0.5 for a burned physical attacker, flooring after each step, with the
+    /// abilities that change power, attack, defense or the result. Critical hits ignore the attacker's negative and the
+    /// defender's positive stat stages.
     /// </summary>
-    int CalculateDamage(Battler user, Battler target, MoveInfo move, bool crit, double effectiveness)
+    int CalculateDamage(Battler user, Battler target, MoveInfo move, int type, bool crit, double effectiveness, bool movedFirst)
     {
         var physical = move.Category == MoveCategory.Physical;
-        var atkStage = user.Stage(physical ? BattleStat.Attack : BattleStat.SpAttack);
-        var defStage = target.Stage(physical ? BattleStat.Defense : BattleStat.SpDefense);
+        var atkStage = Defends(target, user, Abilities.Unaware) ? 0 : user.Stage(physical ? BattleStat.Attack : BattleStat.SpAttack);
+        var defStage = Has(user, Abilities.Unaware) ? 0 : target.Stage(physical ? BattleStat.Defense : BattleStat.SpDefense);
         if (crit)
         {
             atkStage = Math.Max(0, atkStage);
@@ -566,15 +680,62 @@ public sealed class SingleBattle
         }
         var attack = Staged(user.Mon.StatValue(physical ? Stat.Attack : Stat.SpAttack), atkStage);
         var defense = Math.Max(1, Staged(target.Mon.StatValue(physical ? Stat.Defense : Stat.SpDefense), defStage));
+        var power = move.Power;
+        var status = user.Mon.Status;
 
-        var damage = BaseDamage(user.Mon.Level, move.Power, attack, defense);
+        // The attacker's abilities.
+        if (Has(user, Abilities.Technician) && power <= 60)
+            power = power * 3 / 2;
+        if (Has(user, Abilities.Reckless) && move.Recoil < 0 && move.Id != BattleData.Struggle)
+            power = power * 6 / 5;
+        if (Has(user, Abilities.SheerForce) && HasSecondary(move))
+            power = power * 13 / 10;
+        if (Has(user, Abilities.Analytic) && !movedFirst)
+            power = power * 13 / 10;
+        if (Has(user, Abilities.Rivalry) && user.Mon.Gender != Gender.Genderless && target.Mon.Gender != Gender.Genderless)
+            power = user.Mon.Gender == target.Mon.Gender ? power * 5 / 4 : power * 3 / 4;
+        if (user.FlashFire && type == TypeChart.Fire)
+            attack = attack * 3 / 2;
+        if (Abilities.PinchType(user.Ability) == type && user.Mon.Hp * 3 <= user.Mon.MaxHp)
+            attack = attack * 3 / 2;
+        if (physical && (Has(user, Abilities.HugePower) || Has(user, Abilities.PurePower)))
+            attack *= 2;
+        if (physical && Has(user, Abilities.Hustle))
+            attack = attack * 3 / 2;
+        if (physical && Has(user, Abilities.Guts) && status != Ailment.None)
+            attack = attack * 3 / 2;
+        if ((physical && Has(user, Abilities.ToxicBoost) && status == Ailment.Poison)
+            || (!physical && Has(user, Abilities.FlareBoost) && status == Ailment.Burn))
+            attack = attack * 3 / 2;
+        if (Has(user, Abilities.Defeatist) && user.Mon.Hp * 2 <= user.Mon.MaxHp)
+            attack /= 2;
+        if (physical && Has(user, Abilities.SlowStart) && user.TurnsOut < 5)
+            attack /= 2;
+
+        // The target's.
+        if (type is TypeChart.Fire or TypeChart.Ice && Defends(target, user, Abilities.ThickFat))
+            attack /= 2;
+        if (type == TypeChart.Fire && Defends(target, user, Abilities.Heatproof))
+            power /= 2;
+        if (type == TypeChart.Fire && Defends(target, user, Abilities.DrySkin))
+            power = power * 5 / 4;
+        if (physical && target.Mon.Status != Ailment.None && Defends(target, user, Abilities.MarvelScale))
+            defense = defense * 3 / 2;
+
+        var damage = BaseDamage(user.Mon.Level, Math.Max(1, power), Math.Max(1, attack), defense);
         if (crit)
-            damage *= 2;
+            damage *= Has(user, Abilities.Sniper) ? 3 : 2;
         damage = damage * (85 + _rng.Next(16)) / 100;
-        if (move.Id != BattleData.Struggle && user.Mon.Types.Contains(move.Type))
-            damage = damage * 3 / 2;
+        if (move.Id != BattleData.Struggle && user.Types.Contains(type))
+            damage = Has(user, Abilities.Adaptability) ? damage * 2 : damage * 3 / 2;
         damage = (int)(damage * effectiveness);
-        if (physical && user.Mon.Status == Ailment.Burn)
+        if (effectiveness < 1 && Has(user, Abilities.TintedLens))
+            damage *= 2;
+        if (effectiveness > 1 && (Defends(target, user, Abilities.Filter) || Defends(target, user, Abilities.SolidRock)))
+            damage = damage * 3 / 4;
+        if (target.Mon.Hp == target.Mon.MaxHp && Defends(target, user, Abilities.Multiscale))
+            damage /= 2;
+        if (physical && status == Ailment.Burn && !Has(user, Abilities.Guts))
             damage /= 2;
         return Math.Max(1, damage);
     }
@@ -583,18 +744,27 @@ public sealed class SingleBattle
     {
         if (move.Ailment == Ailment.None)
             return;
-        var chance = move.Category == MoveCategory.Status ? 100 : move.AilmentChance;
-        if (chance <= 0 || !Roll(chance))
-            return;
+        var status = move.Category == MoveCategory.Status;
+        var chance = status ? 100 : move.AilmentChance;
         var victim = move.Target == 7 ? user : target;
+        if (chance <= 0 || !(status || victim == user ? Roll(chance) : SecondaryLands(user, target, chance)))
+            return;
         var name = Label(victim);
-        var types = victim.Mon.Types;
         if (move.Ailment == Ailment.Confusion)
         {
             if (victim.ConfusionTurns > 0)
             {
-                if (move.Category == MoveCategory.Status)
+                if (status)
                     events.Add(new MessageEvent($"{name} is already confused!"));
+                return;
+            }
+            if (victim != user && Defends(victim, user, Abilities.OwnTempo))
+            {
+                if (status)
+                {
+                    events.Add(new AbilityEvent(victim.Side, victim.AbilityName));
+                    events.Add(new MessageEvent($"{name} doesn't become confused!"));
+                }
                 return;
             }
             victim.ConfusionTurns = 2 + _rng.Next(4);
@@ -603,37 +773,15 @@ public sealed class SingleBattle
         }
         if (move.Ailment > Ailment.Poison)
             return;   // Volatile conditions beyond confusion aren't implemented yet.
-
-        var immune = victim.Mon.Status != Ailment.None
-            || (move.Ailment == Ailment.Burn && types.Contains(TypeChart.Fire))
-            || (move.Ailment == Ailment.Freeze && types.Contains(TypeChart.Ice))
-            || (move.Ailment == Ailment.Poison && (types.Contains(TypeChart.Poison) || types.Contains(TypeChart.Steel)))
-            || (move.Category == MoveCategory.Status && move.Type == TypeChart.Electric && types.Contains(TypeChart.Ground));
-        if (immune)
-        {
-            if (move.Category == MoveCategory.Status)
-                events.Add(new MessageEvent(victim.Mon.Status == move.Ailment ? $"{name} is already {Describe(move.Ailment)}!" : "But it failed!"));
-            return;
-        }
-        if (move.Ailment == Ailment.Sleep)
-            victim.Mon.SleepTurns = 2 + _rng.Next(3);   // 1–3 turns asleep, counted down before each move
-        SetStatus(victim, move.Ailment, events, move.Ailment switch
-        {
-            Ailment.Paralysis => $"{name} is paralyzed! It may be unable to move!",
-            Ailment.Sleep => $"{name} fell asleep!",
-            Ailment.Freeze => $"{name} was frozen solid!",
-            Ailment.Burn => $"{name} was burned!",
-            _ => $"{name} was poisoned!",
-        });
+        // Electric status moves (Thunder Wave) don't affect Ground types.
+        Inflict(victim, move.Ailment, victim == user ? null : user, events, loud: status,
+            groundImmune: status && move.Type == TypeChart.Electric);
     }
 
     void ApplyStatChanges(Battler user, Battler target, MoveInfo move, List<BattleEvent> events)
     {
         foreach (var change in move.StatChanges)
         {
-            var guaranteed = move.Category == MoveCategory.Status || change.Chance == 0;
-            if (!guaranteed && !Roll(change.Chance))
-                continue;
             var victim = move.Kind switch
             {
                 MoveKind.DamageRaiseUser => user,
@@ -641,30 +789,16 @@ public sealed class SingleBattle
                 _ when move.Target == 7 => user,
                 _ => change.Stages > 0 ? user : target,
             };
+            var guaranteed = move.Category == MoveCategory.Status || change.Chance == 0;
+            if (!guaranteed && !(victim == user ? !Has(user, Abilities.SheerForce) && Roll(change.Chance * Grace(user)) : SecondaryLands(user, target, change.Chance)))
+                continue;
             if (victim.Mon.Fainted)
                 continue;
             var stats = change.Stat == BattleStat.All
                 ? new[] { BattleStat.Attack, BattleStat.Defense, BattleStat.SpAttack, BattleStat.SpDefense, BattleStat.Speed }
                 : [change.Stat];
             foreach (var stat in stats)
-            {
-                var i = (int)stat;
-                if (i <= 0 || i >= victim.Stages.Length)
-                    continue;
-                var before = victim.Stages[i];
-                victim.Stages[i] = Math.Clamp(before + change.Stages, -6, 6);
-                var delta = victim.Stages[i] - before;
-                var statName = StatName(stat);
-                events.Add(new MessageEvent(delta switch
-                {
-                    0 when change.Stages > 0 => $"{Label(victim)}'s {statName} won't go any higher!",
-                    0 => $"{Label(victim)}'s {statName} won't go any lower!",
-                    >= 2 => $"{Label(victim)}'s {statName} sharply rose!",
-                    1 => $"{Label(victim)}'s {statName} rose!",
-                    -1 => $"{Label(victim)}'s {statName} fell!",
-                    _ => $"{Label(victim)}'s {statName} harshly fell!",
-                }));
-            }
+                ChangeStage(victim, stat, change.Stages, victim == user ? null : user, events);
         }
     }
 
@@ -675,12 +809,25 @@ public sealed class SingleBattle
             b.Flinched = false;
             if (Over || b.Mon.Fainted)
                 continue;
-            if (b.Mon.Status is Ailment.Burn or Ailment.Poison)
+            if (b.Mon.Status == Ailment.Poison && Has(b, Abilities.PoisonHeal))
             {
-                Damage(b, Math.Max(1, b.Mon.MaxHp / 8), events,
+                if (b.Mon.Hp < b.Mon.MaxHp)
+                {
+                    events.Add(new AbilityEvent(b.Side, b.AbilityName));
+                    Heal(b, Math.Max(1, b.Mon.MaxHp / 8), events, $"{Label(b)} is healed by poison!");
+                }
+            }
+            else if (b.Mon.Status is Ailment.Burn or Ailment.Poison && !Has(b, Abilities.MagicGuard))
+            {
+                // Heatproof halves burn damage.
+                var share = b.Mon.Status == Ailment.Burn && Has(b, Abilities.Heatproof) ? 16 : 8;
+                Damage(b, Math.Max(1, b.Mon.MaxHp / share), events,
                     b.Mon.Status == Ailment.Burn ? $"{Label(b)} is hurt by its burn!" : $"{Label(b)} is hurt by poison!");
                 CheckFaints(events);
             }
+            if (!b.Mon.Fainted && !Over)
+                AbilityEndOfTurn(b, events);
+            b.TurnsOut++;
         }
 
         // A trainer sends out their next Pokémon once the turn is over; it's fought by whoever is out now.
@@ -694,6 +841,7 @@ public sealed class SingleBattle
                 _participants.Add(Player.Mon);
             events.Add(new SwitchEvent(next, BattleSide.Foe));
             events.Add(new MessageEvent($"{Trainer?.Title ?? "The foe"} sent out {Foe.Mon.Name}!"));
+            OnEntry(Foe, events);
         }
     }
 

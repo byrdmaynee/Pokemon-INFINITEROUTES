@@ -65,6 +65,20 @@ public sealed class Pokemon
     /// <summary>Turns left asleep while <see cref="Status"/> is <see cref="Ailment.Sleep"/>.</summary>
     public int SleepTurns { get; set; }
 
+    /// <summary>Which of the species' abilities this Pokémon has: 0 or 1, or 2 for its hidden ability.</summary>
+    public int AbilitySlot { get; private set; }
+
+    /// <summary>The ability's id (see <see cref="Abilities"/>); 0 when the species data has none.</summary>
+    public int AbilityId => AbilitySlot == 2 && Species.HiddenAbilityId != 0 ? Species.HiddenAbilityId
+        : Species.AbilityIds is { Count: > 0 } ids ? ids[Math.Min(AbilitySlot, ids.Count - 1)] : 0;
+
+    public string AbilityName => AbilitySlot == 2 && Species.HiddenAbility is { } hidden ? hidden
+        : Species.Abilities.Count > 0 ? Species.Abilities[Math.Min(AbilitySlot, Species.Abilities.Count - 1)] : "";
+
+    /// <summary>Sets the ability slot; 2 (hidden) only sticks when the species has a hidden ability.</summary>
+    public void SetAbilitySlot(int slot) =>
+        AbilitySlot = slot == 2 && Species.HiddenAbilityId != 0 ? 2 : Math.Clamp(slot, 0, Math.Max(0, Species.Abilities.Count - 1));
+
     public int MaxHp => StatValue(Stat.Hp);
     public bool Fainted => Hp <= 0;
     public string Name => Species.Name;
@@ -82,7 +96,10 @@ public sealed class Pokemon
         Hp = MaxHp;
     }
 
-    /// <summary>A wild-style Pokémon: random IVs, nature and gender, knowing the last four moves it learned by <paramref name="level"/>.</summary>
+    /// <summary>
+    /// A wild-style Pokémon: random IVs, nature, gender and (one of its two) ability, knowing the last four moves it
+    /// learned by <paramref name="level"/>.
+    /// </summary>
     public static Pokemon Create(BattleData data, int speciesId, int level, Random rng)
     {
         var species = data.Species(speciesId);
@@ -98,13 +115,15 @@ public sealed class Pokemon
         foreach (var lm in data.Learnset(speciesId).Where(m => m.Level <= mon.Level).Reverse().DistinctBy(m => m.Move).Take(4).Reverse())
             if (data.Move(lm.Move) is { } move)
                 mon.Moves.Add(new MoveSlot(move));
+        if (species.Abilities.Count > 1)
+            mon.AbilitySlot = rng.Next(2);
         return mon;
     }
 
     /// <summary>Everything needed to rebuild this Pokémon later (saves, mail, market listings).</summary>
     public PokemonSave ToSave() =>
         new(Species.Id, Level, Exp, Nature, Gender, Shiny, [.. Ivs], [.. Evs], Hp, Status, SleepTurns,
-            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList());
+            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot);
 
     /// <summary>Rebuilds a saved Pokémon; null when its species isn't in <paramref name="data"/> (a different ROM).</summary>
     public static Pokemon? FromSave(BattleData data, PokemonSave save)
@@ -119,6 +138,7 @@ public sealed class Pokemon
             Status = save.Status,
             SleepTurns = save.SleepTurns,
         };
+        mon.SetAbilitySlot(save.AbilitySlot);
         save.Evs.CopyTo(mon.Evs, 0);
         foreach (var m in save.Moves.Take(4))
             if (data.Move(m.Move) is { } move)
@@ -212,7 +232,7 @@ public sealed class Pokemon
 public sealed record MoveSave(int Move, int Pp);
 
 public sealed record PokemonSave(int Species, int Level, int Exp, Nature Nature, Gender Gender, bool Shiny, int[] Ivs, int[] Evs,
-    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves);
+    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0);
 
 /// <summary>Total experience needed to reach a level, for the six growth rates (personal byte 0x15).</summary>
 public static class ExpCurve

@@ -185,7 +185,7 @@ public partial class GameMenu : Control
             var index = i;
             var status = mon.Fainted ? "FNT" : mon.Status == Ailment.None ? "" : mon.Status.ToString();
             var moves = string.Join(", ", mon.Moves.Select(m => $"{m.Move.Name} {m.Pp}/{m.MaxPp}"));
-            var stats = $"Atk {mon.StatValue(Stat.Attack)} · Def {mon.StatValue(Stat.Defense)} · SpA {mon.StatValue(Stat.SpAttack)} · SpD {mon.StatValue(Stat.SpDefense)} · Spe {mon.StatValue(Stat.Speed)} · {mon.Nature}";
+            var stats = $"Atk {mon.StatValue(Stat.Attack)} · Def {mon.StatValue(Stat.Defense)} · SpA {mon.StatValue(Stat.SpAttack)} · SpD {mon.StatValue(Stat.SpDefense)} · Spe {mon.StatValue(Stat.Speed)} · {mon.Nature} · {mon.AbilityName}";
             var button = Row($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}  {status}\n{moves}\n{stats}", () => PickPokemon(index), Icon(mon));
             list.AddChild(button);
         }

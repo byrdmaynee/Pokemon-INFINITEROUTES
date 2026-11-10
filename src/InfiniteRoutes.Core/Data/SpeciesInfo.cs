@@ -7,7 +7,8 @@ public sealed record BaseStats(int Hp, int Attack, int Defense, int Speed, int S
 
 /// <summary>
 /// Per-species data as extracted from a ROM. Names are resolved from the player's own ROM text,
-/// so they follow the ROM's language.
+/// so they follow the ROM's language. <see cref="AbilityIds"/> runs parallel to <see cref="Abilities"/> (the battle
+/// engine works by id, see <see cref="Battle.Abilities"/>); <see cref="HiddenAbilityId"/> is 0 when there is none.
 /// </summary>
 public sealed record SpeciesInfo(
     int Id,
@@ -27,7 +28,9 @@ public sealed record SpeciesInfo(
     int HeightDecimetres,
     int WeightHectograms,
     int FormCount,
-    IReadOnlyList<int>? TypeIds = null)
+    IReadOnlyList<int>? TypeIds = null,
+    IReadOnlyList<int>? AbilityIds = null,
+    int HiddenAbilityId = 0)
 {
     /// <summary>
     /// Wild Pokémon gender: genderless (255), always female (254), always male (0), else female when a
