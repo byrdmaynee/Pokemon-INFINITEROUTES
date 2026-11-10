@@ -26,6 +26,10 @@ public partial class GameMenu : Control
     [Signal]
     public delegate void StartedOverEventHandler();
 
+    /// <summary>The player used the Super Rod; the world fishes in the water ahead.</summary>
+    [Signal]
+    public delegate void UsedRodEventHandler();
+
     /// <summary>The player used an Escape Rope; the world takes them back outside.</summary>
     [Signal]
     public delegate void UsedEscapeRopeEventHandler();
@@ -542,6 +546,11 @@ public partial class GameMenu : Control
                         EmitSignal(SignalName.UsedEscapeRope);
                         return;
                     }
+                    if (id == OverworldScreen.SuperRod)
+                    {
+                        EmitSignal(SignalName.UsedRod);
+                        return;
+                    }
                     _useItem = medicine ? id : 0;
                     _giveItem = medicine ? 0 : id;
                     _tab = Tab.Party;
@@ -555,7 +564,7 @@ public partial class GameMenu : Control
             pockets.AddChild(column);
         }
         var repel = OfflineSession.State.RepelSteps > 0 ? $"  Repel: {OfflineSession.State.RepelSteps} steps left." : "";
-        return "Pick a medicine or a Repel or Escape Rope to use, or any other item to give a Pokémon to hold." + repel;
+        return "Pick a medicine, Repel, Escape Rope or the Super Rod (facing water) to use, or any other item to give a Pokémon to hold." + repel;
     }
 
     // ── Badges ────────────────────────────────────────────────────────────────────────────────────────────────

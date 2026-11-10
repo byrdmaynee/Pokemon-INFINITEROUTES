@@ -132,6 +132,12 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Battle scenery from the game: in tall grass a field (green in spring, orange in autumn, white in winter),
       on paths and in towns a road with trees, in caves a dark cave, indoors a plain room, against a gym leader
       the gym arena; the platforms sit under both Pokémon. F4 changes the season for the next battle.
+- [ ] Surf: with a Water-type Pokémon (or one that knows Surf) in the party, face water and press Z: "… used
+      Surf!" and you ride onto it (sitting sprite). Wild Pokémon appear while surfing; stepping onto land ends it.
+- [ ] Fishing: you start with a Super Rod. Face water, X → Bag → Super Rod: "You cast your Super Rod…", then
+      a bite and a battle, or "Not even a nibble…".
+- [ ] Every so often leaves fly from a patch of tall grass near you (shaking grass), dust puffs rise in a cave,
+      or rings spread on the water while surfing. Step in for a special wild Pokémon (dust can hold a gem).
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to

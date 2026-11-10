@@ -148,6 +148,9 @@ public static class Gen5Extractor
             foreach (var (name, index) in new[] { ("hero", Gen5Layout.Player.Hero), ("heroine", Gen5Layout.Player.Heroine) })
                 if (Tex0.FromFile(Lz.DecompressIfNeeded(characters.Read(index))) is { } tex)
                     Png.Save(CharacterSheet.FromGen5Player(tex), Path.Combine(characterDir, name + ".png"));
+            foreach (var (name, index) in new[] { ("hero-surf", Gen5Layout.Player.HeroSurf), ("heroine-surf", Gen5Layout.Player.HeroineSurf) })
+                if (Tex0.FromFile(Lz.DecompressIfNeeded(characters.Read(index))) is { } tex)
+                    Png.Save(CharacterSheet.FromGen5Surf(tex), Path.Combine(characterDir, name + ".png"));
 
             var world = Gen5WorldExtractor.Export(fs, tables["locations"], Directory.CreateDirectory(Path.Combine(temp, "maps")).FullName,
                 progress, 0.4, 0.56, ct);

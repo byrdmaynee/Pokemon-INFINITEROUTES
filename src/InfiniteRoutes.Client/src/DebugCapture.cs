@@ -252,6 +252,72 @@ public static class DebugCapture
                 Save("14-overworld-route1");
                 GD.Print($"[capture] walked from {start} to {world.PlayerTile} ({world.LocationAt(world.PlayerTile)})");
 
+                // Water: a borrowed Oshawott carries the player onto the nearest water, then the Super Rod is cast.
+                {
+                    var back = world.PlayerTile;
+                    var backZone = world.CurrentZone;
+                    var oshawott = Core.Battle.Pokemon.Create(World.OfflineSession.Data, 501, 10, new Random(4));
+                    World.OfflineSession.Party.Add(oshawott);
+                    Vector2I[] dirs = [Vector2I.Up, Vector2I.Down, Vector2I.Left, Vector2I.Right];
+                    (Vector2I Land, Vector2I Dir)? shore = null;
+                    for (var r = 1; r < 70 && shore is null; r++)
+                    for (var dx = -r; dx <= r && shore is null; dx++)
+                    for (var dy = -r; dy <= r && shore is null; dy++)
+                    {
+                        var land = back + new Vector2I(dx, dy);
+                        if (world.IsWalkable(land))
+                            foreach (var d in dirs)
+                                if (world.IsWater(land + d))
+                                {
+                                    shore = (land, d);
+                                    break;
+                                }
+                    }
+                    if (shore is { } s && world.Teleport(backZone, s.Land))
+                    {
+                        await Wait(1.0);
+                        world.TryStep(s.Dir);   // bumps the water: now facing it
+                        await Wait(0.2);
+                        world.Interact();
+                        await Wait(1.2);
+                        Press("ui_accept");
+                        await Wait(0.3);
+                        Save("14s-surf");
+                        GD.Print($"[capture] surf from {s.Land} heading {s.Dir}: surfing {world.Surfing} at {world.PlayerTile}");
+                        world.Fish();
+                        for (var waited = 0.0; world.CurrentBattle is null && waited < 6; waited += 0.1)
+                        {
+                            if (world.Talking)
+                                Press("ui_accept");
+                            await Wait(0.2);
+                        }
+                        GD.Print($"[capture] fishing: {(world.CurrentBattle is { } fished ? $"hooked a {fished.Battle.Foe.Mon.Name}" : "no bite")}");
+                        if (world.CurrentBattle is not null)
+                        {
+                            await Wait(3.5);
+                            Save("14f-fishing-battle");
+                            for (var attempt = 0; attempt < 10 && world.CurrentBattle is not null; attempt++)
+                            {
+                                for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 15; waited += 0.1)
+                                    await Wait(0.1);
+                                Press("ui_down");
+                                Press("ui_right");
+                                Press("ui_accept");
+                                await Wait(0.5);
+                            }
+                            for (var waited = 0.0; world.CurrentBattle is not null && waited < 10; waited += 0.1)
+                                await Wait(0.1);
+                        }
+                        Press("ui_accept");
+                        await Wait(0.5);
+                    }
+                    else
+                        GD.Print("[capture] no shore found near Route 1");
+                    World.OfflineSession.Party.Remove(oshawott);
+                    world.Teleport(backZone, back);
+                    await Wait(1.0);
+                }
+
                 // Into tall grass: the player stands in it at ground height, not on top of the bushes.
                 var beside = FindPath(world, world.PlayerTile, t => !world.IsTallGrass(t) && world.IsTallGrass(t + Vector2I.Up));
                 await Walk(beside, run: false);

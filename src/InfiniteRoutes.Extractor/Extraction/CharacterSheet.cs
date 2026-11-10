@@ -38,6 +38,23 @@ public static class CharacterSheet
         return sheet;
     }
 
+    /// <summary>The player surfing: one sitting frame per direction (up, down, left, right), repeated across the columns.</summary>
+    public static Rgba FromGen5Surf(Tex0 tex)
+    {
+        var frames = tex.Textures.Values.ToDictionary(t => int.TryParse(t.Name[(t.Name.LastIndexOf('.') + 1)..], out var n) ? n : 0);
+        var palette = tex.PaletteNames.FirstOrDefault();
+        var sheet = new Rgba(Columns * FrameSize, Rows * FrameSize);
+        Facing[] romOrder = [Facing.Up, Facing.Down, Facing.Left, Facing.Right];
+        for (var d = 0; d < 4; d++)
+            if (frames.TryGetValue(d + 1, out var t))
+            {
+                var image = tex.Decode(t, palette);
+                for (var column = 0; column < Columns; column++)
+                    sheet.Blit(image, column * FrameSize, (int)romOrder[d] * FrameSize);
+            }
+        return sheet;
+    }
+
     /// <summary>
     /// Builds a sheet from a Gen 5 NPC BTX0. Three layouts occur: 12 or more frames (three per direction,
     /// up, down, left, right), 7 frames whose missing poses are mirrors (up stand/walk, down stand/walk,

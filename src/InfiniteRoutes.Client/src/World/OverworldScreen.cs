@@ -225,6 +225,7 @@ public partial class OverworldScreen : Control
     /// <summary>Switches to another map: drops loaded chunks and indexes the new map's cells and warps.</summary>
     void EnterMap(WorldIndex map)
     {
+        ClearPhenomenon();
         foreach (var node in _loaded.Values)
             node.QueueFree();
         _loaded.Clear();
@@ -259,6 +260,8 @@ public partial class OverworldScreen : Control
     async void Arrive(Vector2I tile, Facing? facing, bool autoStep)
     {
         _moving = true;
+        // Arriving (or a save continuing) on water means surfing.
+        SetSurfing(_battles && IsWater(tile));
         if (facing is { } f)
             _dir = FacingToDir(f);
         _player.Position = TileCenter(tile, _height);
@@ -445,12 +448,12 @@ public partial class OverworldScreen : Control
             TakeWarp(warp);
             return true;
         }
-        if (IsBlocked(target) || NpcAt(target) is not null)
+        if (!CanEnter(target) || NpcAt(target) is not null)
         {
             ShowFrame(0);
             return false;
         }
-        Move(target, run);
+        Move(target, _running = run && !_surfing);
         return true;
     }
 
@@ -474,9 +477,12 @@ public partial class OverworldScreen : Control
             UpdateHud();
             if (_battles && OfflineSession.State.RepelStep())
                 ShowMessage("The Repel's effect wore off...");
+            AfterWaterStep();
             if (SpottedBy() is { } trainer)
                 Challenge(trainer);
-            else if (RollEncounter() is { } wild)
+            else if (WaterOrPhenomenonEncounter(out var handled) is { } special)
+                StartBattle(special);
+            else if (!handled && RollEncounter() is { } wild)
                 StartBattle(wild);
         };
     }
@@ -865,6 +871,8 @@ public partial class OverworldScreen : Control
         if (_moving || _dialog.Visible || _menu is not null)
             return false;
         var npc = NpcAt(_tile + _dir);
+        if (npc is null && TrySurf())
+            return true;
         if (npc is null && IsBlocked(_tile + _dir))
             npc = NpcAt(_tile + _dir * 2);   // across a counter
         if (npc is null)
@@ -968,6 +976,7 @@ public partial class OverworldScreen : Control
         _menu.StartedOver += GoHome;
         _menu.SlotChanged += PlaceFromSave;
         _menu.UsedEscapeRope += UseEscapeRope;
+        _menu.UsedRod += Fish;
         AddChild(_menu);
         MoveChild(_fade, -1);
     }

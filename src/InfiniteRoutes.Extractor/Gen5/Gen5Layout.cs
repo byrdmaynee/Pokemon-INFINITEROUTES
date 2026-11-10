@@ -121,6 +121,9 @@ public static class Gen5Layout
     {
         public const int Hero = 6;
         public const int Heroine = 9;
+        /// <summary>Surfing: four 32×32 frames (up, down, left, right) of the player sitting.</summary>
+        public const int HeroSurf = 8;
+        public const int HeroineSurf = 11;
         /// <summary>Frames 1–12 walk, 13–24 run; three per direction (stand, left foot, right foot) in the order up, down, left, right.</summary>
         public const int WalkFirst = 1;
         public const int RunFirst = 13;
