@@ -23,6 +23,8 @@ public sealed record LearnMoveEvent(int PartyIndex, MoveInfo Move) : BattleEvent
 public sealed record SwitchEvent(int PartyIndex, BattleSide Side = BattleSide.Player) : BattleEvent;
 /// <summary>A Poké Ball was thrown: it shook <see cref="Shakes"/> times (0–3) and caught the Pokémon or not.</summary>
 public sealed record CatchEvent(int Ball, int Shakes, bool Caught) : BattleEvent;
+/// <summary>The trainer steps forward (<see cref="Visible"/>) or aside for their Pokémon; the battle screen shows their sprite.</summary>
+public sealed record TrainerEvent(bool Visible) : BattleEvent;
 /// <summary><see cref="Side"/>'s ability <see cref="Ability"/> takes effect; the messages that follow say what it did.</summary>
 public sealed record AbilityEvent(BattleSide Side, string Ability) : BattleEvent;
 
@@ -205,6 +207,7 @@ public sealed partial class SingleBattle
             ?
             [
                 new MessageEvent($"You are challenged by {trainer.Title}!"),
+                new TrainerEvent(false),
                 new MessageEvent($"{trainer.Title} sent out {Foe.Mon.Name}!"),
                 new MessageEvent($"Go! {Player.Mon.Name}!"),
             ]
@@ -1242,6 +1245,9 @@ public sealed partial class SingleBattle
                 }
                 if (Trainer is { } trainer)
                 {
+                    // The trainer steps back out and says their line from the ROM.
+                    events.Add(new TrainerEvent(true));
+                    events.AddRange(TrainerInfo.Pages(trainer.Defeat).Select(page => new MessageEvent(page)));
                     PrizeMoney = trainer.PrizeBase * 4 * _foeParty[^1].Level;
                     // Amulet Coin and Luck Incense double it.
                     if (_party.Any(p => p.HeldItem is HeldItems.AmuletCoin or HeldItems.LuckIncense))

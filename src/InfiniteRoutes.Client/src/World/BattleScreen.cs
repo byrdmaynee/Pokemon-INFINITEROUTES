@@ -24,6 +24,8 @@ public partial class BattleScreen : Control
     readonly IReadOnlyList<string> _typeNames;
 
     TextureRect _foeSprite = null!, _playerSprite = null!;
+    /// <summary>The trainer's sprite in a trainer battle (null in a wild one).</summary>
+    TextureRect? _trainerSprite;
     InfoBox _foeBox = null!, _playerBox = null!;
     WeatherLayer _weather = null!;
     Label _message = null!;
@@ -71,6 +73,8 @@ public partial class BattleScreen : Control
 
         _foeSprite = Sprite(_assets.BattleSpritePath(_battle.Foe.Mon.Species.Id, _battle.Foe.Mon.Shiny ? "front-shiny" : "front"), 2.6f);
         _playerSprite = Sprite(_assets.BattleSpritePath(_battle.Player.Mon.Species.Id, _battle.Player.Mon.Shiny ? "back-shiny" : "back"), 3.2f);
+        if (_battle.Trainer is { } trainer)
+            _trainerSprite = Sprite(_assets.TrainerSpritePath(trainer.Class), 3f);
 
         _weather = new WeatherLayer();
         AddChild(_weather);
@@ -127,19 +131,23 @@ public partial class BattleScreen : Control
         if (!IsInstanceValid(this))
             return;
         Layout();
-        // The wild Pokémon slides in from the left, the player's from the right.
-        var foeEnd = _foeSprite.Position;
+        // The wild Pokémon (or the trainer, whose Pokémon comes out later) slides in from the left, the player's from the right.
+        var foe = _trainerSprite ?? _foeSprite;
+        if (_trainerSprite is not null)
+            _foeSprite.Modulate = Colors.Transparent;
+        var foeEnd = foe.Position;
         var playerEnd = _playerSprite.Position;
-        _foeSprite.Position = foeEnd - new Vector2(Size.X * 0.7f, 0);
+        foe.Position = foeEnd - new Vector2(Size.X * 0.7f, 0);
         _playerSprite.Position = playerEnd + new Vector2(Size.X * 0.7f, 0);
         _foeBox.Modulate = _playerBox.Modulate = Colors.Transparent;
         var tween = CreateTween().SetParallel();
-        tween.TweenProperty(_foeSprite, "position", foeEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        tween.TweenProperty(foe, "position", foeEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
         tween.TweenProperty(_playerSprite, "position", playerEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
         await ToSignal(tween, Tween.SignalName.Finished);
         if (!IsInstanceValid(this))
             return;
-        CreateTween().TweenProperty(_foeBox, "modulate", Colors.White, 0.25);
+        if (_trainerSprite is null)
+            CreateTween().TweenProperty(_foeBox, "modulate", Colors.White, 0.25);
         CreateTween().TweenProperty(_playerBox, "modulate", Colors.White, 0.25);
         Play(_battle.Start());
     }
@@ -149,6 +157,8 @@ public partial class BattleScreen : Control
         var w = Size.X;
         var h = Size.Y - 150;
         PlaceSprite(_foeSprite, new Vector2(w * 0.72f, h * 0.52f));
+        if (_trainerSprite is not null)
+            PlaceSprite(_trainerSprite, new Vector2(w * 0.72f, h * 0.52f));
         PlaceSprite(_playerSprite, new Vector2(w * 0.27f, h + 8));
         _foeBox.Position = new Vector2(w * 0.06f, h * 0.08f);
         _playerBox.Position = new Vector2(w * 0.94f - _playerBox.Size.X, h * 0.62f);
@@ -411,6 +421,9 @@ public partial class BattleScreen : Control
                 case AbilityEvent ability:
                     await ShowAbility(ability);
                     break;
+                case TrainerEvent t:
+                    await ShowTrainer(t.Visible);
+                    break;
                 case WeatherEvent w:
                     _weather.Weather = w.Weather;
                     break;
@@ -434,6 +447,34 @@ public partial class BattleScreen : Control
             ShowParty(forced: true);
         else
             ShowCommands();
+    }
+
+    /// <summary>
+    /// The trainer steps aside to the right as their first Pokémon appears, or slides back in after their last one
+    /// faints to say their line.
+    /// </summary>
+    async Task ShowTrainer(bool visible)
+    {
+        if (_trainerSprite is null)
+            return;
+        var home = _trainerSprite.Position;
+        var tween = CreateTween().SetParallel();
+        if (visible)
+        {
+            _trainerSprite.Position = home + new Vector2(Size.X * 0.3f, 0);
+            _trainerSprite.Modulate = Colors.Transparent;
+            tween.TweenProperty(_trainerSprite, "position", home, 0.4).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+            tween.TweenProperty(_trainerSprite, "modulate", Colors.White, 0.3);
+            await ToSignal(tween, Tween.SignalName.Finished);
+            return;
+        }
+        tween.TweenProperty(_trainerSprite, "position", home + new Vector2(Size.X * 0.3f, 0), 0.4).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
+        tween.TweenProperty(_trainerSprite, "modulate", Colors.Transparent, 0.4);
+        tween.TweenProperty(_foeSprite, "modulate", Colors.White, 0.3).SetDelay(0.2);
+        tween.TweenProperty(_foeBox, "modulate", Colors.White, 0.3).SetDelay(0.3);
+        await ToSignal(tween, Tween.SignalName.Finished);
+        if (IsInstanceValid(_trainerSprite))
+            _trainerSprite.Position = home;
     }
 
     /// <summary>

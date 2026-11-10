@@ -19,6 +19,11 @@ public static class Gen5Layout
     /// <summary>Trainer records and their parties, same index (see <see cref="Gen5Battle.DecodeTrainer"/>).</summary>
     public const string Trainers = "a/0/9/2";
     public const string TrainerParties = "a/0/9/3";
+    /// <summary>One file: (u16 trainer, u16 message type) per line of <see cref="Text.TrainerLines"/>, in line order.</summary>
+    public const string TrainerTextTable = "a/0/9/0";
+    /// <summary>Trainer class sprites: 8 files per class (0: 80×80 NCGR, 7: NCLR; the rest animate it).</summary>
+    public const string TrainerSprites = "a/0/7/2";
+    public const int TrainerSpriteFiles = 8, TrainerSpritePalette = 7;
     /// <summary>Item data, one 36-byte member per item id; u16 @0 is the price in units of ₽10.</summary>
     public const string Items = "a/0/2/4";
     /// <summary>Trainer NPCs run script <c>TrainerScriptBase + trainer id</c>.</summary>
@@ -91,6 +96,8 @@ public static class Gen5Layout
         public const int MoveNames = 203;
         public const int TrainerNames = 190;
         public const int TrainerClassNames = 191;
+        /// <summary>What trainers say: before (type 0), on losing (1) and after (2) a battle; see <see cref="TrainerTextTable"/>.</summary>
+        public const int TrainerLines = 189;
     }
 
     /// <summary>Battle sprite NARC: 20 files per species, at species × 20.</summary>

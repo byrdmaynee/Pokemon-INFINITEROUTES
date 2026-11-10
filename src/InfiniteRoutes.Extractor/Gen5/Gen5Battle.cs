@@ -64,6 +64,35 @@ public static class Gen5Battle
     }
 
     /// <summary>
+    /// Trainer lines: <paramref name="table"/> holds (u16 trainer, u16 type) for each of <paramref name="lines"/>, in
+    /// order. Returns each trainer's intro (type 0), defeat (1) and after-battle (2) line.
+    /// </summary>
+    public static Dictionary<int, (string? Intro, string? Defeat, string? After)> DecodeTrainerLines(ReadOnlySpan<byte> table,
+        IReadOnlyList<string> lines)
+    {
+        var result = new Dictionary<int, (string?, string?, string?)>();
+        for (var i = 0; i * 4 + 4 <= table.Length && i < lines.Count; i++)
+        {
+            int trainer = BinaryPrimitives.ReadUInt16LittleEndian(table[(i * 4)..]), type = BinaryPrimitives.ReadUInt16LittleEndian(table[(i * 4 + 2)..]);
+            var (intro, defeat, after) = result.GetValueOrDefault(trainer);
+            switch (type)
+            {
+                case 0:
+                    intro ??= lines[i];
+                    break;
+                case 1:
+                    defeat ??= lines[i];
+                    break;
+                case 2:
+                    after ??= lines[i];
+                    break;
+            }
+            result[trainer] = (intro, defeat, after);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// A trainer: its 20-byte (or 16-byte) record — u8 Pokémon data flags (bit 0 custom moves, bit 1 held items),
     /// class, battle type, Pokémon count, four u16 items, u32 AI flags, u8 ?, u8 prize base — and its Pokémon,
     /// each u8 difficulty, u8 gender/ability, u8 level, u8 0, u16 species, u16 form, then a u16 held item and

@@ -540,6 +540,34 @@ public partial class OverworldScreen : Control
         _dir = -d;
         ShowFrame(0);
         await ToSignal(GetTree().CreateTimer(0.3), SceneTreeTimer.SignalName.Timeout);
+        if (!IsInstanceValid(this))
+            return;
+        if (TrainerFor(npc) is { } trainer)
+            await Say(Core.Data.TrainerInfo.Pages(trainer.Intro));
+        if (IsInstanceValid(this))
+            StartTrainerBattle(npc);
+    }
+
+    /// <summary>Shows <paramref name="pages"/> one after another in the dialogue box, each until the player closes it.</summary>
+    async Task Say(IReadOnlyList<string> pages)
+    {
+        foreach (var page in pages)
+        {
+            ShowMessage(page);
+            while (_dialog.Visible)
+            {
+                await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+                if (!IsInstanceValid(this))
+                    return;
+            }
+        }
+    }
+
+    /// <summary>The player talked to a trainer who hasn't battled them yet: their opening line, then the battle.</summary>
+    async void TalkThenBattle(NpcActor npc, Core.Data.TrainerInfo trainer)
+    {
+        _moving = true;
+        await Say(Core.Data.TrainerInfo.Pages(trainer.Intro));
         if (IsInstanceValid(this))
             StartTrainerBattle(npc);
     }
@@ -803,9 +831,10 @@ public partial class OverworldScreen : Control
     public bool Talking => _dialog.Visible;
 
     /// <summary>
-    /// Talks to the NPC the player faces: it turns toward the player and a dialogue box opens. Real lines need
-    /// the script engine, so for now the box says which script would run — except the Pokémon Center nurse, who
-    /// heals the party. Counters can be talked across. False when nobody is there.
+    /// Talks to the NPC the player faces: it turns toward the player and a dialogue box opens. Trainers say their
+    /// lines from the ROM (and battle if they haven't yet) and the Pokémon Center nurse heals the party; other NPCs'
+    /// lines need the script engine, so for now the box says which script would run. Counters can be talked across.
+    /// False when nobody is there.
     /// </summary>
     public bool Interact()
     {
@@ -819,14 +848,17 @@ public partial class OverworldScreen : Control
         npc.Facing = DirToFacing(-_dir);
         npc.Pause(2);
         ShowFrame(0);
-        if (_battles && TrainerFor(npc) is not null)
+        if (_battles && TrainerFor(npc) is { } challenger)
         {
-            StartTrainerBattle(npc);
+            TalkThenBattle(npc, challenger);
             return true;
         }
         if (_battles && npc.Info.TrainerId >= 0 && npc.Info.TrainerId < OfflineSession.Trainers.Count)
         {
-            ShowMessage($"{OfflineSession.Trainers[npc.Info.TrainerId].Title}: …\n[beaten — their lines arrive with the script engine]");
+            // Beaten: their after-battle line from the ROM.
+            var beaten = OfflineSession.Trainers[npc.Info.TrainerId];
+            var pages = Core.Data.TrainerInfo.Pages(beaten.After);
+            _ = Say(pages.Count > 0 ? pages : [$"{beaten.Title}: …"]);
             return true;
         }
         if (npc.Info.Script == NurseScript && _battles)

@@ -277,7 +277,12 @@ int Sprite(string rom, string narcPath, int index, int paletteIndex, int width, 
     var ncgr = InfiniteRoutes.Extractor.Graphics.Ncgr.Parse(Lz.DecompressIfNeeded(narc.Read(index)));
     var nclr = InfiniteRoutes.Extractor.Graphics.Nclr.Parse(Lz.DecompressIfNeeded(narc.Read(paletteIndex)));
     Console.WriteLine($"{ncgr.BitsPerPixel}bpp, {ncgr.Indices.Length} px, tiles {ncgr.TilesWide}x{ncgr.TilesHigh}, {(ncgr.Tiled ? "tiled" : "linear")}; palette {nclr.Colors.Length} colours");
-    InfiniteRoutes.Extractor.Graphics.Png.Save(width == 0 ? ncgr.RenderGen5Battler(nclr) : ncgr.Render(nclr, width), output);
+    InfiniteRoutes.Extractor.Graphics.Png.Save(width switch
+    {
+        0 => ncgr.RenderGen5Battler(nclr),
+        1 => ncgr.RenderGen5Trainer(nclr),
+        _ => ncgr.Render(nclr, width),
+    }, output);
     Console.WriteLine($"Wrote {output}");
     return 0;
 }

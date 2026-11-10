@@ -36,6 +36,9 @@ public sealed class GameAssets
     public IReadOnlyList<EncounterTable> LoadEncounters() => LoadData<List<EncounterTable>>("encounters") ?? [];
 
     /// <summary>Trainers indexed by id (<see cref="NpcInfo.TrainerId"/>).</summary>
+    /// <summary>The 80×80 battle sprite of trainer class <paramref name="trainerClass"/>.</summary>
+    public string TrainerSpritePath(int trainerClass) => Path.Combine(Directory, "sprites", "trainers", $"{trainerClass:D3}.png");
+
     public IReadOnlyList<TrainerInfo> LoadTrainers() => LoadData<List<TrainerInfo>>("trainers") ?? [];
 
     /// <summary>Shop prices in ₽ indexed by item id (0 = can't be bought or sold).</summary>

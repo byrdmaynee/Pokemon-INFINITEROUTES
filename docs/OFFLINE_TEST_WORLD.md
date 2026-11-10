@@ -125,6 +125,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       Repel's effect wore off...". Using another while one works says the last one is still lingering.
 - [ ] Escape Rope: inside a building or cave, X → Bag → Escape Rope takes you back outside to where you went
       in; on the overworld it says you can't use it here.
+- [ ] Trainers talk: when Youngster Jimmy spots you he says his line from the game ("A Trainer catches another
+      Trainer's eye…") before the battle; in battle he stands on the far platform, steps aside as his Pokémon comes
+      out, and comes back after his last one faints to say "What?! You are too strong!"; talk to him afterwards
+      for his after-battle line.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -171,14 +175,14 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] On Route 2, walking into a trainer's line of sight (straight ahead of where they face, a few tiles,
       not through trees or other people): a red "!" over their head, they walk up to you, and the battle
       starts with "You are challenged by Youngster Jimmy!" (names and classes come from your ROM).
-- [ ] Talking to a trainer you haven't beaten starts the battle too.
+- [ ] Talking to a trainer you haven't beaten: their opening line, then the battle.
 - [ ] Their Pokémon say "The foe's …"; after one faints the next drops in ("… sent out …!"), with its own
       info box. Teams match the games (Jimmy: Patrat Lv7).
 - [ ] Run says "No! There's no running from a Trainer battle!"; a Poké Ball is blocked ("Don't be a
       thief!") and used up.
 - [ ] Winning: "You defeated …!" and "You got ₽… for winning!"; the money shows in the X menu. EXP is
       higher than from wild Pokémon of the same level.
-- [ ] A beaten trainer never challenges again; talking to them shows a placeholder line.
+- [ ] A beaten trainer never challenges again; talking to them shows their after-battle line.
 - [ ] Losing to a trainer blacks out like a wild battle.
 
 ## Menu: badges, quests, mail, friends, market

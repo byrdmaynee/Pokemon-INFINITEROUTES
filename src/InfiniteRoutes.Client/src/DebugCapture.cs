@@ -461,8 +461,20 @@ public static class DebugCapture
                     }
                     await Wait(0.4);
                     Save("21-trainer-spotted");
-                    for (var waited = 0.0; world.CurrentBattle is null && waited < 8; waited += 0.1)
+                    var introLines = 0;
+                    for (var waited = 0.0; world.CurrentBattle is null && waited < 15; waited += 0.1)
+                    {
+                        if (world.Talking)
+                        {
+                            // Jimmy's opening line from the ROM, a page at a time.
+                            if (introLines++ == 0)
+                                Save("21b-trainer-intro");
+                            await Wait(0.3);
+                            Press("ui_accept");
+                        }
                         await Wait(0.1);
+                    }
+                    GD.Print($"[capture] trainer intro pages: {introLines}");
                     await Wait(1.6);
                     Save("22-trainer-battle");
                     var trainerBattle = world.CurrentBattle?.Battle;

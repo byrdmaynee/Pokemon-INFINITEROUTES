@@ -1,5 +1,6 @@
 using InfiniteRoutes.Core.Battle;
 using InfiniteRoutes.Core.Data;
+using InfiniteRoutes.Extractor.Gen5;
 
 namespace InfiniteRoutes.Tests;
 
@@ -64,5 +65,29 @@ public class TrainerAiTests
         Assert.True(foe.Hp > 5);
         foe.Hp = 5;
         Assert.DoesNotContain(battle.Fight(0), e => e is MessageEvent { Text: var t } && t.Contains("used a Item25"));   // only one
+    }
+
+    [Fact]
+    public void Trainer_lines_come_from_the_rom_and_the_loser_says_theirs()
+    {
+        // (trainer, type) per line: trainer 1 has an intro, a defeat and an after line; trainer 2 only a defeat line.
+        byte[] table = [1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 2, 0, 2, 0, 1, 0];
+        var lines = Gen5Battle.DecodeTrainerLines(table, ["Hi!\fLet's go!", "What?!\nYou are\rtoo strong!", "Bye.", "Ow."]);
+        Assert.Equal(("Hi!\fLet's go!", "What?!\nYou are\rtoo strong!", "Bye."), lines[1]);
+        Assert.Equal((null, "Ow.", null), lines[2]);
+        Assert.Equal(["Hi!", "Let's go!"], TrainerInfo.Pages(lines[1].Intro));
+        Assert.Equal(["What?!\nYou are\ntoo strong!"], TrainerInfo.Pages(lines[1].Defeat));
+
+        var data = new BattleData([Species(1, TypeChart.Normal), Species(2, TypeChart.Normal)], [Tackle], [[], [], []]);
+        var trainer = new TrainerInfo(1, "Jim", 2, "Youngster", 0, [], 0, 4, [new TrainerPokemon(2, 0, 2, 0, 0, 0, [Tackle.Id])],
+            Defeat: "Ow.");
+        var mine = Pokemon.Create(data, 1, 50, new Random(1));
+        mine.Moves.Add(new MoveSlot(Tackle));
+        var battle = new SingleBattle(data, [mine], new Bag(), SingleBattle.TrainerParty(data, trainer, new Random(2)), trainer, new Random(3));
+        Assert.Contains(battle.Start(), e => e is TrainerEvent { Visible: false });
+        var events = battle.Fight(0).ToList();
+        Assert.Equal(BattleOutcome.Won, battle.Outcome);
+        var shown = events.IndexOf(events.First(e => e is TrainerEvent { Visible: true }));
+        Assert.Equal(new MessageEvent("Ow."), events[shown + 1]);
     }
 }

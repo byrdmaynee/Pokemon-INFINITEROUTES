@@ -87,8 +87,11 @@ public static class Gen5Extractor
             var trainerData = Narc.Parse(fs.ReadFile(Gen5Layout.Trainers));
             var trainerParties = Narc.Parse(fs.ReadFile(Gen5Layout.TrainerParties));
             var trainers = new List<TrainerInfo>();
+            var trainerLines = Gen5Battle.DecodeTrainerLines(Narc.Parse(fs.ReadFile(Gen5Layout.TrainerTextTable)).Read(0),
+                Table(Gen5Layout.Text.TrainerLines));
             for (var id = 0; id < trainerData.Count && id < trainerParties.Count; id++)
-                trainers.Add(Gen5Battle.DecodeTrainer(id, trainerData.Read(id), trainerParties.Read(id), tables["trainers"], tables["trainer-classes"]));
+                trainers.Add(Gen5Battle.DecodeTrainer(id, trainerData.Read(id), trainerParties.Read(id), tables["trainers"], tables["trainer-classes"])
+                    is var t && trainerLines.TryGetValue(id, out var said) ? t with { Intro = said.Intro, Defeat = said.Defeat, After = said.After } : t);
             WriteJson(Path.Combine(temp, "data", "trainers.json"), trainers);
 
             // Item prices by item id, in ₽ (the ROM stores tenths).
@@ -120,6 +123,23 @@ public static class Gen5Extractor
                 Png.Save(back.RenderGen5Battler(normal), Path.Combine(spriteDir, "back", file));
                 Png.Save(front.RenderGen5Battler(shiny), Path.Combine(spriteDir, "front-shiny", file));
                 Png.Save(back.RenderGen5Battler(shiny), Path.Combine(spriteDir, "back-shiny", file));
+            }
+
+            // Trainer class sprites, one 80×80 PNG per class.
+            var trainerSprites = Narc.Parse(fs.ReadFile(Gen5Layout.TrainerSprites));
+            var trainerDir = Directory.CreateDirectory(Path.Combine(temp, "sprites", "trainers")).FullName;
+            for (var c = 0; (c + 1) * Gen5Layout.TrainerSpriteFiles <= trainerSprites.Count; c++)
+            {
+                try
+                {
+                    var b = c * Gen5Layout.TrainerSpriteFiles;
+                    var palette = Nclr.Parse(Lz.DecompressIfNeeded(trainerSprites.Read(b + Gen5Layout.TrainerSpritePalette)));
+                    Png.Save(Ncgr.Parse(Lz.DecompressIfNeeded(trainerSprites.Read(b))).RenderGen5Trainer(palette), Path.Combine(trainerDir, $"{c:D3}.png"));
+                }
+                catch (InvalidDataException)
+                {
+                    // A class without a sprite of this shape: battles just don't show one.
+                }
             }
 
             progress?.Report(new("Overworld characters", 0.4));

@@ -149,6 +149,10 @@ public sealed class Ncgr
     public Rgba RenderGen5Battler(Nclr palette) =>
         RenderBlocks(palette, 96, 96, [(0, 0, 64, 64), (64, 0, 32, 64), (0, 64, 64, 32), (64, 64, 32, 32)]);
 
+    /// <summary>Gen 5 80×80 trainer sprite: a 64×64 block, two 16×32 down the right, two 32×16 along the bottom, a 16×16 corner.</summary>
+    public Rgba RenderGen5Trainer(Nclr palette) =>
+        RenderBlocks(palette, 80, 80, [(0, 0, 64, 64), (64, 0, 16, 32), (64, 32, 16, 32), (0, 64, 32, 16), (32, 64, 32, 16), (64, 64, 16, 16)]);
+
     /// <summary>
     /// Renders as a <paramref name="width"/>-pixel-wide image. Palette index 0 is transparent.
     /// </summary>
