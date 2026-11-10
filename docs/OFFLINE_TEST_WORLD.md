@@ -111,6 +111,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       ("…must recharge!"); Protect blocks a hit; Substitute takes hits; Toxic's damage grows each turn; Leech
       Seed drains; Wrap stops you running; Reflect halves physical hits; Seismic Toss always does the user's
       level in damage; U-turn hits, then asks who comes in, and the foe attacks the newcomer.
+- [ ] Trainer AI: trainers don't use moves that can't work (Thunder Wave on a Ground type, a Ground move on a
+      flier, a status move on a Pokémon that already has one); smarter ones go for their strongest attack and a
+      knockout, and gym leaders use their Potion once their Pokémon is low ("Cilan used a Potion!").
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to

@@ -243,7 +243,9 @@ public sealed partial class SingleBattle
             return [new MessageEvent("There's no PP left for this move!")];
         if (Forced(Player) is null && Restricted(Player, playerMove.Value.Move, events))
             return events;
-        var foeMove = Forced(Foe) ?? Choose(Foe, _rng.Next(Math.Max(1, Foe.Mon.Moves.Count)));
+        var foeForced = Forced(Foe);
+        // A trainer may spend its turn on medicine (before anyone moves, as items go first).
+        var foeMove = foeForced is null && TrainerUsesItem(events) ? null : foeForced ?? Choose(Foe, FoeSlot());
         _turns++;
         Player.ChosenMove = playerMove.Value.Move.Id;
         Foe.ChosenMove = foeMove?.Move.Id ?? 0;
@@ -456,12 +458,13 @@ public sealed partial class SingleBattle
         };
     }
 
-    /// <summary>The wild Pokémon's move after the player spent the turn on something else.</summary>
+    /// <summary>The foe's turn after the player spent theirs on something else (an item, a switch, a failed escape).</summary>
     void FoeTurn(List<BattleEvent> events)
     {
         if (Waiting)
             return;
-        if ((Forced(Foe) ?? Choose(Foe, _rng.Next(Math.Max(1, Foe.Mon.Moves.Count)))) is { } foeMove)
+        var usedItem = Forced(Foe) is null && TrainerUsesItem(events);
+        if (!usedItem && (Forced(Foe) ?? Choose(Foe, FoeSlot())) is { } foeMove)
         {
             UseMove(Foe, Player, foeMove.Move, foeMove.Slot, movedFirst: true, events);
             CheckFaints(events);
