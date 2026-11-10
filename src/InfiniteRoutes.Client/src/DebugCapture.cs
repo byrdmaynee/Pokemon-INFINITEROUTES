@@ -314,6 +314,26 @@ public static class DebugCapture
                 world.ToggleMenu();
                 await Wait(0.2);
 
+                // Weather: a Kyogre's Drizzle brings rain to the battle; then run (Run is bottom right of the commands).
+                world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 382, 5, new Random(5)));
+                for (var waited = 0.0; world.CurrentBattle is not { Battle.Weather: not Core.Battle.Weather.None } && waited < 10; waited += 0.1)
+                    await Wait(0.1);
+                await Wait(4.5);   // the intro messages, then Drizzle's banner and the rain
+                Save("19w-rain");
+                GD.Print($"[capture] weather battle: {world.CurrentBattle?.Battle.Weather}");
+                for (var attempt = 0; attempt < 10 && world.CurrentBattle is not null; attempt++)
+                {
+                    for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 15; waited += 0.1)
+                        await Wait(0.1);
+                    Press("ui_down");
+                    Press("ui_right");
+                    Press("ui_accept");
+                    await Wait(0.5);
+                }
+                for (var waited = 0.0; world.CurrentBattle is not null && waited < 10; waited += 0.1)
+                    await Wait(0.1);
+                await Wait(0.5);
+
                 // Pokémon Center: hurt the party, talk to the nurse across the counter in Accumula Town's Center.
                 const int accumulaCenter = 398;
                 if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Script == 2100) is { } nurse)

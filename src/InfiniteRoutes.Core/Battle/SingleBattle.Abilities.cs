@@ -19,9 +19,10 @@ public sealed partial class SingleBattle
     static int Priority(Battler b, MoveInfo move) =>
         move.Priority + (Has(b, Abilities.Prankster) && move.Category == MoveCategory.Status ? 1 : 0);
 
-    /// <summary>Normalize makes every move (but Struggle) Normal-type.</summary>
-    static int MoveType(Battler user, MoveInfo move) =>
-        Has(user, Abilities.Normalize) && move.Id != BattleData.Struggle ? TypeChart.Normal : move.Type;
+    /// <summary>Normalize makes every move (but Struggle) Normal-type; Weather Ball takes the weather's type.</summary>
+    int MoveType(Battler user, MoveInfo move) =>
+        Has(user, Abilities.Normalize) && move.Id != BattleData.Struggle ? TypeChart.Normal
+        : move.Id == WeatherBall ? WeatherBallType(move) : move.Type;
 
     /// <summary>Type effectiveness; Scrappy's Normal and Fighting moves hit Ghost types.</summary>
     static double Effectiveness(Battler user, Battler target, int type)
@@ -74,8 +75,19 @@ public sealed partial class SingleBattle
         if (b.Mon.Fainted || other.Mon.Fainted)
             return;
         var name = Label(b);
+        if (WeatherAbility(b.Ability) is var weather and not Weather.None)
+        {
+            if (Weather != weather)
+                events.Add(Popup(b));
+            SetWeather(weather, 0, events);
+            return;
+        }
         switch (b.Ability)
         {
+            case Abilities.CloudNine or Abilities.AirLock:
+                events.Add(Popup(b));
+                events.Add(new MessageEvent("The effects of the weather disappeared."));
+                break;
             case Abilities.Trace when !Abilities.Untraceable(other.Ability):
                 events.Add(Popup(b));
                 (b.Ability, b.AbilityName) = (other.Ability, other.AbilityName);
@@ -279,21 +291,23 @@ public sealed partial class SingleBattle
         _ => Abilities.None,
     };
 
-    static bool BlocksStatus(Battler victim, Ailment ailment, Battler? source) =>
-        ailment == Ailment.Sleep
+    bool BlocksStatus(Battler victim, Ailment ailment, Battler? source) =>
+        (ActiveWeather == Weather.Sun && Defends(victim, source, Abilities.LeafGuard))
+        || (ailment == Ailment.Sleep
             ? Defends(victim, source, Abilities.Insomnia) || Defends(victim, source, Abilities.VitalSpirit)
-            : StatusBlocker(ailment) is var blocker and not Abilities.None && Defends(victim, source, blocker);
+            : StatusBlocker(ailment) is var blocker and not Abilities.None && Defends(victim, source, blocker));
 
-    static bool TypeImmune(Battler victim, Ailment ailment, bool groundImmune)
+    bool TypeImmune(Battler victim, Ailment ailment, bool groundImmune)
     {
         var types = victim.Types;
-        return (ailment == Ailment.Burn && types.Contains(TypeChart.Fire))
+        return (ailment == Ailment.Freeze && ActiveWeather == Weather.Sun)   // nothing freezes in harsh sunlight
+            || (ailment == Ailment.Burn && types.Contains(TypeChart.Fire))
             || (ailment == Ailment.Freeze && types.Contains(TypeChart.Ice))
             || (ailment == Ailment.Poison && (types.Contains(TypeChart.Poison) || types.Contains(TypeChart.Steel)))
             || (groundImmune && types.Contains(TypeChart.Ground));
     }
 
-    static bool CanInflict(Battler victim, Ailment ailment, Battler? source) =>
+    bool CanInflict(Battler victim, Ailment ailment, Battler? source) =>
         !victim.Mon.Fainted && victim.Mon.Status == Ailment.None && !TypeImmune(victim, ailment, false) && !BlocksStatus(victim, ailment, source);
 
     /// <summary>

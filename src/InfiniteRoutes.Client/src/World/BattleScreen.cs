@@ -25,6 +25,7 @@ public partial class BattleScreen : Control
 
     TextureRect _foeSprite = null!, _playerSprite = null!;
     InfoBox _foeBox = null!, _playerBox = null!;
+    WeatherLayer _weather = null!;
     Label _message = null!;
     GridContainer _commands = null!, _moves = null!;
     PanelContainer _picker = null!;
@@ -62,6 +63,10 @@ public partial class BattleScreen : Control
 
         _foeSprite = Sprite(_assets.BattleSpritePath(_battle.Foe.Mon.Species.Id, _battle.Foe.Mon.Shiny ? "front-shiny" : "front"), 2.6f);
         _playerSprite = Sprite(_assets.BattleSpritePath(_battle.Player.Mon.Species.Id, _battle.Player.Mon.Shiny ? "back-shiny" : "back"), 3.2f);
+
+        _weather = new WeatherLayer();
+        AddChild(_weather);
+        _weather.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
         _foeBox = new InfoBox(_battle.Foe.Mon, showNumbers: false);
         AddChild(_foeBox);
@@ -392,6 +397,9 @@ public partial class BattleScreen : Control
                 case AbilityEvent ability:
                     await ShowAbility(ability);
                     break;
+                case WeatherEvent w:
+                    _weather.Weather = w.Weather;
+                    break;
             }
         }
         if (!IsInstanceValid(this))
@@ -651,6 +659,77 @@ public partial class BattleScreen : Control
     };
 
     /// <summary>Name, gender, level, status and HP bar (and HP numbers and EXP bar for the player's side).</summary>
+    /// <summary>The weather over the battlefield: falling rain or hail, blowing sand, or a warm sunlit tint.</summary>
+    sealed partial class WeatherLayer : Control
+    {
+        Weather _weather;
+
+        public WeatherLayer() => MouseFilter = MouseFilterEnum.Ignore;
+
+        public Weather Weather
+        {
+            get => _weather;
+            set
+            {
+                _weather = value;
+                QueueRedraw();
+            }
+        }
+
+        public override void _Process(double delta)
+        {
+            if (_weather != Weather.None)
+                QueueRedraw();
+        }
+
+        public override void _Draw()
+        {
+            if (_weather == Weather.None)
+                return;
+            var t = (float)Time.GetTicksMsec() / 1000f;
+            var w = Size.X;
+            var h = Size.Y - 150;
+            switch (_weather)
+            {
+                case Weather.Sun:
+                    DrawRect(new Rect2(0, 0, w, h), new Color(1f, 0.85f, 0.4f, 0.16f));
+                    for (var i = 0; i < 6; i++)
+                    {
+                        var x = w * (0.1f + i * 0.17f) + Mathf.Sin(t * 0.7f + i) * 20;
+                        DrawLine(new Vector2(x, 0), new Vector2(x - h * 0.35f, h), new Color(1f, 0.95f, 0.7f, 0.10f), 26);
+                    }
+                    break;
+                case Weather.Rain:
+                    DrawRect(new Rect2(0, 0, w, h), new Color(0.2f, 0.25f, 0.4f, 0.18f));
+                    for (var i = 0; i < 90; i++)
+                    {
+                        var x = Mathf.PosMod(i * 97.3f + t * 160, w + 80) - 40;
+                        var y = Mathf.PosMod(i * 53.7f + t * 900, h);
+                        DrawLine(new Vector2(x, y), new Vector2(x - 6, y + 22), new Color(0.75f, 0.85f, 1f, 0.55f), 2);
+                    }
+                    break;
+                case Weather.Sandstorm:
+                    DrawRect(new Rect2(0, 0, w, h), new Color(0.8f, 0.65f, 0.4f, 0.28f));
+                    for (var i = 0; i < 120; i++)
+                    {
+                        var x = Mathf.PosMod(i * 71.9f + t * 700, w);
+                        var y = Mathf.PosMod(i * 37.1f + Mathf.Sin(t * 2 + i) * 12, h);
+                        DrawLine(new Vector2(x, y), new Vector2(x + 14, y + 2), new Color(0.9f, 0.75f, 0.5f, 0.6f), 2);
+                    }
+                    break;
+                case Weather.Hail:
+                    DrawRect(new Rect2(0, 0, w, h), new Color(0.7f, 0.85f, 1f, 0.14f));
+                    for (var i = 0; i < 60; i++)
+                    {
+                        var x = Mathf.PosMod(i * 83.1f + t * 90, w);
+                        var y = Mathf.PosMod(i * 61.3f + t * 420, h);
+                        DrawCircle(new Vector2(x, y), 3.5f, new Color(0.95f, 0.98f, 1f, 0.85f));
+                    }
+                    break;
+            }
+        }
+    }
+
     sealed partial class InfoBox : PanelContainer
     {
         readonly Pokemon _mon;

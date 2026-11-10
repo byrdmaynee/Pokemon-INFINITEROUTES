@@ -100,6 +100,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       and the messages say what it did. Try a Sandile (Intimidate: Snivy's Attack falls as it comes out),
       a Patrat with Keen Eye, a Lillipup with Vital Spirit (can't be put to sleep), and Snivy below ⅓ HP
       (Overgrow: Vine Whip hits harder). The party tab in X lists each Pokémon's ability.
+- [ ] Weather: Rain Dance, Sunny Day, Sandstorm or Hail (or a Pokémon with Drizzle, Drought, Sand Stream or
+      Snow Warning) changes the weather: a message, rain/hail falling or sand blowing over the field (sun: a warm
+      tint), "Rain continues to fall." each turn, sandstorm/hail damage, and it ends after five turns from a move.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -199,8 +202,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - Animated objects (a/2/1/0) are still static.
 - Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
   trainers fight as single battles.
-- In battle: no nicknames, held items, weather or move animations; abilities that need weather, held items,
-  double battles or the field (Drizzle, Chlorophyll, Pickup, Frisk…) do nothing yet; moves with
+- In battle: no nicknames, held items or move animations; abilities that need held items, double battles or the
+  field (Pickup, Frisk, Plus…) do nothing yet; routes with weather (Route 4's sandstorm) don't bring it into
+  battle yet; moves with
   special effects beyond damage, status and stat changes just deal damage. The battle background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
   town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't sort, move

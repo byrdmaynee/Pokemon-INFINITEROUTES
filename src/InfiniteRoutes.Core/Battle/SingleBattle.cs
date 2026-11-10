@@ -412,7 +412,7 @@ public sealed partial class SingleBattle
 
     int EffectiveSpeed(Battler b)
     {
-        var speed = Staged(b.Mon.StatValue(Stat.Speed), b.Stage(BattleStat.Speed));
+        var speed = WeatherSpeed(b, Staged(b.Mon.StatValue(Stat.Speed), b.Stage(BattleStat.Speed)));
         if (Has(b, Abilities.SlowStart) && b.TurnsOut < 5)
             speed /= 2;
         if (Has(b, Abilities.QuickFeet) && b.Mon.Status != Ailment.None)
@@ -434,6 +434,12 @@ public sealed partial class SingleBattle
         }
         events.Add(new MessageEvent($"{name} used {move.Name}!"));
         var type = MoveType(user, move);
+        if (WeatherMove(move) is var weather and not Weather.None)
+        {
+            if (!SetWeather(weather, 5, events))
+                events.Add(new MessageEvent("But it failed!"));
+            return;
+        }
 
         var selfTargeted = move.Target == 7 || (move.Kind == MoveKind.StatChange && move.StatChanges.All(c => c.Stages > 0))
             || move.Kind == MoveKind.Heal;
@@ -530,7 +536,7 @@ public sealed partial class SingleBattle
             if (user.Mon.Hp >= user.Mon.MaxHp)
                 events.Add(new MessageEvent($"{name}'s HP is full!"));
             else
-                Heal(user, Math.Max(1, user.Mon.MaxHp * move.Heal / 100), events, $"{name} regained health!");
+                Heal(user, Math.Max(1, user.Mon.MaxHp * HealPercent(move) / 100), events, $"{name} regained health!");
         }
 
         if (target.Mon.Fainted && move.Category != MoveCategory.Status)
@@ -618,11 +624,14 @@ public sealed partial class SingleBattle
 
     bool Hits(Battler user, Battler target, MoveInfo move)
     {
-        if (move.NeverMisses || move.Accuracy == 0 || Has(user, Abilities.NoGuard) || Has(target, Abilities.NoGuard))
+        var weatherAccuracy = WeatherAccuracy(move);
+        if (move.NeverMisses || move.Accuracy == 0 || weatherAccuracy > 100 || Has(user, Abilities.NoGuard) || Has(target, Abilities.NoGuard))
             return true;
         if (move.Kind == MoveKind.OneHitKo)
             return _rng.Next(100) < move.Accuracy + user.Mon.Level - target.Mon.Level;
-        var accuracy = move.Category == MoveCategory.Status && Defends(target, user, Abilities.WonderSkin) ? Math.Min(50, move.Accuracy) : move.Accuracy;
+        var accuracy = weatherAccuracy ?? move.Accuracy;
+        if (move.Category == MoveCategory.Status && Defends(target, user, Abilities.WonderSkin))
+            accuracy = Math.Min(50, accuracy);
         // Unaware ignores the other side's accuracy or evasion stages.
         var accStage = Defends(target, user, Abilities.Unaware) ? 0 : user.Stage(BattleStat.Accuracy);
         var evaStage = Has(user, Abilities.Unaware) ? 0 : target.Stage(BattleStat.Evasion);
@@ -633,6 +642,9 @@ public sealed partial class SingleBattle
         if (Has(user, Abilities.VictoryStar))
             chance = chance * 11 / 10;
         if (Has(user, Abilities.Hustle) && move.Category == MoveCategory.Physical)
+            chance = chance * 4 / 5;
+        if ((ActiveWeather == Weather.Sandstorm && Defends(target, user, Abilities.SandVeil))
+            || (ActiveWeather == Weather.Hail && Defends(target, user, Abilities.SnowCloak)))
             chance = chance * 4 / 5;
         return _rng.Next(100) < chance;
     }
@@ -680,8 +692,9 @@ public sealed partial class SingleBattle
         }
         var attack = Staged(user.Mon.StatValue(physical ? Stat.Attack : Stat.SpAttack), atkStage);
         var defense = Math.Max(1, Staged(target.Mon.StatValue(physical ? Stat.Defense : Stat.SpDefense), defStage));
-        var power = move.Power;
+        var power = WeatherPower(move, move.Power);
         var status = user.Mon.Status;
+        var weather = ActiveWeather;
 
         // The attacker's abilities.
         if (Has(user, Abilities.Technician) && power <= 60)
@@ -711,6 +724,10 @@ public sealed partial class SingleBattle
             attack /= 2;
         if (physical && Has(user, Abilities.SlowStart) && user.TurnsOut < 5)
             attack /= 2;
+        if (weather == Weather.Sun && ((!physical && Has(user, Abilities.SolarPower)) || (physical && Has(user, Abilities.FlowerGift))))
+            attack = attack * 3 / 2;
+        if (weather == Weather.Sandstorm && Has(user, Abilities.SandForce) && type is TypeChart.Rock or TypeChart.Ground or TypeChart.Steel)
+            power = power * 13 / 10;
 
         // The target's.
         if (type is TypeChart.Fire or TypeChart.Ice && Defends(target, user, Abilities.ThickFat))
@@ -721,8 +738,13 @@ public sealed partial class SingleBattle
             power = power * 5 / 4;
         if (physical && target.Mon.Status != Ailment.None && Defends(target, user, Abilities.MarvelScale))
             defense = defense * 3 / 2;
+        // Sandstorm raises Rock types' Sp. Def; Flower Gift raises its holder's in sun.
+        if (!physical && ((weather == Weather.Sandstorm && target.Types.Contains(TypeChart.Rock))
+            || (weather == Weather.Sun && Defends(target, user, Abilities.FlowerGift))))
+            defense = defense * 3 / 2;
 
         var damage = BaseDamage(user.Mon.Level, Math.Max(1, power), Math.Max(1, attack), defense);
+        damage = (int)(damage * WeatherDamage(type));
         if (crit)
             damage *= Has(user, Abilities.Sniper) ? 3 : 2;
         damage = damage * (85 + _rng.Next(16)) / 100;
@@ -804,6 +826,7 @@ public sealed partial class SingleBattle
 
     void EndOfTurn(List<BattleEvent> events)
     {
+        WeatherEndOfTurn(events);
         foreach (var b in new[] { Player, Foe })
         {
             b.Flinched = false;
