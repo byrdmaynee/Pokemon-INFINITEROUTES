@@ -11,6 +11,7 @@ const string Usage = """
       ir-extract ls <rom> [dir]          List the ROM filesystem
       ir-extract narc <rom> <path>       List the files inside a NARC archive in the ROM
       ir-extract moveanim <rom> <out>    Export the Gen 5 move animation scripts and particles
+      ir-extract tilestats <rom>         Count every map chunk's tile flag values
       ir-extract scan <folder>           Find and validate every supported ROM in a folder
       ir-extract library                 Show the player's ROM library (roms.pkir)
       ir-extract extract <rom>           Validate, then extract assets into the local cache
@@ -48,6 +49,7 @@ try
         "bmd" when args.Length >= 5 => BmdExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "btx" when args.Length >= 5 => BtxExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "map" when args.Length >= 5 => MapExport(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]),
+        "tilestats" when args.Length >= 2 => TileStats(args[1]),
         "tiles" when args.Length >= 3 => Tiles(args[1], int.Parse(args[2])),
         "text" when args.Length >= 4 => Text(args[1], args[2], int.Parse(args[3])),
         "sprite" when args.Length >= 7 => Sprite(args[1], args[2], int.Parse(args[3]), int.Parse(args[4]), int.Parse(args[5]), args[6]),
@@ -194,6 +196,32 @@ int BtxExport(string rom, string narcPath, int index, string outDir)
         x += t.Width;
     }
     InfiniteRoutes.Extractor.Graphics.Png.Save(sheet, Path.Combine(outDir, "_sheet.png"));
+    return 0;
+}
+
+int TileStats(string rom)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    var chunks = Narc.Parse(fs.ReadFile("a/0/0/8"));
+    var seen = new Dictionary<int, (int Count, List<int> Chunks)>();
+    for (var c = 0; c < chunks.Count; c++)
+    {
+        InfiniteRoutes.Extractor.Gen5.Gen5Map map;
+        try { map = InfiniteRoutes.Extractor.Gen5.Gen5Map.Parse(chunks.Read(c)); } catch (InvalidDataException) { continue; }
+        if (map.Collision is null)
+            continue;
+        for (var y = 0; y < 32; y++)
+            for (var x = 0; x < 32; x++)
+            {
+                var f = map.Tile(x, y).Flags;
+                var e = seen.TryGetValue(f, out var v) ? v : (0, new List<int>());
+                if (e.Item2.Count < 6 && !e.Item2.Contains(c))
+                    e.Item2.Add(c);
+                seen[f] = (e.Item1 + 1, e.Item2);
+            }
+    }
+    foreach (var (flags, (count, list)) in seen.OrderBy(k => k.Key))
+        Console.WriteLine($"flags {flags:X2}: {count} tiles, e.g. chunks {string.Join(", ", list)}");
     return 0;
 }
 

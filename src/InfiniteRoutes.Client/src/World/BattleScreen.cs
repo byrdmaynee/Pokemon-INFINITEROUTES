@@ -6,10 +6,12 @@ using InfiniteRoutes.Extractor.Extraction;
 namespace InfiniteRoutes.Client.World;
 
 /// <summary>
-/// A wild battle drawn over the overworld: the wild Pokémon on the far platform, the player's from behind on the
-/// near one, info boxes with HP (and EXP for the player's), a message box, and the Fight / Bag / Pokémon / Run
-/// menu. Bag throws Poké Balls or uses medicine; Pokémon switches (and picks the next one when the lead faints).
-/// Turns run in <see cref="SingleBattle"/>; this screen plays back its events in order.
+/// A battle drawn over the overworld: the foe's Pokémon on the far platform, the player's from behind on the near
+/// one (two or three a side in double and triple battles, placed where the DS puts them), info boxes with HP (and EXP
+/// for the player's), a message box, and the Fight / Bag / Pokémon / Run menu, asked of each of the player's Pokémon
+/// in turn (with a target list when a move could hit more than one). Bag throws Poké Balls or uses medicine; Pokémon
+/// switches (rotates, in a rotation battle) and picks the next one when one faints. Turns run in
+/// <see cref="SingleBattle"/>; this screen plays back its events in order.
 /// </summary>
 public partial class BattleScreen : Control
 {
@@ -23,10 +25,18 @@ public partial class BattleScreen : Control
     readonly GameAssets _assets;
     readonly IReadOnlyList<string> _typeNames;
 
-    TextureRect _foeSprite = null!, _playerSprite = null!;
+    /// <summary>Each side's battle sprites and info boxes by slot: [0] the player's, [1] the foe's.</summary>
+    readonly TextureRect[][] _sprites = [[], []];
+    readonly InfoBox[][] _boxes = [[], []];
+    TextureRect _foeSprite => _sprites[1][0];
+    TextureRect _playerSprite => _sprites[0][0];
+    InfoBox _foeBox => _boxes[1][0];
+    InfoBox _playerBox => _boxes[0][0];
+    /// <summary>The player's choices so far this turn (double and triple battles) and whose turn it is to choose.</summary>
+    BattleChoice?[] _choices = [];
+    int _chooser;
     /// <summary>The trainer's sprite in a trainer battle (null in a wild one).</summary>
     TextureRect? _trainerSprite;
-    InfoBox _foeBox = null!, _playerBox = null!;
     WeatherLayer _weather = null!;
     Label _message = null!;
     GridContainer _commands = null!, _moves = null!;
@@ -74,6 +84,9 @@ public partial class BattleScreen : Control
     BattleEffects _effects = null!;
     Vector2 _playerFeet, _foeFeet;
 
+    TextureRect SpriteAt(BattleSide side, int slot) => _sprites[(int)side][Math.Clamp(slot, 0, _sprites[(int)side].Length - 1)];
+    InfoBox BoxAt(BattleSide side, int slot) => _boxes[(int)side][Math.Clamp(slot, 0, _boxes[(int)side].Length - 1)];
+
     /// <summary>The move animation player; smoke tests read what it played.</summary>
     public BattleEffects Effects => _effects;
 
@@ -99,13 +112,21 @@ public partial class BattleScreen : Control
         AddChild(_dim);
         _dim.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
-        _foeSprite = Sprite(_assets.BattleSpritePath(_battle.Foe.Mon.Species.Id, _battle.Foe.Mon.Shiny ? "front-shiny" : "front"), 2.6f);
-        _playerSprite = Sprite(_assets.BattleSpritePath(_battle.Player.Mon.Species.Id, _battle.Player.Mon.Shiny ? "back-shiny" : "back"), 3.2f);
+        // Sprites are added far to near so the nearer ones overlap: the foe's side, then the player's.
+        var width = _battle.Width;
+        _sprites[0] = new TextureRect[width];
+        _sprites[1] = new TextureRect[width];
+        foreach (var side in new[] { BattleSide.Foe, BattleSide.Player })
+            foreach (var slot in Enumerable.Range(0, width).OrderBy(i => BattleEffects.Home(side, i, width).Z))
+            {
+                var mon = (side == BattleSide.Player ? _battle.PlayerField : _battle.FoeField)[slot].Mon;
+                var scale = BattleEffects.Place(Vector2.Zero, Vector2.One, side, slot, width).Scale * (side == BattleSide.Player ? 3.2f : 2.6f);
+                _sprites[(int)side][slot] = Sprite(SpritePath(mon, side), scale);
+            }
         if (_battle.Trainer is { } trainer)
             _trainerSprite = Sprite(_assets.TrainerSpritePath(trainer.Class), 3f);
 
-        _effects = new BattleEffects(_assets, side => side == BattleSide.Player ? _playerFeet : _foeFeet,
-            side => side == BattleSide.Player ? _playerSprite : _foeSprite, _dim);
+        _effects = new BattleEffects(_assets, () => (_playerFeet, _foeFeet), SpriteAt, _dim);
         AddChild(_effects);
         _effects.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
@@ -113,10 +134,13 @@ public partial class BattleScreen : Control
         AddChild(_weather);
         _weather.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
-        _foeBox = new InfoBox(_battle.Foe.Mon, showNumbers: false);
-        AddChild(_foeBox);
-        _playerBox = new InfoBox(_battle.Player.Mon, showNumbers: true);
-        AddChild(_playerBox);
+        _boxes[0] = new InfoBox[width];
+        _boxes[1] = new InfoBox[width];
+        for (var i = 0; i < width; i++)
+        {
+            AddChild(_boxes[1][i] = new InfoBox(_battle.FoeField[i].Mon, showNumbers: false, compact: width > 1));
+            AddChild(_boxes[0][i] = new InfoBox(_battle.PlayerField[i].Mon, showNumbers: true, compact: width > 1));
+        }
 
         var bottom = new PanelContainer();
         bottom.AddThemeStyleboxOverride("panel", Box(new Color(0.12f, 0.16f, 0.22f), new Color(0.9f, 0.55f, 0.25f), 3));
@@ -135,7 +159,7 @@ public partial class BattleScreen : Control
         _commands.AddChild(Command("Fight", new Color(0.85f, 0.3f, 0.25f), ShowMoves));
         _commands.AddChild(Command("Bag", new Color(0.85f, 0.6f, 0.2f), ShowBag));
         _commands.AddChild(Command("Pokémon", new Color(0.3f, 0.65f, 0.3f), () => ShowParty(forced: false)));
-        _commands.AddChild(Command("Run", new Color(0.3f, 0.45f, 0.85f), () => Play(_battle.Run())));
+        _commands.AddChild(Command("Run", new Color(0.3f, 0.45f, 0.85f), () => Act(new BattleChoice.Run())));
         row.AddChild(_commands);
 
         _moves = new GridContainer { Columns = 2, Visible = false };
@@ -165,23 +189,24 @@ public partial class BattleScreen : Control
             return;
         Layout();
         // The wild Pokémon (or the trainer, whose Pokémon comes out later) slides in from the left, the player's from the right.
-        var foe = _trainerSprite ?? _foeSprite;
+        var foes = _trainerSprite is { } trainer ? [trainer] : _sprites[1];
         if (_trainerSprite is not null)
-            _foeSprite.Modulate = Colors.Transparent;
-        var foeEnd = foe.Position;
-        var playerEnd = _playerSprite.Position;
-        foe.Position = foeEnd - new Vector2(Size.X * 0.7f, 0);
-        _playerSprite.Position = playerEnd + new Vector2(Size.X * 0.7f, 0);
-        _foeBox.Modulate = _playerBox.Modulate = Colors.Transparent;
+            foreach (var sprite in _sprites[1])
+                sprite.Modulate = Colors.Transparent;
+        foreach (var box in _boxes.SelectMany(b => b))
+            box.Modulate = Colors.Transparent;
         var tween = CreateTween().SetParallel();
-        tween.TweenProperty(foe, "position", foeEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
-        tween.TweenProperty(_playerSprite, "position", playerEnd, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        foreach (var (sprite, from) in foes.Select(f => (f, -0.7f)).Concat(_sprites[0].Select(p => (p, 0.7f))))
+        {
+            var end = sprite.Position;
+            sprite.Position = end + new Vector2(Size.X * from, 0);
+            tween.TweenProperty(sprite, "position", end, 0.7).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        }
         await ToSignal(tween, Tween.SignalName.Finished);
         if (!IsInstanceValid(this))
             return;
-        if (_trainerSprite is null)
-            CreateTween().TweenProperty(_foeBox, "modulate", Colors.White, 0.25);
-        CreateTween().TweenProperty(_playerBox, "modulate", Colors.White, 0.25);
+        foreach (var box in (_trainerSprite is null ? _boxes[1] : []).Concat(_boxes[0]))
+            CreateTween().TweenProperty(box, "modulate", Colors.White, 0.25);
         Play(_battle.Start());
     }
 
@@ -189,15 +214,40 @@ public partial class BattleScreen : Control
     {
         var w = Size.X;
         var h = Size.Y - 150;
-        _foeFeet = new Vector2(w * 0.72f, h * 0.52f);
-        _playerFeet = new Vector2(w * 0.27f, h + 8);
-        PlaceSprite(_foeSprite, _foeFeet);
-        _backdrop.PlaceStages(new Vector2(w * 0.72f, h * 0.5f), w * 0.34f, new Vector2(w * 0.27f, h * 0.98f), w * 0.44f);
+        var width = _battle.Width;
+        // The single-battle spots the camera is fitted to (a little closer together for three a side, so all fit).
+        _foeFeet = width >= 3 ? new Vector2(w * 0.68f, h * 0.5f) : new Vector2(w * 0.72f, h * 0.52f);
+        _playerFeet = width >= 3 ? new Vector2(w * 0.35f, h - 6) : new Vector2(w * 0.27f, h + 8);
+        for (var i = 0; i < width; i++)
+        {
+            PlaceSprite(_sprites[1][i], BattleEffects.Place(_playerFeet, _foeFeet, BattleSide.Foe, i, width).Feet);
+            PlaceSprite(_sprites[0][i], BattleEffects.Place(_playerFeet, _foeFeet, BattleSide.Player, i, width).Feet);
+        }
+        if (width == 1)
+            _backdrop.PlaceStages(new Vector2(w * 0.72f, h * 0.5f), w * 0.34f, new Vector2(w * 0.27f, h * 0.98f), w * 0.44f);
+        else
+        {
+            // One platform under each side's group, wide enough for all of them.
+            (Vector2 Centre, float Width) Group(BattleSide side, float single, float drop)
+            {
+                var feet = Enumerable.Range(0, width).Select(i => BattleEffects.Place(_playerFeet, _foeFeet, side, i, width).Feet).ToList();
+                var centre = new Vector2((feet.Min(f => f.X) + feet.Max(f => f.X)) / 2, feet.Average(f => f.Y) + drop);
+                return (centre, feet.Max(f => f.X) - feet.Min(f => f.X) + single);
+            }
+            var foe = Group(BattleSide.Foe, w * 0.2f, -h * 0.02f);
+            var mine = Group(BattleSide.Player, w * 0.22f, -h * 0.03f);
+            _backdrop.PlaceStages(foe.Centre, foe.Width, mine.Centre, mine.Width);
+        }
         if (_trainerSprite is not null)
             PlaceSprite(_trainerSprite, new Vector2(w * 0.72f, h * 0.52f));
-        PlaceSprite(_playerSprite, new Vector2(w * 0.27f, h + 8));
-        _foeBox.Position = new Vector2(w * 0.06f, h * 0.08f);
-        _playerBox.Position = new Vector2(w * 0.94f - _playerBox.Size.X, h * 0.62f);
+        // Info boxes: the foe's down the top left, the player's up the right (in slot order, left to right).
+        for (var i = 0; i < width; i++)
+        {
+            var foeBox = _boxes[1][width - 1 - i];
+            foeBox.Position = new Vector2(w * 0.06f, h * 0.08f + i * (foeBox.Size.Y + 6));
+            var mine = _boxes[0][i];
+            mine.Position = new Vector2(w * 0.94f - mine.Size.X, h * (width > 1 ? 0.5f : 0.62f) + i * (mine.Size.Y + 6));
+        }
         _picker.Size = new Vector2(440, 0);
         _picker.Position = new Vector2(w - _picker.Size.X - 16, h - _picker.GetCombinedMinimumSize().Y - 12);
         QueueRedraw();
@@ -236,6 +286,9 @@ public partial class BattleScreen : Control
     static ImageTexture? LoadTexture(string path) =>
         File.Exists(path) && Image.LoadFromFile(path) is { } image ? ImageTexture.CreateFromImage(image) : null;
 
+    string SpritePath(Pokemon mon, BattleSide side) =>
+        _assets.BattleSpritePath(mon.Species.Id, side == BattleSide.Player ? (mon.Shiny ? "back-shiny" : "back") : (mon.Shiny ? "front-shiny" : "front"));
+
     TextureRect Sprite(string path, float scale)
     {
         var texture = LoadTexture(path);
@@ -271,29 +324,142 @@ public partial class BattleScreen : Control
         ContentMarginLeft = 14, ContentMarginRight = 14, ContentMarginTop = 8, ContentMarginBottom = 8,
     };
 
+    /// <summary>The Pokémon choosing now (the only one in a single battle).</summary>
+    Battler Chooser => _battle.Width > 1 ? _battle.PlayerField[_chooser] : _battle.Player;
+
+    /// <summary>True while the menu waits for the player's choice; for smoke tests.</summary>
+    public bool Choosing => !_busy && (_commands.Visible || _moves.Visible || _picker.Visible) && !Asking && !Naming;
+
+    /// <summary>Sends out party member <paramref name="index"/> after a faint, as if picked from the list; for smoke tests.</summary>
+    public void Replace(int index)
+    {
+        _picker.Visible = false;
+        Play(_battle.SendOut(index));
+    }
+
+    /// <summary>Makes the current Pokémon's choice as if picked from the menu; for smoke tests.</summary>
+    public void Choose(BattleChoice choice)
+    {
+        _picker.Visible = _moves.Visible = false;
+        Act(choice);
+    }
+
+    /// <summary>Starts the turn's choices: one Pokémon at a time in double and triple battles.</summary>
     void ShowCommands()
     {
+        if (_battle.Width > 1)
+        {
+            _choices = new BattleChoice?[_battle.Width];
+            _chooser = -1;
+            NextChooser();
+            return;
+        }
         // Charging, recharging or rampaging: the move is already decided.
         if (_battle.PlayerLocked)
         {
             Play(_battle.Fight(0));
             return;
         }
+        AskChooser();
+    }
+
+    void AskChooser()
+    {
         _moves.Visible = false;
+        _picker.Visible = false;
         _commands.Visible = true;
-        _message.Text = $"What will {_battle.Player.Mon.Name} do?";
+        var rotate = _battle.CanRotate ? "\n(Pokémon: rotate for free)" : "";
+        _message.Text = $"What will {Chooser.Mon.Name} do?{rotate}";
         _commands.GetChild<Button>(0).GrabFocus();
+    }
+
+    /// <summary>Moves on to the next of the player's Pokémon that can choose, or plays the turn once all have.</summary>
+    void NextChooser()
+    {
+        while (++_chooser < _battle.Width)
+        {
+            var b = _battle.PlayerField[_chooser];
+            if (!b.Mon.Fainted && !SingleBattle.Locked(b))
+            {
+                AskChooser();
+                return;
+            }
+        }
+        Play(_battle.Turn(_choices));
+    }
+
+    /// <summary>The chooser's action: the turn itself in a single battle, else noted until everyone has chosen.</summary>
+    void Act(BattleChoice choice)
+    {
+        if (_battle.Width == 1)
+        {
+            Play(_battle.Turn([choice]));
+            return;
+        }
+        _choices[_chooser] = choice;
+        if (choice is BattleChoice.Run)
+        {
+            Play(_battle.Turn(_choices));
+            return;
+        }
+        NextChooser();
+    }
+
+    /// <summary>Esc on the command menu: back to the previous Pokémon's choice in a double or triple battle.</summary>
+    void PreviousChooser()
+    {
+        for (var i = _chooser - 1; i >= 0; i--)
+        {
+            var b = _battle.PlayerField[i];
+            if (!b.Mon.Fainted && !SingleBattle.Locked(b))
+            {
+                _chooser = i;
+                _choices[i] = null;
+                AskChooser();
+                return;
+            }
+        }
+    }
+
+    /// <summary>A move from the move list: in a double or triple battle, ask for its target when there's a choice.</summary>
+    void PickMove(int index)
+    {
+        var user = Chooser;
+        var move = user.Mon.Moves[index].Move;
+        if (!_battle.NeedsTarget(user, move))
+        {
+            Act(new BattleChoice.Fight(index));
+            return;
+        }
+        var options = new List<(string, bool, Action)>();
+        foreach (var side in new[] { BattleSide.Foe, BattleSide.Player })
+        {
+            var field = side == BattleSide.Player ? _battle.PlayerField : _battle.FoeField;
+            for (var i = 0; i < field.Count; i++)
+            {
+                var b = field[i];
+                if (b == user || b.Mon.Fainted)
+                    continue;
+                var reach = _battle.Targets(user, move, side, i).Contains(b);
+                var slot = i;
+                var label = side == BattleSide.Foe ? $"Foe's {b.Mon.Name}" : $"Ally {b.Mon.Name}";
+                options.Add(($"{label}   HP {Math.Max(1, b.Mon.Hp * 100 / Math.Max(1, b.Mon.MaxHp))}%", reach,
+                    () => Act(new BattleChoice.Fight(index, side, slot))));
+            }
+        }
+        ShowPicker($"{move.Name}: at which Pokémon?", options, ShowMoves);
+        _message.Text = $"Use {move.Name} on which Pokémon?";
     }
 
     void ShowMoves()
     {
-        if (_battle.MustStruggle)
+        var mon = Chooser.Mon;
+        if (mon.Moves.All(m => m.Pp <= 0))
         {
-            Play(_battle.Fight(0));
+            Act(new BattleChoice.Fight(0));
             return;
         }
         Ui.Ui.ClearChildren(_moves);
-        var mon = _battle.Player.Mon;
         for (var i = 0; i < 4; i++)
         {
             if (i >= mon.Moves.Count)
@@ -304,7 +470,7 @@ public partial class BattleScreen : Control
             var slot = mon.Moves[i];
             var index = i;
             var type = slot.Move.Type < _typeNames.Count ? _typeNames[slot.Move.Type] : "";
-            var button = Command($"{slot.Move.Name}\n{type}   PP {slot.Pp}/{slot.MaxPp}", TypeColor(slot.Move.Type), () => Play(_battle.Fight(index)));
+            var button = Command($"{slot.Move.Name}\n{type}   PP {slot.Pp}/{slot.MaxPp}", TypeColor(slot.Move.Type), () => PickMove(index));
             button.AddThemeFontSizeOverride("font_size", 17);
             button.CustomMinimumSize = new Vector2(230, 52);
             button.Disabled = slot.Pp <= 0;
@@ -359,7 +525,7 @@ public partial class BattleScreen : Control
         {
             var item = i.Item;
             Action pick = ItemEffect.For(item) is ItemEffect.Ball
-                ? () => Play(_battle.UseItem(item))
+                ? () => Act(new BattleChoice.Item(item))
                 : () => ShowParty(forced: false, useItem: item);
             return ($"{data.ItemName(item)}   ×{i.Count}", true, pick);
         }).ToList();
@@ -368,7 +534,7 @@ public partial class BattleScreen : Control
             Say("The Bag is empty.");
             return;
         }
-        ShowPicker("Bag", options, ShowCommands);
+        ShowPicker("Bag", options, AskChooser);
         _message.Text = "Use which item?";
     }
 
@@ -376,19 +542,25 @@ public partial class BattleScreen : Control
     void ShowParty(bool forced, int useItem = 0)
     {
         var party = _battle.Party;
+        var rotating = !forced && useItem == 0 && _battle.CanRotate;
+        // Already chosen to come in this turn (double and triple battles).
+        var incoming = _choices.OfType<BattleChoice.Switch>().Select(c => c.PartyIndex).ToHashSet();
         var options = party.Select((mon, i) =>
         {
             var status = mon.Fainted ? "  FNT" : mon.Status != Ailment.None ? $"  {StatusTag(mon.Status)}" : "";
-            var text = $"{mon.Name}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}{status}{(i == _battle.ActiveIndex ? "   (in battle)" : "")}";
+            var text = $"{mon.Name}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}{status}{(_battle.IsOut(i) ? "   (in battle)" : "")}";
             var index = i;
             if (useItem != 0)
-                return (text, true, (Action)(() => Play(_battle.UseItem(useItem, index))));
-            var can = _battle.CanSendOut(i) && i != _battle.ActiveIndex;
-            return (text, can, forced ? () => Play(_battle.SendOut(index)) : (Action)(() => Play(_battle.Switch(index))));
+                return (text, true, (Action)(() => Act(new BattleChoice.Item(useItem, index))));
+            if (rotating)
+                return (text, _battle.RotationTeam.Contains(mon) && _battle.CanSendOut(i) && !_battle.IsOut(i),
+                    (Action)(() => Play(_battle.Rotate(index))));
+            var can = _battle.CanSendOut(i) && !_battle.IsOut(i) && !incoming.Contains(i);
+            return (text, can, forced ? () => Play(_battle.SendOut(index)) : (Action)(() => Act(new BattleChoice.Switch(index))));
         });
         var title = useItem != 0 ? $"Use the {OfflineSession.Data.ItemName(useItem)} on which Pokémon?"
-            : forced ? "Choose the next Pokémon." : "Switch to which Pokémon?";
-        ShowPicker(title, options, forced ? null : ShowCommands);
+            : forced ? "Choose the next Pokémon." : rotating ? "Rotate to which Pokémon? (free, once a turn)" : "Switch to which Pokémon?";
+        ShowPicker(title, options, forced ? null : AskChooser);
         _message.Text = title;
     }
 
@@ -399,7 +571,7 @@ public partial class BattleScreen : Control
         _message.Text = text;
         await Wait(MessageSeconds);
         if (IsInstanceValid(this) && !_battle.Over)
-            ShowCommands();
+            AskChooser();
     }
 
     /// <summary>Plays a turn's events, then shows the menu again, asks for the next Pokémon, or ends the battle.</summary>
@@ -423,33 +595,33 @@ public partial class BattleScreen : Control
                     await Wait(MessageSeconds);
                     break;
                 case HpEvent hp:
-                    var box = hp.Side == BattleSide.Player ? _playerBox : _foeBox;
-                    var sprite = hp.Side == BattleSide.Player ? _playerSprite : _foeSprite;
+                    var box = BoxAt(hp.Side, hp.Slot);
+                    var sprite = SpriteAt(hp.Side, hp.Slot);
                     if (hp.Hp < box.Hp)
                         Blink(sprite);
                     await ToSignal(box.AnimateHp(hp.Hp, hp.MaxHp, HpSeconds), Tween.SignalName.Finished);
                     break;
                 case StatusEvent s:
-                    (s.Side == BattleSide.Player ? _playerBox : _foeBox).SetStatus(s.Status);
+                    BoxAt(s.Side, s.Slot).SetStatus(s.Status);
                     break;
                 case FaintEvent f:
-                    var fainted = f.Side == BattleSide.Player ? _playerSprite : _foeSprite;
+                    var fainted = SpriteAt(f.Side, f.Slot);
                     var fall = CreateTween().SetParallel();
                     fall.TweenProperty(fainted, "position", fainted.Position + new Vector2(0, fainted.Size.Y * 0.6f), 0.4);
                     fall.TweenProperty(fainted, "modulate", Colors.Transparent, 0.4);
                     await ToSignal(fall, Tween.SignalName.Finished);
                     break;
-                case ExpEvent exp when _playerBox.Shows(_battle.Party[exp.PartyIndex]):
-                    await ToSignal(_playerBox.AnimateExp(0.6), Tween.SignalName.Finished);
+                case ExpEvent exp when _boxes[0].FirstOrDefault(b => b.Shows(_battle.Party[exp.PartyIndex])) is { } expBox:
+                    await ToSignal(expBox.AnimateExp(0.6), Tween.SignalName.Finished);
                     break;
-                case LevelUpEvent up when _playerBox.Shows(_battle.Party[up.PartyIndex]):
-                    _playerBox.Refresh();
+                case LevelUpEvent up when _boxes[0].FirstOrDefault(b => b.Shows(_battle.Party[up.PartyIndex])) is { } upBox:
+                    upBox.Refresh();
                     break;
                 case SwitchEvent { Side: BattleSide.Foe } sw:
-                    await SendOutFoe(_battle.FoeParty[sw.PartyIndex]);
+                    await SendOutFoe(_battle.FoeParty[sw.PartyIndex], sw.Slot);
                     break;
                 case SwitchEvent sw:
-                    await SendOut(_battle.Party[sw.PartyIndex]);
+                    await SendOut(_battle.Party[sw.PartyIndex], sw.Slot);
                     break;
                 case CatchEvent c:
                     await ThrowBall(c);
@@ -467,7 +639,7 @@ public partial class BattleScreen : Control
                     _weather.Weather = w.Weather;
                     break;
                 case MoveAnimationEvent anim:
-                    await _effects.Play(anim.Move, anim.User);
+                    await _effects.Play(anim.Move, anim.User, anim.Slot, anim.Target, anim.TargetSlot, _battle.Width);
                     break;
             }
         }
@@ -475,7 +647,7 @@ public partial class BattleScreen : Control
             return;
         if (_battle.Outcome == BattleOutcome.Caught)
         {
-            await AskNickname(_battle.Foe.Mon);
+            await AskNickname(_battle.Caught ?? _battle.Foe.Mon);
             if (!IsInstanceValid(this))
                 return;
         }
@@ -512,8 +684,11 @@ public partial class BattleScreen : Control
         }
         tween.TweenProperty(_trainerSprite, "position", home + new Vector2(Size.X * 0.3f, 0), 0.4).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
         tween.TweenProperty(_trainerSprite, "modulate", Colors.Transparent, 0.4);
-        tween.TweenProperty(_foeSprite, "modulate", Colors.White, 0.3).SetDelay(0.2);
-        tween.TweenProperty(_foeBox, "modulate", Colors.White, 0.3).SetDelay(0.3);
+        for (var i = 0; i < _sprites[1].Length; i++)
+        {
+            tween.TweenProperty(_sprites[1][i], "modulate", Colors.White, 0.3).SetDelay(0.2);
+            tween.TweenProperty(_boxes[1][i], "modulate", Colors.White, 0.3).SetDelay(0.3);
+        }
         await ToSignal(tween, Tween.SignalName.Finished);
         if (IsInstanceValid(_trainerSprite))
             _trainerSprite.Position = home;
@@ -526,8 +701,9 @@ public partial class BattleScreen : Control
     async Task ShowAbility(AbilityEvent e)
     {
         var player = e.Side == BattleSide.Player;
-        var mon = player ? _battle.Player.Mon : _battle.Foe.Mon;
-        var box = player ? _playerBox : _foeBox;
+        var field = player ? _battle.PlayerField : _battle.FoeField;
+        var mon = field[Math.Clamp(e.Slot, 0, field.Count - 1)].Mon;
+        var box = BoxAt(e.Side, e.Slot);
         LastAbility = $"{mon.Name}'s {e.Ability}";
         var banner = new PanelContainer { Modulate = Colors.Transparent, MouseFilter = MouseFilterEnum.Ignore };
         banner.AddThemeStyleboxOverride("panel", Box(new Color(0.12f, 0.16f, 0.22f, 0.95f), Ui.Ui.Accent, 2));
@@ -617,50 +793,58 @@ public partial class BattleScreen : Control
     string TypeName(int type) => type < _typeNames.Count ? _typeNames[type] : "";
 
     /// <summary>Recalls the Pokémon on the near platform (if still there) and sends <paramref name="mon"/> out in its place.</summary>
-    async Task SendOut(Pokemon mon)
+    async Task SendOut(Pokemon mon, int slot = 0)
     {
         Layout();
-        var home = _playerSprite.Position;
-        if (_playerSprite.Modulate.A > 0.1f)
+        var sprite = SpriteAt(BattleSide.Player, slot);
+        var home = sprite.Position;
+        if (sprite.Modulate.A > 0.1f)
         {
             var back = CreateTween().SetParallel();
-            back.TweenProperty(_playerSprite, "position", home - new Vector2(Size.X * 0.5f, 0), 0.3);
-            back.TweenProperty(_playerBox, "modulate", Colors.Transparent, 0.2);
+            back.TweenProperty(sprite, "position", home - new Vector2(Size.X * 0.5f, 0), 0.3);
+            back.TweenProperty(BoxAt(BattleSide.Player, slot), "modulate", Colors.Transparent, 0.2);
             await ToSignal(back, Tween.SignalName.Finished);
         }
-        _playerSprite.Texture = LoadTexture(_assets.BattleSpritePath(mon.Species.Id, mon.Shiny ? "back-shiny" : "back"));
-        _playerBox.QueueFree();
-        _playerBox = new InfoBox(mon, showNumbers: true) { Modulate = Colors.Transparent };
-        AddChild(_playerBox);
-        MoveChild(_picker, -1);
+        sprite.Texture = LoadTexture(SpritePath(mon, BattleSide.Player));
+        var box = ReplaceBox(BattleSide.Player, slot, mon);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         Layout();
-        home = _playerSprite.Position;
-        _playerSprite.Position = home - new Vector2(Size.X * 0.5f, 0);
-        _playerSprite.Modulate = Colors.White;
+        home = sprite.Position;
+        sprite.Position = home - new Vector2(Size.X * 0.5f, 0);
+        sprite.Modulate = Colors.White;
         var enter = CreateTween().SetParallel();
-        enter.TweenProperty(_playerSprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
-        enter.TweenProperty(_playerBox, "modulate", Colors.White, 0.3);
+        enter.TweenProperty(sprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+        enter.TweenProperty(box, "modulate", Colors.White, 0.3);
         await ToSignal(enter, Tween.SignalName.Finished);
     }
 
-    /// <summary>A trainer's next Pokémon drops onto the far platform with a fresh info box.</summary>
-    async Task SendOutFoe(Pokemon mon)
+    /// <summary>A fresh (hidden) info box for <paramref name="mon"/> in a side's slot.</summary>
+    InfoBox ReplaceBox(BattleSide side, int slot, Pokemon mon)
     {
-        _foeSprite.Texture = LoadTexture(_assets.BattleSpritePath(mon.Species.Id, mon.Shiny ? "front-shiny" : "front"));
-        _foeBox.QueueFree();
-        _foeBox = new InfoBox(mon, showNumbers: false) { Modulate = Colors.Transparent };
-        AddChild(_foeBox);
+        var row = _boxes[(int)side];
+        slot = Math.Clamp(slot, 0, row.Length - 1);
+        row[slot].QueueFree();
+        var box = row[slot] = new InfoBox(mon, showNumbers: side == BattleSide.Player, compact: row.Length > 1) { Modulate = Colors.Transparent };
+        AddChild(box);
         MoveChild(_picker, -1);
+        return box;
+    }
+
+    /// <summary>A trainer's next Pokémon drops onto the far platform with a fresh info box.</summary>
+    async Task SendOutFoe(Pokemon mon, int slot = 0)
+    {
+        var sprite = SpriteAt(BattleSide.Foe, slot);
+        sprite.Texture = LoadTexture(SpritePath(mon, BattleSide.Foe));
+        var box = ReplaceBox(BattleSide.Foe, slot, mon);
         await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
         Layout();
-        var home = _foeSprite.Position;
-        _foeSprite.Position = home - new Vector2(0, 60);
-        _foeSprite.Modulate = Colors.Transparent;
+        var home = sprite.Position;
+        sprite.Position = home - new Vector2(0, 60);
+        sprite.Modulate = Colors.Transparent;
         var enter = CreateTween().SetParallel();
-        enter.TweenProperty(_foeSprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Bounce).SetEase(Tween.EaseType.Out);
-        enter.TweenProperty(_foeSprite, "modulate", Colors.White, 0.25);
-        enter.TweenProperty(_foeBox, "modulate", Colors.White, 0.3);
+        enter.TweenProperty(sprite, "position", home, 0.35).SetTrans(Tween.TransitionType.Bounce).SetEase(Tween.EaseType.Out);
+        enter.TweenProperty(sprite, "modulate", Colors.White, 0.25);
+        enter.TweenProperty(box, "modulate", Colors.White, 0.3);
         await ToSignal(enter, Tween.SignalName.Finished);
     }
 
@@ -669,6 +853,10 @@ public partial class BattleScreen : Control
     {
         var ball = new BallIcon { Size = new Vector2(34, 34), MouseFilter = MouseFilterEnum.Ignore };
         AddChild(ball);
+        // The one wild Pokémon left standing (or the one just caught).
+        var wildSlot = Math.Max(0, Enumerable.Range(0, _battle.Width).FirstOrDefault(i =>
+            ReferenceEquals(_battle.FoeField[i].Mon, _battle.Caught) || !_battle.FoeField[i].Mon.Fainted));
+        var _foeSprite = SpriteAt(BattleSide.Foe, wildSlot);
         var target = _foeSprite.Position + new Vector2(_foeSprite.Size.X / 2 - 17, _foeSprite.Size.Y * 0.55f);
         ball.Position = new Vector2(Size.X * 0.2f, Size.Y * 0.6f);
         var fly = CreateTween();
@@ -749,7 +937,9 @@ public partial class BattleScreen : Control
             else if (_picker.Visible && _pickerCancel is not null)
                 ClosePicker();
             else if (_moves.Visible)
-                ShowCommands();
+                AskChooser();
+            else if (_commands.Visible && _battle.Width > 1)
+                PreviousChooser();
             GetViewport().SetInputAsHandled();
         }
         else if (_busy && (e.IsActionPressed("ui_accept") || e is InputEventKey { Pressed: true, Keycode: Key.Z, Echo: false }))
@@ -884,19 +1074,21 @@ public partial class BattleScreen : Control
 
         public InfoBox() : this(null!, false) { }
 
-        public InfoBox(Pokemon mon, bool showNumbers)
+        /// <param name="compact">Smaller, for two or three a side.</param>
+        public InfoBox(Pokemon mon, bool showNumbers, bool compact = false)
         {
             _mon = mon;
             _player = showNumbers;
             _shownHp = mon.Hp;
             _shownExp = ExpFraction();
             AddThemeStyleboxOverride("panel", Box(new Color(0.97f, 0.96f, 0.9f), new Color(0.25f, 0.27f, 0.3f), 3));
-            CustomMinimumSize = new Vector2(330, 0);
+            CustomMinimumSize = new Vector2(compact ? 260 : 330, 0);
+            var big = compact ? 17 : 22;
 
             var dark = new Color(0.15f, 0.16f, 0.18f);
             var gender = mon.Gender switch { Gender.Male => " ♂", Gender.Female => " ♀", _ => "" };
-            _name = Ui.Ui.Text(mon.Name + gender, 22, dark);
-            _level = Ui.Ui.Text("", 20, dark);
+            _name = Ui.Ui.Text(mon.Name + gender, big, dark);
+            _level = Ui.Ui.Text("", big - 2, dark);
             _status = Ui.Ui.Text("", 16, Colors.White);
             _status.AddThemeStyleboxOverride("normal", new StyleBoxFlat { BgColor = Colors.Transparent, ContentMarginLeft = 6, ContentMarginRight = 6 });
             var top = Ui.Ui.HBox(8, _name, _status, Ui.Ui.Spacer(), _level);
@@ -908,14 +1100,14 @@ public partial class BattleScreen : Control
             var hpRow = Ui.Ui.HBox(6, hpLabel, track);
             hpRow.Alignment = BoxContainer.AlignmentMode.Center;
 
-            _hpText = Ui.Ui.Text("", 18, dark);
+            _hpText = Ui.Ui.Text("", compact ? 14 : 18, dark);
             _hpText.HorizontalAlignment = HorizontalAlignment.Right;
             var expTrack = new ColorRect { Color = new Color(0.25f, 0.27f, 0.3f), CustomMinimumSize = new Vector2(0, 6) };
             _expFill = new ColorRect { Color = new Color(0.3f, 0.65f, 0.95f), MouseFilter = MouseFilterEnum.Ignore };
             expTrack.AddChild(_expFill);
             _hpText.Visible = expTrack.Visible = showNumbers;
 
-            AddChild(Ui.Ui.VBox(4, top, hpRow, _hpText, expTrack));
+            AddChild(Ui.Ui.VBox(compact ? 1 : 4, top, hpRow, _hpText, expTrack));
             track.Resized += () => DrawBars();
             expTrack.Resized += () => DrawBars();
             Refresh();

@@ -65,7 +65,10 @@ public sealed partial class SingleBattle
     static string Team(Battler b) => b.Side == BattleSide.Player ? "your team" : "the foe's team";
 
     /// <summary>True while the player's Pokémon is charging, recharging or rampaging: its next turn's move is fixed.</summary>
-    public bool PlayerLocked => Player.Charging != 0 || Player.Recharging || Player.LockedTurns > 0 || Player.Rollout > 0;
+    public bool PlayerLocked => Locked(Player);
+
+    /// <summary>The Pokémon is charging, recharging or rampaging: its move this turn is chosen for it.</summary>
+    public static bool Locked(Battler b) => b.Charging != 0 || b.Recharging || b.LockedTurns > 0 || b.Rollout > 0;
 
     /// <summary>The move a locked Pokémon must use this turn (slot −1: no PP is spent).</summary>
     (MoveInfo Move, int Slot)? Forced(Battler b)
@@ -291,8 +294,8 @@ public sealed partial class SingleBattle
                 SetStatus(user, Ailment.Sleep, events, $"{name} fell asleep!");
                 return true;
             case Moves.Haze:
-                Array.Clear(Player.Stages);
-                Array.Clear(Foe.Stages);
+                foreach (var b in AllField)
+                    Array.Clear(b.Stages);
                 events.Add(new MessageEvent("All stat changes were eliminated!"));
                 return true;
             case Moves.HealBell or Moves.Aromatherapy or Moves.Refresh:
@@ -309,7 +312,7 @@ public sealed partial class SingleBattle
                     mon.SleepTurns = 0;
                 }
                 user.Toxic = 0;
-                events.Add(new StatusEvent(user.Side, Ailment.None));
+                events.Add(new StatusEvent(user.Side, Ailment.None, user.Slot));
                 return true;
             case Moves.Reflect or Moves.LightScreen:
             {
@@ -386,8 +389,8 @@ public sealed partial class SingleBattle
                 var average = (user.Mon.Hp + target.Mon.Hp) / 2;
                 user.Mon.Hp = Math.Min(user.Mon.MaxHp, average);
                 target.Mon.Hp = Math.Min(target.Mon.MaxHp, average);
-                events.Add(new HpEvent(user.Side, user.Mon.Hp, user.Mon.MaxHp));
-                events.Add(new HpEvent(target.Side, target.Mon.Hp, target.Mon.MaxHp));
+                events.Add(new HpEvent(user.Side, user.Mon.Hp, user.Mon.MaxHp, user.Slot));
+                events.Add(new HpEvent(target.Side, target.Mon.Hp, target.Mon.MaxHp, target.Slot));
                 events.Add(new MessageEvent("The battlers shared their pain!"));
                 return true;
             case Moves.Curse when user.Types.Contains(TypeChart.Ghost):
@@ -595,7 +598,7 @@ public sealed partial class SingleBattle
             return true;
         }
         var team = target.Side == BattleSide.Player ? _party : _foeParty;
-        var options = Enumerable.Range(0, team.Count).Where(i => !team[i].Fainted && !ReferenceEquals(team[i], target.Mon)).ToList();
+        var options = Enumerable.Range(0, team.Count).Where(i => !team[i].Fainted && !AllField.Any(b => ReferenceEquals(b.Mon, team[i]))).ToList();
         if (options.Count == 0)
         {
             events.Add(new MessageEvent("But it failed!"));
@@ -604,29 +607,29 @@ public sealed partial class SingleBattle
         var next = options[_rng.Next(options.Count)];
         if (target.Side == BattleSide.Player)
         {
-            Enter(next, events);
-            events.Add(new MessageEvent($"{Player.Mon.Name} was dragged out!"));
+            Enter(next, events, target.Slot);
+            events.Add(new MessageEvent($"{_party[next].Name} was dragged out!"));
         }
         else
-            SendOutFoe(next, events, $"{_foeParty[next].Name} was dragged out!");
+            SendOutFoe(next, events, $"{_foeParty[next].Name} was dragged out!", target.Slot);
         return true;
     }
 
     /// <summary>A trainer's Pokémon <paramref name="index"/> takes the field (the player's Pokémon fights it from now on).</summary>
-    void SendOutFoe(int index, List<BattleEvent> events, string message)
+    void SendOutFoe(int index, List<BattleEvent> events, string message, int slot = 0)
     {
         var passed = _batonPass;
         _batonPass = null;
-        Foe = new Battler(_foeParty[index], BattleSide.Foe);
+        var foe = _field[1][slot] = new Battler(_foeParty[index], BattleSide.Foe, slot);
         if (passed is not null)
-            Inherit(Foe, passed);
-        _participants.Clear();
-        if (!Player.Mon.Fainted)
-            _participants.Add(Player.Mon);
-        events.Add(new SwitchEvent(index, BattleSide.Foe));
+            Inherit(foe, passed);
+        foreach (var b in _field[0])
+            if (!b.Mon.Fainted)
+                foe.FacedBy.Add(b.Mon);
+        events.Add(new SwitchEvent(index, BattleSide.Foe, slot));
         events.Add(new MessageEvent(message));
-        EntryHazards(Foe, events);
-        OnEntry(Foe, events);
+        EntryHazards(foe, events);
+        OnEntry(foe, events);
     }
 
     /// <summary>
@@ -636,12 +639,19 @@ public sealed partial class SingleBattle
     bool Pivot(Battler user, bool batonPass, List<BattleEvent> events)
     {
         var team = user.Side == BattleSide.Player ? _party : _foeParty;
-        var options = Enumerable.Range(0, team.Count).Where(i => !team[i].Fainted && !ReferenceEquals(team[i], user.Mon)).ToList();
+        var options = Enumerable.Range(0, team.Count).Where(i => !team[i].Fainted && !AllField.Any(b => ReferenceEquals(b.Mon, team[i]))).ToList();
         if (options.Count == 0 || user.Mon.Fainted || (user.Side == BattleSide.Foe && Trainer is null))
             return false;
         if (batonPass)
             _batonPass = user;
-        if (user.Side == BattleSide.Player)
+        if (user.Side == BattleSide.Player && Width > 1)
+        {
+            // Doubles and triples: the next Pokémon on the bench comes in at once.
+            OnSwitchOut(user);
+            events.Add(new MessageEvent($"{user.Mon.Name} went back to you!"));
+            Enter(options[0], events, user.Slot);
+        }
+        else if (user.Side == BattleSide.Player)
         {
             OnSwitchOut(user);
             events.Add(new MessageEvent($"{user.Mon.Name} went back to you!"));
@@ -653,7 +663,7 @@ public sealed partial class SingleBattle
             OnSwitchOut(user);
             var next = options[_rng.Next(options.Count)];
             events.Add(new MessageEvent($"{Label(user)} went back to {Trainer!.Title}!"));
-            SendOutFoe(next, events, $"{Trainer.Title} sent out {_foeParty[next].Name}!");
+            SendOutFoe(next, events, $"{Trainer.Title} sent out {_foeParty[next].Name}!", user.Slot);
         }
         return true;
     }
@@ -878,7 +888,8 @@ public sealed partial class SingleBattle
     /// <summary>Side and field timers: screens, Mist, Safeguard, Tailwind, Wish, Trick Room.</summary>
     void SideEndOfTurn(List<BattleEvent> events)
     {
-        foreach (var b in new[] { Player, Foe })
+        // Once per side (the side's first able Pokémon gets the Wish).
+        foreach (var b in _field.Select(side => side.FirstOrDefault(x => !x.Mon.Fainted) ?? side[0]))
         {
             var side = SideOf(b);
             var team = Capital(Team(b));

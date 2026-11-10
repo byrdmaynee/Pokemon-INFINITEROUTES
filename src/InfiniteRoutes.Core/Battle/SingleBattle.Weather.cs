@@ -27,7 +27,7 @@ public sealed partial class SingleBattle
     public Weather ActiveWeather =>
         Weather != Weather.None && !OnField(Abilities.CloudNine) && !OnField(Abilities.AirLock) ? Weather : Weather.None;
 
-    bool OnField(int ability) => (!Player.Mon.Fainted && Has(Player, ability)) || (!Foe.Mon.Fainted && Has(Foe, ability));
+    bool OnField(int ability) => AllField.Any(b => !b.Mon.Fainted && Has(b, ability));
 
     /// <summary>Starts <paramref name="weather"/> for <paramref name="turns"/> turns (0: until replaced); false if it's already in place.</summary>
     bool SetWeather(Weather weather, int turns, List<BattleEvent> events)
@@ -157,7 +157,7 @@ public sealed partial class SingleBattle
         var weather = ActiveWeather;
         if (weather == Weather.None)
             return;
-        foreach (var b in new[] { Player, Foe })
+        foreach (var b in BySpeed(AllField))
         {
             if (b.Mon.Fainted || Over)
                 continue;

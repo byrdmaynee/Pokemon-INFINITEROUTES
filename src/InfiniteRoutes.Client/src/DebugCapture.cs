@@ -1,4 +1,4 @@
-using Godot;
+﻿using Godot;
 using InfiniteRoutes.Client.Ui;
 
 namespace InfiniteRoutes.Client;
@@ -19,6 +19,13 @@ public static class DebugCapture
             var dir = cont["--capture-continue=".Length..];
             World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
             Continue(main, dir);
+        }
+        else if (args.FirstOrDefault(a => a.StartsWith("--capture-doubles=", StringComparison.Ordinal)) is { } doubles)
+        {
+            var dir = doubles["--capture-doubles=".Length..];
+            World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
+            var type = args.FirstOrDefault(a => a.StartsWith("--battle-type=", StringComparison.Ordinal)) is { } t ? int.Parse(t["--battle-type=".Length..]) : 1;
+            MultiBattle(main, dir, type);
         }
         else if (args.FirstOrDefault(a => a.StartsWith("--capture-moves=", StringComparison.Ordinal)) is { } moves)
         {
@@ -43,6 +50,87 @@ public static class DebugCapture
             World.OfflineSession.SaveDirOverride = save;
             Run(main, dir);
         }
+    }
+
+    /// <summary>
+    /// Fights the weakest ROM trainer of battle type <paramref name="type"/> (1 double, 2 triple, 3 rotation) with a
+    /// party of six, choosing each PokÃ©mon's first move through the menu, with screenshots of the field and of turns.
+    /// </summary>
+    static async void MultiBattle(Main main, string dir, int type)
+    {
+        var tree = main.GetTree();
+        async Task Wait(double seconds) => await main.ToSignal(tree.CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+        void Shot(string name) => main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, name + ".png"));
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
+        main.Push(() => new World.OverworldScreen());
+        await Wait(1.5);
+        if (main.CurrentScreen is World.OverworldScreen world)
+        {
+            world.RandomEncounters = false;
+            var data = World.OfflineSession.Data;
+            var party = World.OfflineSession.Party;
+            var rng = new Random(3);
+            foreach (var species in new[] { 498, 501, 506, 519, 532 })
+                if (party.Count < 6)
+                    party.Add(Core.Battle.Pokemon.Create(data, species, 30, rng));
+            foreach (var mon in party)
+            {
+                mon.Hp = mon.MaxHp;
+                mon.Status = Core.Data.Ailment.None;
+            }
+            // The low-level starter goes to the back so the battle lasts a few turns.
+            var lead = party[0];
+            party.RemoveAt(0);
+            party.Add(lead);
+            var trainer = World.OfflineSession.Trainers.Where(t => t.BattleType == type && t.Pokemon.Count >= 2)
+                .OrderBy(t => t.Pokemon.Max(p => p.Level)).FirstOrDefault();
+            GD.Print($"[capture] battle type {type}: {trainer?.Title} with {trainer?.Pokemon.Count} PokÃ©mon");
+            if (trainer is not null)
+            {
+                world.StartTrainerBattle(trainer);
+                for (var waited = 0.0; waited < 15 && world.CurrentBattle is null; waited += 0.2)
+                    await Wait(0.2);
+                for (var turn = 0; turn < 14; turn++)
+                {
+                    for (var waited = 0.0; waited < 30 && world.CurrentBattle is { Choosing: false, Battle.Over: false }; waited += 0.2)
+                        await Wait(0.2);
+                    if (world.CurrentBattle is not { } screen || screen.Battle.Over)
+                        break;
+                    var battle = screen.Battle;
+                    if (turn == 0)
+                        Shot($"type{type}-field");
+                    GD.Print($"[capture] turn {turn}: {battle.Format}, width {battle.Width}; player {string.Join(", ", battle.PlayerField.Select(b => $"{b.Mon.Name} {b.Mon.Hp}/{b.Mon.MaxHp}"))}; foe {string.Join(", ", battle.FoeField.Select(b => $"{b.Mon.Name} {b.Mon.Hp}/{b.Mon.MaxHp}"))}");
+                    if (battle.NeedsSwitch)
+                    {
+                        var next = Enumerable.Range(0, battle.Party.Count).First(i => battle.CanSendOut(i) && !battle.IsOut(i));
+                        GD.Print($"[capture] sending out {battle.Party[next].Name} into slot {battle.SlotsToFill.FirstOrDefault()}");
+                        screen.Replace(next);
+                        await Wait(1.5);
+                        continue;
+                    }
+                    if (battle.Format == Core.Battle.BattleFormat.Rotation && turn == 1 && battle.CanRotate)
+                    {
+                        var next = Enumerable.Range(0, battle.Party.Count).First(i => battle.RotationTeam.Contains(battle.Party[i]) && !battle.IsOut(i) && !battle.Party[i].Fainted);
+                        foreach (var e in battle.Rotate(next).OfType<Core.Battle.MessageEvent>())
+                            GD.Print($"[capture] {e.Text}");
+                    }
+                    for (var slot = 0; slot < battle.Width; slot++)
+                    {
+                        if (!screen.Choosing)
+                            break;
+                        screen.Choose(new Core.Battle.BattleChoice.Fight(0, Core.Battle.BattleSide.Foe, slot % battle.Width));
+                        await Wait(0.1);
+                    }
+                    await Wait(2.2);
+                    Shot($"type{type}-turn{turn}");
+                }
+                GD.Print($"[capture] after: {world.CurrentBattle?.Battle.Outcome}");
+            }
+        }
+        GD.Print("[capture] done");
+        tree.Quit();
     }
 
     /// <summary>Starts a wild battle and plays each move's ROM animation (the player's, then the foe's), with screenshots along the way.</summary>
@@ -99,7 +187,7 @@ public static class DebugCapture
             foreach (var path in Directory.GetFiles(folder, "batt_bg*.gltf").Order())
             {
                 var bg = System.IO.Path.GetFileNameWithoutExtension(path);
-                // batt_bg04b → batt_stage04b, else the plain number.
+                // batt_bg04b â†’ batt_stage04b, else the plain number.
                 var stage = $"batt_stage{bg["batt_bg".Length..]}";
                 if (ClientServices.UnovaAssets.BattleSceneryPath(stage) is null)
                     stage = $"batt_stage{bg["batt_bg".Length..][..2]}";
@@ -230,7 +318,7 @@ public static class DebugCapture
                 world.TryStep(Vector2I.Up);
                 await Settle();
                 Save("10-house");
-                GD.Print($"[capture] door {door.Key} → zone {world.CurrentZone} at {world.PlayerTile}; {world.Npcs.Count()} NPCs");
+                GD.Print($"[capture] door {door.Key} â†’ zone {world.CurrentZone} at {world.PlayerTile}; {world.Npcs.Count()} NPCs");
 
                 // Talk to the nearest NPC: walk next to it, face it, interact.
                 var sides = new[] { Vector2I.Up, Vector2I.Down, Vector2I.Left, Vector2I.Right };
@@ -261,7 +349,7 @@ public static class DebugCapture
                     world.TryStep(into);
                     await Settle();
                     Save("11-house-upstairs");
-                    GD.Print($"[capture] stairs → zone {world.CurrentZone} at {world.PlayerTile}");
+                    GD.Print($"[capture] stairs â†’ zone {world.CurrentZone} at {world.PlayerTile}");
                     var back = world.Warps.First(w => w.Value.Kind == Extractor.Extraction.WarpKind.Stairs);
                     path = FindPath(world, world.PlayerTile, t => next.Any(d => t + d == back.Key));
                     await Walk(path, run: false);
@@ -275,7 +363,7 @@ public static class DebugCapture
                 world.TryStep(Vector2I.Down);
                 await Settle();
                 Save("12-back-outside");
-                GD.Print($"[capture] mat → zone {world.CurrentZone} at {world.PlayerTile}");
+                GD.Print($"[capture] mat â†’ zone {world.CurrentZone} at {world.PlayerTile}");
 
                 // Then north to Route 1.
                 start = world.PlayerTile;
@@ -411,7 +499,7 @@ public static class DebugCapture
                     await Wait(0.2);
                     if (world.CurrentBattle is { } open && !open.Battle.Over)
                     {
-                        Press("ui_accept");   // Fight → move list
+                        Press("ui_accept");   // Fight â†’ move list
                         await Wait(0.2);
                     }
                 }
@@ -421,7 +509,7 @@ public static class DebugCapture
                 Save("16-after-battle");
                 GD.Print($"[capture] battle {battle?.Outcome}: {lead.Name} Lv{lead.Level} HP {lead.Hp}/{lead.MaxHp} EXP {lead.Exp}; back in the overworld: {world.CurrentBattle is null}");
 
-                // Catch a Lillipup: Bag → first ball, until it's caught or the balls run out.
+                // Catch a Lillipup: Bag â†’ first ball, until it's caught or the balls run out.
                 if (world.MenuOpen)
                     world.ToggleMenu();
                 Press("ui_accept");   // close any message box
@@ -433,7 +521,7 @@ public static class DebugCapture
                 var catchBattle = world.CurrentBattle?.Battle;
                 for (var throwNo = 0; throwNo < 10 && world.CurrentBattle is not null && !(catchBattle?.Over ?? true); throwNo++)
                 {
-                    Press("ui_right");   // Fight → Bag
+                    Press("ui_right");   // Fight â†’ Bag
                     await Wait(0.1);
                     Press("ui_accept");
                     await Wait(0.4);
@@ -500,7 +588,7 @@ public static class DebugCapture
                     await Wait(0.1);
                 await Wait(0.5);
 
-                // Pokémon Center: hurt the party, talk to the nurse across the counter in Accumula Town's Center.
+                // PokÃ©mon Center: hurt the party, talk to the nurse across the counter in Accumula Town's Center.
                 const int accumulaCenter = 398;
                 if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Script == 2100) is { } nurse)
                 {
@@ -548,7 +636,7 @@ public static class DebugCapture
                         world.ToggleMenu();
                     await Wait(0.2);
 
-                    // The Poké Mart clerks behind the right-hand counter: talk across it, buy ten Poké Balls.
+                    // The PokÃ© Mart clerks behind the right-hand counter: talk across it, buy ten PokÃ© Balls.
                     if (world.ZoneNpcs(accumulaCenter).FirstOrDefault(n => n.Sprite == 77) is { } clerk)
                     {
                         var clerkTile = new Vector2I(clerk.X, clerk.Y);

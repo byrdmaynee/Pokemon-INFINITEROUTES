@@ -142,6 +142,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       Flamethrower, Thunderbolt and Surf play their own particle effects (flames fly across, a bolt strikes, a
       wave rises), the target shakes or squashes and flashes a colour, and some moves dim the background. The foe's
       moves play aimed back at your Pokémon.
+- [ ] Double, triple and rotation trainers (Twins, Motorcyclists on later routes) fight with two or three Pokémon a
+      side: each of yours is asked in turn, single-target moves ask which Pokémon to hit, Rock Slide/Surf-style moves
+      hit several, fainted ones are replaced from the bench, and in a rotation battle Pokémon rotates for free.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -239,7 +242,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Things that are expected to be missing (not bugs yet)
 
 - Animated objects (a/2/1/0) are still static.
-- Double/triple/rotation trainers fight as single battles.
+- Double, triple and rotation battles: no partner moves or abilities (Helping Hand, Follow Me, Plus/Minus,
+  Lightning Rod redirection) yet, no shifting to the centre in triples, the foe never rotates, and after U-turn in a
+  double the next Pokémon on the bench comes in without asking. No wild double battles (dark grass isn't marked).
 - Move animations: the camera moves, sounds and background effects (Psychic's warping, screen scrolls) aren't
   played yet, and Pokémon movements are approximate. Abilities that need double battles or the field (Pickup, Plus…) do nothing
   yet; routes with weather (Route 4's sandstorm) don't bring it into battle yet; a few rare move effects

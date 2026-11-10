@@ -227,7 +227,7 @@ public static class OfflineSession
                 break;
             case BattleOutcome.Caught:
                 Progress.Caught++;
-                lines.Add(Keep(battle.Foe.Mon));
+                lines.Add(Keep(battle.Caught ?? battle.Foe.Mon));
                 break;
         }
         return lines;

@@ -20,11 +20,78 @@ public sealed partial class BattleEffects : Control
     static readonly Vector3 PlayerPos = new(0.5f, 0.4f, 7f), FoePos = new(0.3f, 0.4f, -10f);
     static readonly Vector3 Eye = new(10.5f, 7f, 18f), LookAt = new(0.4f, 1f, -1.5f);
 
+    // Overlay 94's double and triple battle positions, by slot (the player's slot 0 is on the left, the foe's on the right).
+    static readonly Vector3[] DoublePlayer = [new(-1.688f, 0.4f, 6.375f), new(2.5f, 0.4f, 7.625f)];
+    static readonly Vector3[] DoubleFoe = [new(2.425f, 0.4f, -10.375f), new(-2.2f, 0.4f, -11.562f)];
+    static readonly Vector3[] TriplePlayer = [new(-4f, 0.4f, 7f), new(0.75f, 0.4f, 4.75f), new(5.188f, 0.4f, 6.188f)];
+    static readonly Vector3[] TripleFoe = [new(4.5f, 0.4f, -12f), new(0.738f, 0.4f, -9f), new(-4.387f, 0.4f, -12f)];
+
+    /// <summary>Where the Pokémon in <paramref name="side"/>'s <paramref name="slot"/> stands with <paramref name="width"/> a side.</summary>
+    public static Vector3 Home(BattleSide side, int slot, int width)
+    {
+        var table = (width, side) switch
+        {
+            (2, BattleSide.Player) => DoublePlayer,
+            (2, _) => DoubleFoe,
+            (3, BattleSide.Player) => TriplePlayer,
+            (3, _) => TripleFoe,
+            (_, BattleSide.Player) => [PlayerPos],
+            _ => [FoePos],
+        };
+        return table[Math.Clamp(slot, 0, table.Length - 1)];
+    }
+
+    /// <summary>
+    /// Where a battler's feet go on screen, given where the single-battle positions go, and how big it looks there
+    /// compared with the single-battle Pokémon on its side.
+    /// </summary>
+    public static (Vector2 Feet, float Scale) Place(Vector2 playerFeet, Vector2 foeFeet, BattleSide side, int slot, int width)
+    {
+        var view = new View(playerFeet, foeFeet);
+        var (at, ppu) = view.Project(Home(side, slot, width));
+        var (_, single) = view.Project(side == BattleSide.Player ? PlayerPos : FoePos);
+        return (at, ppu / single);
+    }
+
+    /// <summary>The DS-like battle camera, scaled and moved so the single-battle positions land on the given feet.</summary>
+    readonly struct View
+    {
+        readonly Basis _camera;
+        readonly float _scale;
+        readonly Vector2 _offset;
+
+        public View(Vector2 playerFeet, Vector2 foeFeet)
+        {
+            var forward = (LookAt - Eye).Normalized();
+            var right = forward.Cross(Vector3.Up).Normalized();
+            _camera = new Basis(right, right.Cross(forward), forward);
+            _scale = 1;
+            _offset = Vector2.Zero;
+            var p = Raw(PlayerPos);
+            var f = Raw(FoePos);
+            _scale = (foeFeet - playerFeet).Length() / Math.Max(1e-4f, (f - p).Length());
+            _offset = playerFeet - p * _scale;
+        }
+
+        Vector2 Raw(Vector3 point)
+        {
+            var d = point - Eye;
+            var z = Math.Max(0.1f, d.Dot(_camera.Z));
+            return new Vector2(d.Dot(_camera.X) / z, -d.Dot(_camera.Y) / z);
+        }
+
+        public (Vector2 At, float PixelsPerUnit) Project(Vector3 point)
+        {
+            var z = Math.Max(0.1f, (point - Eye).Dot(_camera.Z));
+            return (Raw(point) * _scale + _offset, _scale / z);
+        }
+    }
+
     static IReadOnlyList<IReadOnlyList<int[]>>? _scripts;
 
     readonly GameAssets _assets;
-    readonly Func<BattleSide, Vector2> _feet;
-    readonly Func<BattleSide, TextureRect> _sprite;
+    readonly Func<(Vector2 Player, Vector2 Foe)> _anchors;
+    readonly Func<BattleSide, int, TextureRect> _sprite;
     readonly ColorRect _dim;
     readonly Dictionary<int, (SpaFile File, Texture2D?[] Textures)?> _particleFiles = [];
     readonly List<Emitter> _emitters = [];
@@ -35,9 +102,9 @@ public sealed partial class BattleEffects : Control
     readonly ShaderMaterial _tintMaterial;
     double _clock;
     long _frame;
-    Basis _camera;
-    float _scale;
-    Vector2 _offset;
+    View _view;
+    int _width = 1;
+    (BattleSide Side, int Slot) _user, _target;
 
     /// <summary>True while an animation is playing.</summary>
     public bool Playing { get; private set; }
@@ -48,10 +115,12 @@ public sealed partial class BattleEffects : Control
     // Godot needs a parameterless constructor to recreate script instances.
     public BattleEffects() : this(null!, null!, null!, null!) { }
 
-    public BattleEffects(GameAssets assets, Func<BattleSide, Vector2> feet, Func<BattleSide, TextureRect> sprite, ColorRect dim)
+    /// <param name="anchors">Where the single-battle positions' feet are on screen now (the camera is fitted to them).</param>
+    /// <param name="sprite">The sprite of the Pokémon in a side's slot.</param>
+    public BattleEffects(GameAssets assets, Func<(Vector2 Player, Vector2 Foe)> anchors, Func<BattleSide, int, TextureRect> sprite, ColorRect dim)
     {
         _assets = assets;
-        _feet = feet;
+        _anchors = anchors;
         _sprite = sprite;
         _dim = dim;
         MouseFilter = MouseFilterEnum.Ignore;
@@ -72,14 +141,22 @@ public sealed partial class BattleEffects : Control
         };
     }
 
-    /// <summary>Plays move <paramref name="move"/>'s animation with <paramref name="user"/>'s Pokémon attacking.</summary>
-    public async Task Play(int move, BattleSide user)
+    /// <summary>
+    /// Plays move <paramref name="move"/>'s animation: <paramref name="user"/>'s Pokémon in <paramref name="userSlot"/>
+    /// attacking the one in <paramref name="targetSlot"/> on the other side (or <paramref name="targetSide"/>), with
+    /// <paramref name="width"/> Pokémon a side.
+    /// </summary>
+    public async Task Play(int move, BattleSide user, int userSlot = 0, BattleSide? targetSide = null, int targetSlot = 0, int width = 1)
     {
         _scripts ??= _assets?.LoadMoveAnimations() ?? [];
         if (move <= 0 || move >= _scripts.Count || _scripts[move].Count == 0)
             return;
         Playing = true;
-        Fit();
+        var (playerFeet, foeFeet) = _anchors();
+        _view = new View(playerFeet, foeFeet);
+        _width = Math.Max(1, width);
+        _user = (user, userSlot);
+        _target = (targetSide ?? Other(user), targetSlot);
         var peak = 0;
         var started = _frame;
         foreach (var c in _scripts[move])
@@ -93,25 +170,25 @@ public sealed partial class BattleEffects : Control
                     Particles(a[0]);
                     break;
                 case 0x07 or 0x09:
-                    Emit(a[0], a[1], user, a[2], a[3], a[4] / 4096f, 0, 0);
+                    Emit(a[0], a[1], a[2], a[3], a[4] / 4096f, 0, 0);
                     break;
                 case 0x0C or 0x0E:
-                    Emit(a[0], a[1], user, a[3], a[4], a[5] / 4096f, a.Length > 6 ? a[6] / 4096f : 0, a.Length > 7 ? a[7] / 4096f : 0);
+                    Emit(a[0], a[1], a[3], a[4], a[5] / 4096f, a.Length > 6 ? a[6] / 4096f : 0, a.Length > 7 ? a[7] / 4096f : 0);
                     break;
                 case 0x0D:
-                    Emit(a[0], a[1], user, a[6], 8, a[7] / 4096f, 0, 0);
+                    Emit(a[0], a[1], a[6], 8, a[7] / 4096f, 0, 0);
                     break;
                 case 0x08 or 0x0A or 0x0F:
-                    Emit(a[0], a[1], user, 11, 8, 0, 0, 0);
+                    Emit(a[0], a[1], 11, 8, 0, 0, 0);
                     break;
                 case 0x12:
-                    Shift(Battler(a[0], user), a[2] / 4096f, a[3] / 4096f, a[4], a[6]);
+                    Shift(Battler(a[0]), a[2] / 4096f, a[3] / 4096f, a[4], a[6]);
                     break;
                 case 0x15:
-                    Squash(Battler(a[0], user), a[2] / 4096f, a[3] / 4096f, a[4], a[6]);
+                    Squash(Battler(a[0]), a[2] / 4096f, a[3] / 4096f, a[4], a[6]);
                     break;
                 case 0x1B:
-                    Tint(Battler(a[0], user), a[1], a[2], a[3], a[4]);
+                    Tint(Battler(a[0]), a[1], a[2], a[3], a[4]);
                     break;
                 case 0x2A:
                     Fade(a[1], a[2], a[3], a[4]);
@@ -202,52 +279,32 @@ public sealed partial class BattleEffects : Control
 
     // ---- Where things are -------------------------------------------------------------------------------------
 
-    /// <summary>Fits the camera so the two battle positions land on the sprites' feet.</summary>
-    void Fit()
-    {
-        var forward = (LookAt - Eye).Normalized();
-        var right = forward.Cross(Vector3.Up).Normalized();
-        _camera = new Basis(right, right.Cross(forward), forward);
-        var p = Raw(PlayerPos);
-        var f = Raw(FoePos);
-        var ps = _feet(BattleSide.Player);
-        var fs = _feet(BattleSide.Foe);
-        _scale = (fs - ps).Length() / Math.Max(1e-4f, (f - p).Length());
-        _offset = ps - p * _scale;
-    }
-
-    Vector2 Raw(Vector3 point)
-    {
-        var d = point - Eye;
-        var z = Math.Max(0.1f, d.Dot(_camera.Z));
-        return new Vector2(d.Dot(_camera.X) / z, -d.Dot(_camera.Y) / z);
-    }
-
     /// <summary>A point's place on screen and how many pixels one unit measures there.</summary>
-    (Vector2 At, float PixelsPerUnit) Project(Vector3 point)
-    {
-        var z = Math.Max(0.1f, (point - Eye).Dot(_camera.Z));
-        return (Raw(point) * _scale + _offset, _scale / z);
-    }
+    (Vector2 At, float PixelsPerUnit) Project(Vector3 point) => _view.Project(point);
 
-    static Vector3 Home(BattleSide side) => side == BattleSide.Player ? PlayerPos : FoePos;
+    Vector3 Home((BattleSide Side, int Slot) b) => Home(b.Side, b.Slot, _width);
 
     static BattleSide Other(BattleSide side) => side == BattleSide.Player ? BattleSide.Foe : BattleSide.Player;
 
-    /// <summary>A script's place code: 0–7 a battle position (even = the player's side), 9/10 the attacker, else the defender.</summary>
-    static BattleSide Place(int code, BattleSide user) => code switch
+    /// <summary>Battle position 0–5: even ones are the player's side, slot = position / 2.</summary>
+    (BattleSide, int) Position(int code) => (code % 2 == 0 ? BattleSide.Player : BattleSide.Foe, Math.Min(code / 2, _width - 1));
+
+    /// <summary>A script's place code: 0–7 a battle position, 9/10 the attacker, else the defender.</summary>
+    (BattleSide Side, int Slot) Place(int code) => code switch
     {
-        >= 0 and <= 7 => code % 2 == 0 ? BattleSide.Player : BattleSide.Foe,
-        9 or 10 => user,
-        _ => Other(user),
+        >= 0 and <= 7 => Position(code),
+        9 or 10 => _user,
+        _ => _target,
     };
 
-    /// <summary>A script's battler code: 14 the attacker, 0–7 a position, anything else the defender.</summary>
-    static BattleSide Battler(int code, BattleSide user) => code switch
+    /// <summary>A script's battler code: 14 the attacker, 15 its partner, 0–7 a position, 17 the defender's partner, else the defender.</summary>
+    (BattleSide Side, int Slot) Battler(int code) => code switch
     {
-        14 or 15 => user,
-        >= 0 and <= 7 => code % 2 == 0 ? BattleSide.Player : BattleSide.Foe,
-        _ => Other(user),
+        14 => _user,
+        15 => (_user.Side, _width > 1 ? (_user.Slot == 0 ? 1 : 0) : _user.Slot),
+        17 => (_target.Side, _width > 1 ? (_target.Slot == 0 ? 1 : 0) : _target.Slot),
+        >= 0 and <= 7 => Position(code),
+        _ => _target,
     };
 
     // ---- Particles ----------------------------------------------------------------------------------------------
@@ -275,17 +332,17 @@ public sealed partial class BattleEffects : Control
     /// (raised <paramref name="height"/>), aimed at place <paramref name="to"/> when that's another place (8 = none).
     /// With <paramref name="travel"/> frames the emitter itself flies there, arcing <paramref name="arc"/> units up.
     /// </summary>
-    void Emit(int file, int index, BattleSide user, int from, int to, float height, float travel, float arc)
+    void Emit(int file, int index, int from, int to, float height, float travel, float arc)
     {
         if (Particles(file) is not { } spa || index < 0 || index >= spa.File.Emitters.Count)
             return;
-        var start = Home(Place(from, user)) + new Vector3(0, height, 0);
+        var start = Home(Place(from)) + new Vector3(0, height, 0);
         var resource = spa.File.Emitters[index];
         var axis = new Vector3(resource.Axis[0], resource.Axis[1], resource.Axis[2]);
         Vector3? end = null;
-        if (to != 8 && Place(to, user) != Place(from, user))
+        if (to != 8 && Place(to) != Place(from))
         {
-            var aim = Home(Place(to, user)) + new Vector3(0, height, 0);
+            var aim = Home(Place(to)) + new Vector3(0, height, 0);
             axis = (aim - start).Normalized();
             if (travel >= 1)
                 end = aim;
@@ -346,9 +403,9 @@ public sealed partial class BattleEffects : Control
 
     // ---- Sprite effects --------------------------------------------------------------------------------------------
 
-    TextureRect Pose(BattleSide side)
+    TextureRect Pose((BattleSide Side, int Slot) b)
     {
-        var sprite = _sprite(side);
+        var sprite = _sprite(b.Side, b.Slot);
         if (!_poses.ContainsKey(sprite))
         {
             _poses[sprite] = (Vector2.Zero, Vector2.One);
@@ -365,11 +422,11 @@ public sealed partial class BattleEffects : Control
     }
 
     /// <summary>Moves a Pokémon (dx, dy) units — dx toward the other side — and back, <paramref name="times"/> times.</summary>
-    void Shift(BattleSide side, float dx, float dy, int frames, int times)
+    void Shift((BattleSide Side, int Slot) b, float dx, float dy, int frames, int times)
     {
-        var sprite = Pose(side);
-        var home = Home(side);
-        var toward = side == BattleSide.Player ? 1 : -1;
+        var sprite = Pose(b);
+        var home = Home(b);
+        var toward = b.Side == BattleSide.Player ? 1 : -1;
         var (at, _) = Project(home);
         var reach = Project(home + new Vector3(dx * toward, dy, 0)).At - at;
         var half = Math.Max(1, frames);
@@ -390,9 +447,9 @@ public sealed partial class BattleEffects : Control
     }
 
     /// <summary>Squashes and stretches a Pokémon by (sx, sy) of its size and back, <paramref name="times"/> times.</summary>
-    void Squash(BattleSide side, float sx, float sy, int frames, int times)
+    void Squash((BattleSide Side, int Slot) b, float sx, float sy, int frames, int times)
     {
-        var sprite = Pose(side);
+        var sprite = Pose(b);
         var half = Math.Max(1, frames);
         var total = half * 2 * Math.Clamp(times, 1, 12);
         var t = 0;
@@ -412,9 +469,9 @@ public sealed partial class BattleEffects : Control
     }
 
     /// <summary>Blends a Pokémon toward <paramref name="color"/> (BGR555) from <paramref name="from"/>/16 to <paramref name="to"/>/16.</summary>
-    void Tint(BattleSide side, int from, int to, int speed, int color)
+    void Tint((BattleSide Side, int Slot) b, int from, int to, int speed, int color)
     {
-        var sprite = Pose(side);
+        var sprite = Pose(b);
         var material = (ShaderMaterial)_tintMaterial.Duplicate();
         material.SetShaderParameter("tint", Bgr(color));
         sprite.Material = material;

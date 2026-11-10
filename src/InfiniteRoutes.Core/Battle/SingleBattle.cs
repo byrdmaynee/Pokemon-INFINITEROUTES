@@ -10,9 +10,9 @@ public enum BattleOutcome { Ongoing, Won, Lost, Escaped, Caught }
 public abstract record BattleEvent;
 public sealed record MessageEvent(string Text) : BattleEvent;
 /// <summary>A side's HP is now <see cref="Hp"/> (after damage or healing).</summary>
-public sealed record HpEvent(BattleSide Side, int Hp, int MaxHp) : BattleEvent;
-public sealed record StatusEvent(BattleSide Side, Ailment Status) : BattleEvent;
-public sealed record FaintEvent(BattleSide Side) : BattleEvent;
+public sealed record HpEvent(BattleSide Side, int Hp, int MaxHp, int Slot = 0) : BattleEvent;
+public sealed record StatusEvent(BattleSide Side, Ailment Status, int Slot = 0) : BattleEvent;
+public sealed record FaintEvent(BattleSide Side, int Slot = 0) : BattleEvent;
 /// <summary>Party member <see cref="PartyIndex"/> gained experience; <see cref="Level"/> is its level afterwards.</summary>
 public sealed record ExpEvent(int PartyIndex, int Gained, int Level) : BattleEvent;
 public sealed record LevelUpEvent(int PartyIndex, int Level, int MaxHp, int Hp) : BattleEvent;
@@ -20,24 +20,48 @@ public sealed record LevelUpEvent(int PartyIndex, int Level, int MaxHp, int Hp) 
 /// (<see cref="Pokemon.LearnMove"/>) or skips it.</summary>
 public sealed record LearnMoveEvent(int PartyIndex, MoveInfo Move) : BattleEvent;
 /// <summary>Party member <see cref="PartyIndex"/> of <see cref="Side"/> came out (the player's or a trainer's).</summary>
-public sealed record SwitchEvent(int PartyIndex, BattleSide Side = BattleSide.Player) : BattleEvent;
+public sealed record SwitchEvent(int PartyIndex, BattleSide Side = BattleSide.Player, int Slot = 0) : BattleEvent;
 /// <summary>A Poké Ball was thrown: it shook <see cref="Shakes"/> times (0–3) and caught the Pokémon or not.</summary>
 public sealed record CatchEvent(int Ball, int Shakes, bool Caught) : BattleEvent;
 /// <summary>The trainer steps forward (<see cref="Visible"/>) or aside for their Pokémon; the battle screen shows their sprite.</summary>
 public sealed record TrainerEvent(bool Visible) : BattleEvent;
 /// <summary><see cref="Side"/>'s ability <see cref="Ability"/> takes effect; the messages that follow say what it did.</summary>
-public sealed record AbilityEvent(BattleSide Side, string Ability) : BattleEvent;
-/// <summary>The move's animation plays now (the user's side attacking with move id <paramref name="Move"/>).</summary>
-public sealed record MoveAnimationEvent(BattleSide User, int Move) : BattleEvent;
+public sealed record AbilityEvent(BattleSide Side, string Ability, int Slot = 0) : BattleEvent;
+/// <summary>
+/// The move's animation plays now: the Pokémon in <paramref name="User"/>'s <paramref name="Slot"/> uses move id
+/// <paramref name="Move"/>, aimed at <paramref name="Target"/>'s <paramref name="TargetSlot"/>.
+/// </summary>
+public sealed record MoveAnimationEvent(BattleSide User, int Move, int Slot = 0, BattleSide Target = BattleSide.Foe, int TargetSlot = 0) : BattleEvent;
+
+/// <summary>How many Pokémon each side has out: one, two or three; Rotation is one at a time with free rotations.</summary>
+public enum BattleFormat { Single, Double, Triple, Rotation }
+
+/// <summary>What the player has one of their Pokémon do in a double or triple battle's turn.</summary>
+public abstract record BattleChoice
+{
+    /// <summary>Move slot <paramref name="Slot"/> at the Pokémon in <paramref name="TargetSide"/>'s <paramref name="TargetSlot"/>.</summary>
+    public sealed record Fight(int Slot, BattleSide TargetSide = BattleSide.Foe, int TargetSlot = 0) : BattleChoice;
+    /// <summary>Calls the Pokémon back for party member <paramref name="PartyIndex"/>.</summary>
+    public sealed record Switch(int PartyIndex) : BattleChoice;
+    /// <summary>An item from the Bag: a Poké Ball at the last wild Pokémon, or medicine on party member <paramref name="PartyIndex"/>.</summary>
+    public sealed record Item(int ItemId, int PartyIndex = -1) : BattleChoice;
+    public sealed record Run : BattleChoice;
+}
 
 /// <summary>
 /// A Pokémon on the field: the Pokémon plus what resets when it leaves (stat stages, confusion, flinch, a traced
 /// ability, Flash Fire's boost, Truant's loafing, turns on the field).
 /// </summary>
-public sealed class Battler(Pokemon mon, BattleSide side)
+public sealed class Battler(Pokemon mon, BattleSide side, int slot = 0)
 {
     public Pokemon Mon { get; } = mon;
     public BattleSide Side { get; } = side;
+    /// <summary>Its place on its side: 0 in a single battle; 0–1 or 0–2, left to right as its trainer sees them.</summary>
+    public int Slot { get; } = slot;
+    /// <summary>The player's Pokémon that were out while this foe was: they share the EXP when it faints.</summary>
+    public HashSet<Pokemon> FacedBy { get; } = [];
+    /// <summary>Its faint has been announced (and a replacement asked for).</summary>
+    public bool Gone { get; set; }
     /// <summary>Stat stages −6…+6, indexed by <see cref="BattleStat"/> (Attack … Evasion).</summary>
     public int[] Stages { get; } = new int[8];
     public int ConfusionTurns { get; set; }
@@ -110,7 +134,7 @@ public sealed class Battler(Pokemon mon, BattleSide side)
 }
 
 /// <summary>
-/// A single battle against one wild Pokémon or a trainer's team, with Generation 5 rules: priority and speed order,
+/// A battle against wild Pokémon or a trainer's team — single, double, triple or rotation (see the Doubles part) — with Generation 5 rules: priority and speed order,
 /// accuracy and evasion, critical hits, STAB, type effectiveness, random damage roll, burn, poison, paralysis, sleep,
 /// freeze, confusion, flinching, stat stages, multi-hit, recoil, drain, healing, one-hit KOs, escape odds, Poké
 /// Balls and medicine, switching, experience shared between the Pokémon that fought (×1.5 from trainers) and prize
@@ -124,14 +148,33 @@ public sealed partial class SingleBattle
     readonly IReadOnlyList<Pokemon> _party;
     readonly Bag _bag;
     readonly IReadOnlyList<Pokemon> _foeParty;
-    readonly HashSet<Pokemon> _participants = new();
-    /// <summary>A trainer's Pokémon fainted and another is left: it comes out at the end of the turn.</summary>
-    bool _foeReplacing;
+    /// <summary>Each side's Pokémon out, by slot: [0] the player's, [1] the foe's.</summary>
+    readonly Battler[][] _field;
+    /// <summary>The foe's slots whose Pokémon fainted: another comes out at the end of the turn.</summary>
+    readonly List<int> _foeReplacing = [];
+    /// <summary>The player's slots waiting for <see cref="SendOut"/>.</summary>
+    readonly List<int> _playerReplacing = [];
     int _escapeAttempts;
     int _turns;
+    bool _spread;
 
-    public Battler Player { get; private set; }
-    public Battler Foe { get; private set; }
+    public BattleFormat Format { get; }
+    /// <summary>Pokémon out per side.</summary>
+    public int Width => _field[0].Length;
+
+    /// <summary>The player's Pokémon in slot 0 (the only one in a single battle).</summary>
+    public Battler Player { get => _field[0][0]; private set => _field[0][0] = value; }
+    /// <summary>The foe's Pokémon in slot 0 (the only one in a single battle).</summary>
+    public Battler Foe { get => _field[1][0]; private set => _field[1][0] = value; }
+    public IReadOnlyList<Battler> PlayerField => _field[0];
+    public IReadOnlyList<Battler> FoeField => _field[1];
+    IEnumerable<Battler> AllField => _field[0].Concat(_field[1]);
+
+    /// <summary>The player's slots that need a Pokémon sent out (<see cref="SendOut"/>) before the next turn.</summary>
+    public IReadOnlyList<int> SlotsToFill => _playerReplacing;
+
+    /// <summary>The wild Pokémon caught, once the battle ends that way.</summary>
+    public Pokemon? Caught { get; private set; }
 
     /// <summary>The trainer being fought, or null in a wild battle.</summary>
     public TrainerInfo? Trainer { get; }
@@ -149,11 +192,21 @@ public sealed partial class SingleBattle
     public Bag Bag => _bag;
     public int ActiveIndex => IndexOf(Player.Mon);
 
+    /// <summary>Whether party member <paramref name="index"/> is out on the field now.</summary>
+    public bool IsOut(int index) => index >= 0 && index < _party.Count && _field[0].Any(b => ReferenceEquals(b.Mon, _party[index]));
+
+    int SlotOf(Pokemon mon) => Math.Max(0, Array.FindIndex(_field[0], b => ReferenceEquals(b.Mon, mon)));
+
     /// <summary>
     /// A battle against <paramref name="foeParty"/> — one wild Pokémon, or <paramref name="trainer"/>'s team — with the
     /// player's first able Pokémon leading.
     /// </summary>
-    public SingleBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, IReadOnlyList<Pokemon> foeParty, TrainerInfo? trainer, Random rng)
+    /// <remarks>
+    /// <paramref name="format"/> defaults to the trainer's battle type (single for wild Pokémon unless two are given). A
+    /// double or triple battle needs that many able Pokémon on both sides, else it's fought with as many as both have.
+    /// </remarks>
+    public SingleBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, IReadOnlyList<Pokemon> foeParty, TrainerInfo? trainer, Random rng,
+        BattleFormat? format = null)
     {
         _data = data;
         _rng = rng;
@@ -161,10 +214,34 @@ public sealed partial class SingleBattle
         _bag = bag;
         _foeParty = foeParty;
         Trainer = trainer;
-        Player = new Battler(party.FirstOrDefault(p => !p.Fainted) ?? throw new ArgumentException("No Pokémon can fight.", nameof(party)), BattleSide.Player);
-        _participants.Add(Player.Mon);
-        Foe = new Battler(foeParty.FirstOrDefault(p => !p.Fainted) ?? throw new ArgumentException("The foe has no Pokémon.", nameof(foeParty)), BattleSide.Foe);
+        var mine = party.Where(p => !p.Fainted).ToList();
+        var theirs = foeParty.Where(p => !p.Fainted).ToList();
+        if (mine.Count == 0)
+            throw new ArgumentException("No Pokémon can fight.", nameof(party));
+        if (theirs.Count == 0)
+            throw new ArgumentException("The foe has no Pokémon.", nameof(foeParty));
+        Format = format ?? (trainer?.BattleType switch { 1 => BattleFormat.Double, 2 => BattleFormat.Triple, 3 => BattleFormat.Rotation, _ => BattleFormat.Single });
+        var width = Math.Min(Format switch { BattleFormat.Double => 2, BattleFormat.Triple => 3, _ => 1 }, Math.Min(mine.Count, theirs.Count));
+        if (width == 1 && Format is BattleFormat.Double or BattleFormat.Triple)
+            Format = BattleFormat.Single;
+        else if (width == 2 && Format == BattleFormat.Triple)
+            Format = BattleFormat.Double;
+        _field = [new Battler[width], new Battler[width]];
+        for (var i = 0; i < width; i++)
+        {
+            _field[0][i] = new Battler(mine[i], BattleSide.Player, i);
+            _field[1][i] = new Battler(theirs[i], BattleSide.Foe, i);
+        }
+        foreach (var foe in _field[1])
+            foreach (var b in _field[0])
+                foe.FacedBy.Add(b.Mon);
+        if (Format == BattleFormat.Rotation)
+            _rotation = mine.Take(3).ToList();
     }
+
+    /// <summary>A wild double battle (dark grass): two wild Pokémon at once.</summary>
+    public SingleBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, Pokemon wild, Pokemon partner, Random rng)
+        : this(data, party, bag, [wild, partner], null, rng, BattleFormat.Double) { }
 
     /// <summary>A wild battle with the party's first able Pokémon leading.</summary>
     public SingleBattle(BattleData data, IReadOnlyList<Pokemon> party, Bag bag, Pokemon wild, Random rng)
@@ -205,24 +282,36 @@ public sealed partial class SingleBattle
 
     public IReadOnlyList<BattleEvent> Start()
     {
+        var foes = Names(_field[1]);
+        var mine = Names(_field[0]);
         List<BattleEvent> events = Trainer is { } trainer
             ?
             [
                 new MessageEvent($"You are challenged by {trainer.Title}!"),
                 new TrainerEvent(false),
-                new MessageEvent($"{trainer.Title} sent out {Foe.Mon.Name}!"),
-                new MessageEvent($"Go! {Player.Mon.Name}!"),
+                new MessageEvent($"{trainer.Title} sent out {foes}!"),
+                new MessageEvent($"Go! {mine}!"),
             ]
-            : [new MessageEvent($"A wild {Foe.Mon.Name} appeared!"), new MessageEvent($"Go! {Player.Mon.Name}!")];
+            : [new MessageEvent(Width > 1 ? $"Wild {foes} appeared!" : $"A wild {foes} appeared!"), new MessageEvent($"Go! {mine}!")];
         // Entry abilities (Intimidate, Pressure, …) go off fastest first.
-        var playerFirst = EffectiveSpeed(Player) >= EffectiveSpeed(Foe);
-        OnEntry(playerFirst ? Player : Foe, events);
-        OnEntry(playerFirst ? Foe : Player, events);
+        foreach (var b in BySpeed(AllField))
+            OnEntry(b, events);
         return events;
     }
 
     /// <summary>True when no move has PP left: <see cref="Fight"/> then uses Struggle whatever the slot.</summary>
     public bool MustStruggle => Player.Mon.Moves.All(m => m.Pp <= 0);
+
+    static string Names(IEnumerable<Battler> battlers)
+    {
+        var names = battlers.Select(b => b.Mon.Name).ToList();
+        return names.Count <= 1 ? string.Concat(names) : $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}";
+    }
+
+    /// <summary>Fastest first (slowest first under Trick Room), speed ties broken at random.</summary>
+    List<Battler> BySpeed(IEnumerable<Battler> battlers) =>
+        battlers.Select(b => (b, Speed: EffectiveSpeed(b) * (_trickRoom > 0 ? -1 : 1), Tie: _rng.Next()))
+            .OrderByDescending(x => x.Speed).ThenBy(x => x.Tie).Select(x => x.b).ToList();
 
     int IndexOf(Pokemon mon)
     {
@@ -289,7 +378,7 @@ public sealed partial class SingleBattle
             return [new MessageEvent("No! There's no running from a Trainer battle!")];
         var runAway = Has(Player, Abilities.RunAway) || ItemOf(Player) == HeldItems.SmokeBall;
         if (!runAway && Trapped(Player) is { } trap)
-            return [new AbilityEvent(BattleSide.Foe, Foe.AbilityName), new MessageEvent(trap)];
+            return [Popup(Opponent(Player)), new MessageEvent(trap)];
         var events = new List<BattleEvent>();
         _escapeAttempts++;
         _turns++;
@@ -312,7 +401,7 @@ public sealed partial class SingleBattle
         if (Waiting || !CanSendOut(index) || index == ActiveIndex)
             return [];
         if (Trapped(Player) is { } trap)
-            return [new AbilityEvent(BattleSide.Foe, Foe.AbilityName), new MessageEvent(trap)];
+            return [Popup(Opponent(Player)), new MessageEvent(trap)];
         var events = new List<BattleEvent> { new MessageEvent($"{Player.Mon.Name}, come back!") };
         OnSwitchOut(Player);
         _turns++;
@@ -324,10 +413,22 @@ public sealed partial class SingleBattle
     /// <summary>Replaces a fainted Pokémon with party member <paramref name="index"/> (no turn passes).</summary>
     public IReadOnlyList<BattleEvent> SendOut(int index)
     {
-        if (!NeedsSwitch || !CanSendOut(index))
+        if (!NeedsSwitch || !CanSendOut(index) || (Width > 1 && IsOut(index)))
             return [];
-        NeedsSwitch = false;
         var events = new List<BattleEvent>();
+        if (Width > 1)
+        {
+            // Doubles and triples: fill the first empty slot; the turn goes on once all are filled.
+            var slot = _playerReplacing[0];
+            _playerReplacing.RemoveAt(0);
+            Enter(index, events, slot);
+            NeedsSwitch = _playerReplacing.Count > 0 && _party.Any(p => !p.Fainted && !_field[0].Any(b => ReferenceEquals(b.Mon, p)));
+            if (!NeedsSwitch)
+                _playerReplacing.Clear();
+            return events;
+        }
+        NeedsSwitch = false;
+        _playerReplacing.Clear();
         Enter(index, events);
         if (_pivoting)
         {
@@ -348,18 +449,19 @@ public sealed partial class SingleBattle
 
     public bool CanSendOut(int index) => index >= 0 && index < _party.Count && !_party[index].Fainted;
 
-    void Enter(int index, List<BattleEvent> events)
+    void Enter(int index, List<BattleEvent> events, int slot = 0)
     {
         var passed = _batonPass;
         _batonPass = null;
-        Player = new Battler(_party[index], BattleSide.Player);
+        var b = _field[0][slot] = new Battler(_party[index], BattleSide.Player, slot);
         if (passed is not null)
-            Inherit(Player, passed);
-        _participants.Add(Player.Mon);
-        events.Add(new SwitchEvent(index));
-        events.Add(new MessageEvent($"Go! {Player.Mon.Name}!"));
-        EntryHazards(Player, events);
-        OnEntry(Player, events);
+            Inherit(b, passed);
+        foreach (var foe in _field[1])
+            foe.FacedBy.Add(b.Mon);
+        events.Add(new SwitchEvent(index, BattleSide.Player, slot));
+        events.Add(new MessageEvent($"Go! {b.Mon.Name}!"));
+        EntryHazards(b, events);
+        OnEntry(b, events);
     }
 
     /// <summary>
@@ -383,12 +485,13 @@ public sealed partial class SingleBattle
                 FoeTurn(events);
                 return events;
             }
-            var shakes = CatchShakes(ball, item);
+            var shakes = CatchShakes(ball, item, Foe);
             var caught = shakes == 4;
             events.Add(new CatchEvent(item, Math.Min(3, shakes), caught));
             if (caught)
             {
                 events.Add(new MessageEvent($"Gotcha! {Foe.Mon.Name} was caught!"));
+                Caught = Foe.Mon;
                 Outcome = BattleOutcome.Caught;
                 return events;
             }
@@ -420,8 +523,8 @@ public sealed partial class SingleBattle
         events.Add(new MessageEvent($"You used the {name}."));
         if (target == ActiveIndex)
         {
-            events.Add(new HpEvent(BattleSide.Player, mon.Hp, mon.MaxHp));
-            events.Add(new StatusEvent(BattleSide.Player, mon.Status));
+            events.Add(new HpEvent(BattleSide.Player, mon.Hp, mon.MaxHp, SlotOf(mon)));
+            events.Add(new StatusEvent(BattleSide.Player, mon.Status, SlotOf(mon)));
         }
         events.Add(new MessageEvent(message));
         FoeTurn(events);
@@ -432,13 +535,13 @@ public sealed partial class SingleBattle
     /// Gen 5 capture: a = (3·max − 2·hp) · rate · ball / (3·max) × status (2.5 asleep/frozen, 1.5 other), then up to
     /// three shake checks against b = 65536 / (255 / a)^(3/16). Returns 4 when caught, else the shakes before breaking free.
     /// </summary>
-    int CatchShakes(ItemEffect.Ball ball, int item)
+    int CatchShakes(ItemEffect.Ball ball, int item, Battler wild)
     {
         if (ball.AlwaysCatches)
             return 4;
-        var mon = Foe.Mon;
+        var mon = wild.Mon;
         double max = mon.MaxHp, hp = Math.Max(1, mon.Hp);
-        var a = (3 * max - 2 * hp) * mon.Species.CatchRate * BallMultiplier(ball, item) / (3 * max);
+        var a = (3 * max - 2 * hp) * mon.Species.CatchRate * BallMultiplier(ball, item, mon) / (3 * max);
         a *= mon.Status switch { Ailment.Sleep or Ailment.Freeze => 2.5, Ailment.None => 1, _ => 1.5 };
         if (a >= 255)
             return 4;
@@ -450,13 +553,13 @@ public sealed partial class SingleBattle
     }
 
     /// <summary>A ball's bonus in this battle: Net (Bug/Water), Nest (low level), Timer (long battles), Quick (first turn).</summary>
-    double BallMultiplier(ItemEffect.Ball ball, int item)
+    double BallMultiplier(ItemEffect.Ball ball, int item, Pokemon wild)
     {
-        var types = Foe.Mon.Types;
+        var types = wild.Types;
         return item switch
         {
             ItemEffect.NetBall when types.Contains(TypeChart.Bug) || types.Contains(TypeChart.Water) => 3,
-            ItemEffect.NestBall => Math.Max(1, (41 - Foe.Mon.Level) / 10.0),
+            ItemEffect.NestBall => Math.Max(1, (41 - wild.Level) / 10.0),
             ItemEffect.TimerBall => Math.Min(4, 1 + _turns * 0.3),
             ItemEffect.QuickBall when _turns == 0 => 5,
             _ => ball.Multiplier,
@@ -631,15 +734,35 @@ public sealed partial class SingleBattle
         }
         user.Charging = user.SemiInvulnerable = 0;
 
+        // Spread moves hit each target in turn (for ×0.75 each); everything else hits the one.
+        var targets = _targets is { Count: > 0 } chosen ? chosen : [target];
+        _spread = targets.Count > 1;
+        var animated = false;
+        for (var i = 0; i < targets.Count && !Over; i++)
+        {
+            if (i > 0 && (targets[i].Mon.Fainted || user.Mon.Fainted))
+                continue;
+            UseMoveOn(user, targets[i], move, type, movedFirst, last: i == targets.Count - 1, ref animated, events);
+        }
+        _spread = false;
+    }
+
+    /// <summary>The targets of the move being used (spread moves), set by the double/triple turn.</summary>
+    List<Battler>? _targets;
+
+    /// <summary>The part of using a move that happens to each target.</summary>
+    void UseMoveOn(Battler user, Battler target, MoveInfo move, int type, bool movedFirst, bool last, ref bool animated, List<BattleEvent> events)
+    {
+        var name = Label(user);
         if (Fails(user, target, move) is { } failure)
         {
             events.Add(new MessageEvent(failure));
             return;
         }
-        var animated = false;
         if (move.Category == MoveCategory.Status)
         {
-            events.Add(new MoveAnimationEvent(user.Side, move.Id));
+            if (!animated)
+                events.Add(new MoveAnimationEvent(user.Side, move.Id, user.Slot, target.Side, target.Slot));
             animated = true;
             if (StatusMove(user, target, move, events))
                 return;
@@ -667,7 +790,7 @@ public sealed partial class SingleBattle
                 Damage(user, Math.Max(1, user.Mon.MaxHp / 2), events, $"{name} kept going and crashed!");
                 CheckFaints(events);
             }
-            if (move.Id is Moves.Explosion or Moves.SelfDestruct)
+            if (move.Id is Moves.Explosion or Moves.SelfDestruct && last)
                 Damage(user, user.Mon.Hp, events);
             return;
         }
@@ -676,7 +799,8 @@ public sealed partial class SingleBattle
         if (user.LockOn > 0 && !selfTargeted)
             user.LockOn = 0;
         if (!animated)
-            events.Add(new MoveAnimationEvent(user.Side, move.Id));
+            events.Add(new MoveAnimationEvent(user.Side, move.Id, user.Slot, target.Side, target.Slot));
+        animated = true;
 
         if (move.Kind == MoveKind.OneHitKo)
         {
@@ -687,7 +811,7 @@ public sealed partial class SingleBattle
             }
             if (Defends(target, user, Abilities.Sturdy))
             {
-                events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                events.Add(new AbilityEvent(target.Side, target.AbilityName, target.Slot));
                 events.Add(new MessageEvent($"{Label(target)} is unaffected!"));
                 return;
             }
@@ -710,7 +834,7 @@ public sealed partial class SingleBattle
             var fixedDamage = FixedDamage(user, target, move);
             if (fixedDamage is null && effectiveness <= 1 && move.Id != BattleData.Struggle && Defends(target, user, Abilities.WonderGuard))
             {
-                events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                events.Add(new AbilityEvent(target.Side, target.AbilityName, target.Slot));
                 events.Add(new MessageEvent($"It doesn't affect {Label(target)}..."));
                 return;
             }
@@ -758,7 +882,7 @@ public sealed partial class SingleBattle
                     events.Add(new MessageEvent("A critical hit!"));
                 if (endured)
                 {
-                    events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                    events.Add(new AbilityEvent(target.Side, target.AbilityName, target.Slot));
                     events.Add(new MessageEvent($"{Label(target)} endured the hit!"));
                 }
                 if (hungOn != "")
@@ -790,7 +914,7 @@ public sealed partial class SingleBattle
                     drained = drained * 13 / 10;
                 if (Has(target, Abilities.LiquidOoze))
                 {
-                    events.Add(new AbilityEvent(target.Side, target.AbilityName));
+                    events.Add(new AbilityEvent(target.Side, target.AbilityName, target.Slot));
                     if (!Has(user, Abilities.MagicGuard))
                         Damage(user, drained, events, $"{name} sucked up the liquid ooze!");
                 }
@@ -800,7 +924,7 @@ public sealed partial class SingleBattle
             if (target.Mon.Fainted)
                 OnKnockOut(user, target, move, events);
             ItemAfterMove(user, move, dealt, events);
-            if (move.Id is Moves.Explosion or Moves.SelfDestruct or Moves.FinalGambit)
+            if (move.Id is Moves.Explosion or Moves.SelfDestruct or Moves.FinalGambit && last)
                 Damage(user, user.Mon.Hp, events);
             if (Moves.Rampage(move.Id))
             {
@@ -883,7 +1007,7 @@ public sealed partial class SingleBattle
             events.Add(new MessageEvent($"{name} flinched and couldn't move!"));
             if (Has(user, Abilities.Steadfast))
             {
-                events.Add(new AbilityEvent(user.Side, user.AbilityName));
+                events.Add(new AbilityEvent(user.Side, user.AbilityName, user.Slot));
                 ChangeStage(user, BattleStat.Speed, 1, null, events);
             }
             return false;
@@ -891,7 +1015,7 @@ public sealed partial class SingleBattle
         if (Has(user, Abilities.Truant) && user.Loafing)
         {
             user.Loafing = false;
-            events.Add(new AbilityEvent(user.Side, user.AbilityName));
+            events.Add(new AbilityEvent(user.Side, user.AbilityName, user.Slot));
             events.Add(new MessageEvent($"{name} is loafing around!"));
             return false;
         }
@@ -1110,10 +1234,13 @@ public sealed partial class SingleBattle
             damage = damage * 13 / 10;
         if (resistBerry)
             damage /= 2;
-        // Reflect and Light Screen halve hits that aren't critical.
+        // A move that hits more than one Pokémon does three quarters to each.
+        if (_spread)
+            damage = damage * 3 / 4;
+        // Reflect and Light Screen halve hits that aren't critical (by a third with more than one Pokémon a side).
         var side = SideOf(target);
         if (!crit && (physical ? side.Reflect : side.LightScreen) > 0)
-            damage /= 2;
+            damage = Width > 1 ? damage * 2 / 3 : damage / 2;
         if (physical && status == Ailment.Burn && !Has(user, Abilities.Guts))
             damage /= 2;
         return Math.Max(1, damage);
@@ -1141,7 +1268,7 @@ public sealed partial class SingleBattle
             {
                 if (status)
                 {
-                    events.Add(new AbilityEvent(victim.Side, victim.AbilityName));
+                    events.Add(new AbilityEvent(victim.Side, victim.AbilityName, victim.Slot));
                     events.Add(new MessageEvent($"{name} doesn't become confused!"));
                 }
                 return;
@@ -1185,7 +1312,7 @@ public sealed partial class SingleBattle
     void EndOfTurn(List<BattleEvent> events)
     {
         WeatherEndOfTurn(events);
-        foreach (var b in new[] { Player, Foe })
+        foreach (var b in BySpeed(AllField))
         {
             b.Flinched = false;
             if (Over || b.Mon.Fainted)
@@ -1194,7 +1321,7 @@ public sealed partial class SingleBattle
             {
                 if (b.Mon.Hp < b.Mon.MaxHp)
                 {
-                    events.Add(new AbilityEvent(b.Side, b.AbilityName));
+                    events.Add(new AbilityEvent(b.Side, b.AbilityName, b.Slot));
                     Heal(b, Math.Max(1, b.Mon.MaxHp / 8), events, $"{Label(b)} is healed by poison!");
                 }
             }
@@ -1219,32 +1346,48 @@ public sealed partial class SingleBattle
         }
         if (!Over)
             SideEndOfTurn(events);
-        foreach (var b in new[] { Player, Foe })
+        foreach (var b in AllField)
         {
             b.Protected = b.Enduring = b.Moved = false;
             b.TakenPhysical = b.TakenSpecial = 0;
         }
 
         // A trainer sends out their next Pokémon once the turn is over; it's fought by whoever is out now.
-        if (_foeReplacing && !Over)
+        foreach (var slot in _foeReplacing)
         {
-            _foeReplacing = false;
-            var next = Enumerable.Range(0, _foeParty.Count).First(i => !_foeParty[i].Fainted);
-            SendOutFoe(next, events, $"{Trainer?.Title ?? "The foe"} sent out {_foeParty[next].Name}!");
+            if (Over || NextFoe() is not { } next)
+                break;
+            SendOutFoe(next, events, $"{Trainer?.Title ?? "The foe"} sent out {_foeParty[next].Name}!", slot);
         }
+        _foeReplacing.Clear();
+    }
+
+    /// <summary>A trainer's next Pokémon that can come out, or null.</summary>
+    int? NextFoe()
+    {
+        for (var i = 0; i < _foeParty.Count; i++)
+            if (!_foeParty[i].Fainted && !_field[1].Any(b => ReferenceEquals(b.Mon, _foeParty[i])))
+                return i;
+        return null;
     }
 
     void CheckFaints(List<BattleEvent> events)
     {
         if (Over)
             return;
-        if (Foe.Mon.Fainted && !_foeReplacing)
+        foreach (var foe in _field[1])
         {
-            events.Add(new FaintEvent(BattleSide.Foe));
-            events.Add(new MessageEvent($"{Label(Foe)} fainted!"));
-            AwardExp(events);
+            if (!foe.Mon.Fainted || foe.Gone)
+                continue;
+            foe.Gone = true;
+            events.Add(new FaintEvent(BattleSide.Foe, foe.Slot));
+            events.Add(new MessageEvent($"{Label(foe)} fainted!"));
+            AwardExp(foe, events);
             if (_foeParty.Any(p => !p.Fainted))
-                _foeReplacing = true;
+            {
+                if (NextFoe() is not null)
+                    _foeReplacing.Add(foe.Slot);
+            }
             else
             {
                 Outcome = BattleOutcome.Won;
@@ -1267,18 +1410,26 @@ public sealed partial class SingleBattle
                 }
             }
         }
-        if (Player.Mon.Fainted && !NeedsSwitch)
+        foreach (var mine in _field[0])
         {
-            events.Add(new FaintEvent(BattleSide.Player));
-            events.Add(new MessageEvent($"{Player.Mon.Name} fainted!"));
+            if (!mine.Mon.Fainted || mine.Gone)
+                continue;
+            mine.Gone = true;
+            events.Add(new FaintEvent(BattleSide.Player, mine.Slot));
+            events.Add(new MessageEvent($"{mine.Mon.Name} fainted!"));
             if (Outcome == BattleOutcome.Won)
                 return;
-            if (_party.Any(p => !p.Fainted))
-                NeedsSwitch = true;
-            else
+            if (_party.All(p => p.Fainted))
             {
                 events.Add(new MessageEvent("You have no more Pokémon that can fight! You blacked out!"));
                 Outcome = BattleOutcome.Lost;
+                return;
+            }
+            // Someone on the bench takes its place (in doubles, only while there is someone left to send).
+            if (_party.Any(p => !p.Fainted && !_field[0].Any(b => ReferenceEquals(b.Mon, p))))
+            {
+                _playerReplacing.Add(mine.Slot);
+                NeedsSwitch = true;
             }
         }
     }
@@ -1303,9 +1454,9 @@ public sealed partial class SingleBattle
     /// Every Pokémon that was sent out against the defeated one and is still standing shares the experience; with
     /// an Exp. Share in the party, the fighters split half and the holders the other half.
     /// </summary>
-    void AwardExp(List<BattleEvent> events)
+    void AwardExp(Battler defeated, List<BattleEvent> events)
     {
-        var fighters = _participants.Where(p => !p.Fainted && IndexOf(p) >= 0).ToList();
+        var fighters = defeated.FacedBy.Where(p => !p.Fainted && IndexOf(p) >= 0).ToList();
         var holders = _party.Where(p => !p.Fainted && p.HeldItem == HeldItems.ExpShare).ToList();
         var earners = fighters.Union(holders).ToList();
         foreach (var mon in earners)
@@ -1315,7 +1466,7 @@ public sealed partial class SingleBattle
             var index = IndexOf(mon);
             var share = (fighters.Contains(mon) ? (holders.Count > 0 ? 0.5 : 1.0) / fighters.Count : 0)
                 + (holders.Contains(mon) ? 0.5 / holders.Count : 0);
-            var exp = ExpShare(Foe.Mon, mon, share, Trainer is not null);
+            var exp = ExpShare(defeated.Mon, mon, share, Trainer is not null);
             var levels = mon.GainExp(exp, _data);
             events.Add(new MessageEvent($"{mon.Name} gained {exp} Exp. Points!"));
             events.Add(new ExpEvent(index, exp, mon.Level));
@@ -1337,21 +1488,21 @@ public sealed partial class SingleBattle
         b.Mon.Hp -= dealt;
         if (message is not null)
             events.Add(new MessageEvent(message));
-        events.Add(new HpEvent(b.Side, b.Mon.Hp, b.Mon.MaxHp));
+        events.Add(new HpEvent(b.Side, b.Mon.Hp, b.Mon.MaxHp, b.Slot));
         return dealt;
     }
 
     void Heal(Battler b, int amount, List<BattleEvent> events, string message)
     {
         b.Mon.Hp = Math.Min(b.Mon.MaxHp, b.Mon.Hp + amount);
-        events.Add(new HpEvent(b.Side, b.Mon.Hp, b.Mon.MaxHp));
+        events.Add(new HpEvent(b.Side, b.Mon.Hp, b.Mon.MaxHp, b.Slot));
         events.Add(new MessageEvent(message));
     }
 
     void SetStatus(Battler b, Ailment status, List<BattleEvent> events, string message)
     {
         b.Mon.Status = status;
-        events.Add(new StatusEvent(b.Side, status));
+        events.Add(new StatusEvent(b.Side, status, b.Slot));
         events.Add(new MessageEvent(message));
     }
 

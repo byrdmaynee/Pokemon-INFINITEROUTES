@@ -15,30 +15,34 @@ public sealed partial class SingleBattle
     List<int>? _trainerItems;
 
     /// <summary>The foe's move slot for this turn.</summary>
-    int FoeSlot()
+    int FoeSlot() => FoeSlot(Foe, Player);
+
+    /// <summary><paramref name="user"/>'s move slot against <paramref name="target"/>.</summary>
+    int FoeSlot(Battler user, Battler target) => FoeChoice(user, target).Slot;
+
+    (int Slot, int Score) FoeChoice(Battler user, Battler target)
     {
-        var moves = Foe.Mon.Moves;
+        var moves = user.Mon.Moves;
         if (Trainer is not { } trainer || (trainer.Ai & (AiBasic | AiEvaluate | AiExpert)) == 0 || moves.Count == 0)
-            return _rng.Next(Math.Max(1, moves.Count));
+            return (_rng.Next(Math.Max(1, moves.Count)), 0);
         var scores = new int[moves.Count];
         for (var i = 0; i < moves.Count; i++)
-            scores[i] = moves[i].Pp <= 0 || Restricted(Foe, moves[i].Move, []) ? int.MinValue : Score(moves[i].Move, trainer.Ai);
+            scores[i] = moves[i].Pp <= 0 || Restricted(user, moves[i].Move, []) ? int.MinValue : Score(user, target, moves[i].Move, trainer.Ai);
         var best = scores.Max();
         if (best == int.MinValue)
-            return 0;
+            return (0, int.MinValue);
         // Pick among the best-scoring moves (within a small margin, so it isn't fully predictable).
         var margin = (trainer.Ai & (AiEvaluate | AiExpert)) != 0 ? 10 : 1000;
         var candidates = Enumerable.Range(0, moves.Count).Where(i => scores[i] != int.MinValue && scores[i] >= best - margin && scores[i] > -50).ToList();
         if (candidates.Count == 0)
             candidates = Enumerable.Range(0, moves.Count).Where(i => scores[i] == best).ToList();
-        return candidates[_rng.Next(candidates.Count)];
+        var pick = candidates[_rng.Next(candidates.Count)];
+        return (pick, scores[pick]);
     }
 
     /// <summary>How much the trainer's Pokémon wants to use <paramref name="move"/> now.</summary>
-    int Score(MoveInfo move, int ai)
+    int Score(Battler user, Battler target, MoveInfo move, int ai)
     {
-        var user = Foe;
-        var target = Player;
         var expert = (ai & AiExpert) != 0;
         var evaluate = (ai & AiEvaluate) != 0;
         var type = MoveType(user, move);
@@ -144,12 +148,14 @@ public sealed partial class SingleBattle
     /// A trainer uses one of its medicines on its Pokémon instead of attacking: a healing item at a quarter of its HP or
     /// less, a status cure when it has a status. True when it did (its turn is used up).
     /// </summary>
-    bool TrainerUsesItem(List<BattleEvent> events)
+    bool TrainerUsesItem(List<BattleEvent> events) => TrainerUsesItem(Foe, events);
+
+    bool TrainerUsesItem(Battler foe, List<BattleEvent> events)
     {
-        if (Trainer is not { } trainer || Foe.Mon.Fainted)
+        if (Trainer is not { } trainer || foe.Mon.Fainted)
             return false;
         _trainerItems ??= trainer.Items.Where(i => i != 0).ToList();
-        var mon = Foe.Mon;
+        var mon = foe.Mon;
         foreach (var item in _trainerItems)
         {
             var effect = ItemEffect.For(item);
@@ -163,10 +169,10 @@ public sealed partial class SingleBattle
                 continue;
             _trainerItems.Remove(item);
             events.Add(new MessageEvent($"{trainer.Title} used a {_data.ItemName(item)}!"));
-            events.Add(new HpEvent(BattleSide.Foe, mon.Hp, mon.MaxHp));
-            events.Add(new StatusEvent(BattleSide.Foe, mon.Status));
+            events.Add(new HpEvent(BattleSide.Foe, mon.Hp, mon.MaxHp, foe.Slot));
+            events.Add(new StatusEvent(BattleSide.Foe, mon.Status, foe.Slot));
             events.Add(new MessageEvent(message));
-            Foe.Toxic = 0;
+            foe.Toxic = 0;
             return true;
         }
         return false;

@@ -12,9 +12,23 @@ public sealed partial class SingleBattle
         target.Ability == ability
         && !(attacker is not null && attacker != target && Abilities.BreaksMold(attacker.Ability) && Abilities.Breakable.Contains(ability));
 
-    Battler Opponent(Battler b) => b == Player ? Foe : Player;
+    /// <summary>The Pokémon <paramref name="b"/> faces: an able one on the other side (the nearest in a triple battle).</summary>
+    Battler Opponent(Battler b)
+    {
+        var other = _field[b.Side == BattleSide.Player ? 1 : 0];
+        return other.Where(o => !o.Mon.Fainted).OrderBy(o => Math.Abs(Lane(o) - Lane(b))).FirstOrDefault() ?? other[0];
+    }
 
-    static AbilityEvent Popup(Battler b) => new(b.Side, b.AbilityName);
+    /// <summary>Where a Pokémon stands across the field: the player's slot i faces the foe's slot Width − 1 − i.</summary>
+    int Lane(Battler b) => b.Side == BattleSide.Player ? b.Slot : Width - 1 - b.Slot;
+
+    /// <summary>In a triple battle the Pokémon at the two ends can't reach each other; otherwise everyone is adjacent.</summary>
+    bool Adjacent(Battler a, Battler b) => a != b && Math.Abs(Lane(a) - Lane(b)) <= 1;
+
+    /// <summary>The able Pokémon on the other side that <paramref name="b"/> can reach.</summary>
+    List<Battler> FoesOf(Battler b) => _field[b.Side == BattleSide.Player ? 1 : 0].Where(o => !o.Mon.Fainted && Adjacent(b, o)).ToList();
+
+    static AbilityEvent Popup(Battler b) => new(b.Side, b.AbilityName, b.Slot);
 
     static int Priority(Battler b, MoveInfo move) =>
         move.Priority + (Has(b, Abilities.Prankster) && move.Category == MoveCategory.Status ? 1 : 0);
@@ -106,7 +120,8 @@ public sealed partial class SingleBattle
                 break;
             case Abilities.Intimidate:
                 events.Add(Popup(b));
-                ChangeStage(other, BattleStat.Attack, -1, b, events);
+                foreach (var foe in FoesOf(b))
+                    ChangeStage(foe, BattleStat.Attack, -1, b, events);
                 break;
             case Abilities.Download:
             {
