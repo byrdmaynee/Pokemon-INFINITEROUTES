@@ -26,6 +26,10 @@ public partial class GameMenu : Control
     [Signal]
     public delegate void StartedOverEventHandler();
 
+    /// <summary>The player used an Escape Rope; the world takes them back outside.</summary>
+    [Signal]
+    public delegate void UsedEscapeRopeEventHandler();
+
     /// <summary>The player switched save slots; the world moves to where that save left off.</summary>
     [Signal]
     public delegate void SlotChangedEventHandler();
@@ -122,6 +126,9 @@ public partial class GameMenu : Control
     };
 
     /// <summary>Switches to <paramref name="tab"/>. Public so smoke tests can visit each tab.</summary>
+    /// <summary>Shows <paramref name="text"/> in the menu's message line.</summary>
+    public void Notice(string text) => Rebuild(text);
+
     public void Show(Tab tab)
     {
         if (!Tabs.Contains(tab))
@@ -524,6 +531,17 @@ public partial class GameMenu : Control
                 var ball = ItemEffect.For(item) is ItemEffect.Ball;
                 var button = Row($"{data.ItemName(item)}   ×{count}", () =>
                 {
+                    // Field items work straight from the Bag.
+                    if (ItemEffect.RepelSteps(id) > 0)
+                    {
+                        Rebuild(OfflineSession.State.UseRepel(id, data.ItemName(id)).Message);
+                        return;
+                    }
+                    if (id == ItemEffect.EscapeRope)
+                    {
+                        EmitSignal(SignalName.UsedEscapeRope);
+                        return;
+                    }
                     _useItem = medicine ? id : 0;
                     _giveItem = medicine ? 0 : id;
                     _tab = Tab.Party;
@@ -536,7 +554,8 @@ public partial class GameMenu : Control
                 column.AddChild(U.Text("Empty", 15, U.Muted));
             pockets.AddChild(column);
         }
-        return "Pick a medicine to use, or any other item to give a Pokémon to hold. Balls are thrown in battle.";
+        var repel = OfflineSession.State.RepelSteps > 0 ? $"  Repel: {OfflineSession.State.RepelSteps} steps left." : "";
+        return "Pick a medicine or a Repel or Escape Rope to use, or any other item to give a Pokémon to hold." + repel;
     }
 
     // ── Badges ────────────────────────────────────────────────────────────────────────────────────────────────

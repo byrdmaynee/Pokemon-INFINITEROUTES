@@ -22,6 +22,10 @@ public abstract record ItemEffect
         QuickBall = 15, CherishBall = 16;
     public const int Potion = 17, Antidote = 18, BurnHeal = 19, IceHeal = 20, Awakening = 21, ParlyzHeal = 22, FullRestore = 23,
         MaxPotion = 24, HyperPotion = 25, SuperPotion = 26, FullHeal = 27, ReviveItem = 28, MaxRevive = 29;
+    public const int SuperRepel = 76, MaxRepel = 77, EscapeRope = 78, Repel = 79;
+
+    /// <summary>Steps a repel keeps weaker wild Pokémon away; 0 for other items.</summary>
+    public static int RepelSteps(int item) => item switch { Repel => 100, SuperRepel => 200, MaxRepel => 250, _ => 0 };
 
     /// <summary>The effect of a known item, or null for items the battle engine can't use yet.</summary>
     public static ItemEffect? For(int item) => item switch

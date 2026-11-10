@@ -17,6 +17,8 @@ public class PokeMartTests
     [Fact]
     public void Shelves_grow_with_badges()
     {
+        Assert.Equal([ItemEffect.PokeBall, ItemEffect.Potion], PokeMart.StandardStock(0));   // as in Black/White
+        Assert.Equal([2, 11, 14, 17, 18, 19], new[] { 0, 1, 3, 5, 7, 8 }.Select(b => PokeMart.StandardStock(b).Count));
         Assert.DoesNotContain(ItemEffect.GreatBall, PokeMart.StandardStock(0));
         Assert.Contains(ItemEffect.GreatBall, PokeMart.StandardStock(1));
         Assert.Contains(ItemEffect.FullRestore, PokeMart.StandardStock(8));
@@ -44,5 +46,23 @@ public class PokeMartTests
         Assert.Equal(1500, state.Progress.Money);
         Assert.Equal(0, state.Bag.Count(ItemEffect.PokeBall));
         Assert.False(PokeMart.Sell(state, data, ItemEffect.PremierBall, 1).Ok);   // worth nothing
+    }
+
+    [Fact]
+    public void A_repel_lasts_its_steps_and_is_saved()
+    {
+        var state = new GameState(new QuestLog([]));
+        state.Bag.Add(ItemEffect.Repel, 2);
+        Assert.True(state.UseRepel(ItemEffect.Repel, "Repel").Ok);
+        Assert.False(state.UseRepel(ItemEffect.Repel, "Repel").Ok);   // one at a time
+        Assert.Equal(1, state.Bag.Count(ItemEffect.Repel));
+        for (var step = 0; step < 99; step++)
+            Assert.False(state.RepelStep());
+        state.LastOutdoor = new PlayerLocation(389, 782, 749, 0);
+        var loaded = SaveGame.FromJson(SaveGame.From(state, "IRAO", DateTime.Now).ToJson())!.Restore(Data(), new QuestLog([]));
+        Assert.Equal(1, loaded.RepelSteps);
+        Assert.Equal(782, loaded.LastOutdoor?.X);
+        Assert.True(state.RepelStep());   // the 100th step wears it off
+        Assert.Equal(0, state.RepelSteps);
     }
 }

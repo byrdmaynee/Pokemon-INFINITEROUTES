@@ -21,7 +21,8 @@ public sealed record ProgressSave(Dictionary<int, DateTime> Badges, List<int> De
 /// </summary>
 public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLocation? Location, List<PokemonSave> Party,
     List<PokemonSave> Box, List<ItemSave> Bag, ProgressSave Progress, QuestLogSave Quests, List<MailSave> Mail,
-    List<Friend> Friends, List<string> Ignored, List<ListingSave> Market, List<string>? BoxNames = null)
+    List<Friend> Friends, List<string> Ignored, List<ListingSave> Market, List<string>? BoxNames = null, int RepelSteps = 0,
+    PlayerLocation? LastOutdoor = null)
 {
     public const int CurrentVersion = 1;
 
@@ -46,7 +47,7 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
             [.. state.Friends.Friends],
             [.. state.Friends.Ignored],
             state.Market.Listings.Select(l => new ListingSave(l.Id, l.Seller, l.Kind, l.Item, l.Count, l.Pokemon?.ToSave(), l.Price, l.Listed, l.Expires)).ToList(),
-            [.. state.BoxNames]);
+            [.. state.BoxNames], state.RepelSteps, state.LastOutdoor);
     }
 
     /// <summary>Rebuilds the game. <paramref name="quests"/> is a fresh log over the current quest catalog.</summary>
@@ -61,6 +62,8 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
                 Started = p.Started, PlayTime = p.PlayTime,
             },
             Location = Location,
+            RepelSteps = Math.Max(0, RepelSteps),
+            LastOutdoor = LastOutdoor,
         };
         foreach (var (badge, when) in p.Badges)
             state.Progress.Badges[badge] = when;

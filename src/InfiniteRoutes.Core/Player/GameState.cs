@@ -19,6 +19,30 @@ public sealed class GameState(QuestLog quests)
     /// <summary>The PC: deposited Pokémon and catches that didn't fit in the party, in order (box n holds 30n…30n+29).</summary>
     public List<Pokemon> Box { get; } = new();
 
+    /// <summary>Steps of Repel left: wild Pokémon weaker than the lead stay away.</summary>
+    public int RepelSteps { get; set; }
+
+    /// <summary>Where the player last stepped from the overworld into a building or cave: Escape Rope's destination.</summary>
+    public PlayerLocation? LastOutdoor { get; set; }
+
+    /// <summary>
+    /// Uses a Repel from the Bag; false (and nothing used) while one is still working.
+    /// </summary>
+    public (bool Ok, string Message) UseRepel(int item, string name)
+    {
+        var steps = ItemEffect.RepelSteps(item);
+        if (steps == 0 || Bag.Count(item) <= 0)
+            return (false, "That can't be used now.");
+        if (RepelSteps > 0)
+            return (false, "The effects of the last Repel are still lingering.");
+        Bag.Take(item);
+        RepelSteps = steps;
+        return (true, $"You used the {name}. Weak wild Pokémon will stay away for {steps} steps.");
+    }
+
+    /// <summary>A step while a Repel works: true when this one wore it off.</summary>
+    public bool RepelStep() => RepelSteps > 0 && --RepelSteps == 0;
+
     /// <summary>The PC boxes' names ("Box 1" … unless renamed).</summary>
     public List<string> BoxNames { get; } = Enumerable.Range(1, BoxCount).Select(i => $"Box {i}").ToList();
 

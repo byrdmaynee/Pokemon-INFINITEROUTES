@@ -119,6 +119,12 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] PC: click the box name to rename it; Sort: No. / Lv / Name reorders the box.
 - [ ] Save slots: the Trainer Card lists three slots. Play on an empty slot starts a new game; Play on the first
       slot again brings back that game where you left it. Relaunching continues the last slot you played.
+- [ ] Mart: with no badges the shelf has only Poké Balls and Potions; after the first badge it grows to
+      eleven items, including Escape Rope and Repel (as in Black/White).
+- [ ] Repel: X → Bag → Repel; for 100 steps wild Pokémon below your lead's level don't appear, then "The
+      Repel's effect wore off...". Using another while one works says the last one is still lingering.
+- [ ] Escape Rope: inside a building or cave, X → Bag → Escape Rope takes you back outside to where you went
+      in; on the overworld it says you can't use it here.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -223,7 +229,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
   (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing. The battle
   background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
-  town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't move
+  town specialties (our own pick; the standard shelf is the games' list). The PC can't move
   Pokémon between boxes yet, and other furniture (signs, bookshelves, TVs) does nothing yet.
 - No other players. Friends and market sellers are sample data; mail between players,
   whispers, trades, price history and IV/EV market filters need the server. Badges are drawn shapes,

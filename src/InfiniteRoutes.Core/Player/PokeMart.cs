@@ -4,23 +4,23 @@ namespace InfiniteRoutes.Core.Player;
 
 /// <summary>
 /// The Poké Mart counter in every Pokémon Center: a standard shelf that grows with the player's badges and a town
-/// specialty shelf. Prices come from the ROM's item data; items sell back for half. The shelves are modelled on
-/// Black/White's but are our own pick until the ROM's mart tables are extracted, and only list items the battle
-/// engine can use.
+/// specialty shelf. Prices come from the ROM's item data; items sell back for half. The standard shelf is Black/White's
+/// own (the lists in overlay 21: 2, 11, 14, 17, 18 and 19 items at 0, 1, 3, 5, 7 and 8 badges); the town specialty
+/// shelves are our own pick for now.
 /// </summary>
 public static class PokeMart
 {
     public const int MaxPerPurchase = 99;
 
-    /// <summary>Standard shelf: (badges needed, item).</summary>
+    /// <summary>Standard shelf, in the games' order: (badges needed, item).</summary>
     static readonly (int Badges, int Item)[] Standard =
     [
-        (0, ItemEffect.PokeBall), (0, ItemEffect.Potion), (0, ItemEffect.Antidote), (0, ItemEffect.ParlyzHeal),
-        (1, ItemEffect.GreatBall), (1, ItemEffect.SuperPotion), (1, ItemEffect.Awakening), (1, ItemEffect.BurnHeal), (1, ItemEffect.IceHeal),
-        (3, ItemEffect.ReviveItem), (3, ItemEffect.FullHeal),
-        (5, ItemEffect.UltraBall), (5, ItemEffect.HyperPotion),
-        (7, ItemEffect.MaxPotion),
-        (8, ItemEffect.FullRestore),
+        (0, ItemEffect.PokeBall), (1, ItemEffect.GreatBall), (5, ItemEffect.UltraBall),
+        (0, ItemEffect.Potion), (1, ItemEffect.SuperPotion), (3, ItemEffect.HyperPotion), (7, ItemEffect.MaxPotion), (8, ItemEffect.FullRestore),
+        (3, ItemEffect.ReviveItem),
+        (1, ItemEffect.Antidote), (1, ItemEffect.ParlyzHeal), (1, ItemEffect.Awakening), (1, ItemEffect.BurnHeal), (1, ItemEffect.IceHeal),
+        (5, ItemEffect.FullHeal),
+        (1, ItemEffect.EscapeRope), (1, ItemEffect.Repel), (3, ItemEffect.SuperRepel), (5, ItemEffect.MaxRepel),
     ];
 
     /// <summary>Town specialty shelves, by location name.</summary>

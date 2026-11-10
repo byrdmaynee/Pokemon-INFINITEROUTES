@@ -472,6 +472,8 @@ public partial class OverworldScreen : Control
             if (_cellsByPos.TryGetValue(CellOf(_tile), out var cell) && cell.Zone >= 0)
                 _zone = cell.Zone;
             UpdateHud();
+            if (_battles && OfflineSession.State.RepelStep())
+                ShowMessage("The Repel's effect wore off...");
             if (SpottedBy() is { } trainer)
                 Challenge(trainer);
             else if (RollEncounter() is { } wild)
@@ -577,7 +579,40 @@ public partial class OverworldScreen : Control
         if (set.GrassRate <= 0 || rng.Next(100) >= set.GrassRate
             || Core.Data.EncounterSet.Pick(set.Grass, Core.Data.EncounterSet.GrassWeights, rng) is not { } slot)
             return null;
-        return Core.Battle.Pokemon.Create(OfflineSession.Data, slot.Species, rng.Next(slot.MinLevel, slot.MaxLevel + 1), rng);
+        var level = rng.Next(slot.MinLevel, slot.MaxLevel + 1);
+        // A Repel keeps away wild Pokémon below the lead's level.
+        if (OfflineSession.State.RepelSteps > 0 && level < OfflineSession.Lead.Level)
+            return null;
+        return Core.Battle.Pokemon.Create(OfflineSession.Data, slot.Species, level, rng);
+    }
+
+    /// <summary>Escape Rope: back to where the player last left the overworld. Only works off the overworld.</summary>
+    async void UseEscapeRope()
+    {
+        var outside = OfflineSession.State.LastOutdoor;
+        if (_moving || outside is null || _map.Key == _assets.LoadOverworld()?.Key || !_zones.TryGetValue(outside.Zone, out var zone)
+            || _assets.LoadMap(zone.Map) is not { } map || !OfflineSession.Bag.Take(Core.Battle.ItemEffect.EscapeRope))
+        {
+            _menu?.Notice("You can't use that here.");
+            return;
+        }
+        if (_menu is not null)
+            ToggleMenu();
+        _moving = true;
+        var fadeOut = CreateTween();
+        fadeOut.TweenProperty(_fade, "modulate", Colors.White, FadeSeconds);
+        await ToSignal(fadeOut, Tween.SignalName.Finished);
+        if (!IsInstanceValid(this))
+            return;
+        _zone = outside.Zone;
+        EnterMap(map);
+        _tile = new Vector2I(outside.X, outside.Y);
+        StreamChunks();
+        UpdateHud();
+        Arrive(_tile, Facing.Down, autoStep: false);
+        CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, FadeSeconds).SetDelay(0.05);
+        ShowMessage("You used the Escape Rope and climbed back outside.");
+        SaveGame();
     }
 
     /// <summary>Starts a wild battle against <paramref name="wild"/> with the party's lead. Public so smoke tests can force one.</summary>
@@ -694,6 +729,9 @@ public partial class OverworldScreen : Control
             return;
 
         var dest = zone.Warps[warp.TargetWarp];
+        // Leaving the overworld: remember the way out for an Escape Rope.
+        if (_map.Key == _assets.LoadOverworld()?.Key && map.Key != _map.Key)
+            OfflineSession.State.LastOutdoor = new Core.Player.PlayerLocation(_zone, _tile.X, _tile.Y, (int)Facing.Down);
         _zone = zone.Id;
         EnterMap(map);
         // Mats are several tiles wide; arrive in the middle.
@@ -873,6 +911,7 @@ public partial class OverworldScreen : Control
         };
         _menu.StartedOver += GoHome;
         _menu.SlotChanged += PlaceFromSave;
+        _menu.UsedEscapeRope += UseEscapeRope;
         AddChild(_menu);
         MoveChild(_fade, -1);
     }
