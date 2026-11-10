@@ -129,6 +129,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       Trainer's eye…") before the battle; in battle he stands on the far platform, steps aside as his Pokémon comes
       out, and comes back after his last one faints to say "What?! You are too strong!"; talk to him afterwards
       for his after-battle line.
+- [ ] Battle scenery from the game: in tall grass a field (green in spring, orange in autumn, white in winter),
+      on paths and in towns a road with trees, in caves a dark cave, indoors a plain room, against a gym leader
+      the gym arena; the platforms sit under both Pokémon. F4 changes the season for the next battle.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -230,8 +233,7 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
   trainers fight as single battles.
 - In battle: no move animations; abilities that need double battles or the field (Pickup, Plus…) do nothing
   yet; routes with weather (Route 4's sandstorm) don't bring it into battle yet; a few rare move effects
-  (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing. The battle
-  background is a placeholder.
+  (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
   town specialties (our own pick; the standard shelf is the games' list). The PC can't move
   Pokémon between boxes yet, and other furniture (signs, bookshelves, TVs) does nothing yet.

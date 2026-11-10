@@ -62,6 +62,10 @@ public static class Gen5Layout
     /// <summary>Indoor areas' furniture packs and their textures, laid out like the outdoor ones.</summary>
     public const string IndoorBuildingPacks = "a/2/3/0";
     public const string IndoorBuildingTextures = "a/1/7/7";
+    /// <summary>
+    /// Battle scenery: BMD0 models named batt_stage* (the platforms, files 0–33) and batt_bg* (the backdrops, with BCA0
+    /// animations, 34–83; "a"–"d" variants are the four seasons), then 2D battle UI graphics.
+    /// </summary>
     public const string BattleStages = "a/0/1/1";
     /// <summary>Overworld character models (BMD0) and textures (BTX0).</summary>
     public const string OverworldSprites = "a/0/4/9";
@@ -82,6 +86,8 @@ public static class Gen5Layout
         public const int Events = 0x16;
         public const int Parent = 0x18;
         public const int LocationName = 0x1A;
+        /// <summary>u8: the battle scenery set (backdrop and platforms) wild battles here use.</summary>
+        public const int BattleScenery = 0x01;
     }
 
     /// <summary>Message file indices inside <see cref="SystemText"/>.</summary>

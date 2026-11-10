@@ -56,7 +56,7 @@ public sealed record FurnitureInfo(int X, int Y, int Script);
 /// wild encounter table (<c>data/encounters.json</c> id), or -1.
 /// </summary>
 public sealed record ZoneInfo(int Id, string Map, string Location, int Parent, IReadOnlyList<WarpInfo> Warps, IReadOnlyList<NpcInfo> Npcs,
-    int Encounters = -1, IReadOnlyList<FurnitureInfo>? Furniture = null);
+    int Encounters = -1, IReadOnlyList<FurnitureInfo>? Furniture = null, int BattleScenery = 0);
 
 public sealed record WorldData(IReadOnlyList<WorldIndex> Maps, IReadOnlyList<ZoneInfo> Zones);
 
@@ -118,7 +118,7 @@ public static class Gen5WorldExtractor
             var file = eventsFile < events.Count ? events.Read(eventsFile) : [];
             var encounters = ctx.ZoneField(z, Gen5Layout.Zone.Encounters);
             zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file), ReadNpcs(file),
-                encounters == 0xFFFF ? -1 : encounters, ReadFurniture(file)));
+                encounters == 0xFFFF ? -1 : encounters, ReadFurniture(file), ctx.Zones[z * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.BattleScenery]));
         }
 
         foreach (var map in maps)
@@ -168,6 +168,46 @@ public static class Gen5WorldExtractor
         catch (InvalidDataException)
         {
             return [];
+        }
+    }
+
+    /// <summary>
+    /// Writes every battle scenery model (<see cref="Gen5Layout.BattleStages"/>) as <c>{name}.gltf</c> in
+    /// <paramref name="outDir"/> — backdrops (batt_bg*) and platforms (batt_stage*) — with their own textures.
+    /// </summary>
+    public static void ExportBattleScenery(NitroFs fs, string outDir)
+    {
+        var narc = Narc.Parse(fs.ReadFile(Gen5Layout.BattleStages));
+        var texDir = Directory.CreateDirectory(Path.Combine(outDir, "textures")).FullName;
+        for (var i = 0; i < narc.Count; i++)
+        {
+            var bytes = Lz.DecompressIfNeeded(narc.Read(i));
+            if (bytes.Length < 4 || !bytes.AsSpan(0, 4).SequenceEqual("BMD0"u8))
+                continue;
+            NitroModel model;
+            try
+            {
+                model = Nsbmd.Decode(bytes);
+            }
+            catch (InvalidDataException)
+            {
+                continue;
+            }
+            if (!model.Name.StartsWith("batt_", StringComparison.Ordinal) || model.Textures is not { } tex)
+                continue;
+            string? Uri(NitroMaterial m)
+            {
+                if (m.Texture is null || !tex.Textures.TryGetValue(m.Texture, out var t))
+                    return null;
+                var file = $"{m.Texture}__{m.Palette}.png";
+                var path = Path.Combine(texDir, file);
+                if (!File.Exists(path))
+                    Png.Save(tex.Decode(t, m.Palette), path);
+                return "textures/" + file;
+            }
+            (int, int) Size(NitroMaterial m) => m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) ? (t.Width, t.Height) : (1, 1);
+            bool Alpha(NitroMaterial m) => m.Texture is not null && tex.Textures.TryGetValue(m.Texture, out var t) && t.HasAlpha;
+            Gltf.Save(Gltf.Build(model, 1f / 16, Vector3.Zero, Uri, Size, Alpha), Path.Combine(outDir, model.Name + ".gltf"));
         }
     }
 

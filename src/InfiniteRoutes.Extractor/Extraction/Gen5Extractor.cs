@@ -151,6 +151,8 @@ public static class Gen5Extractor
 
             var world = Gen5WorldExtractor.Export(fs, tables["locations"], Directory.CreateDirectory(Path.Combine(temp, "maps")).FullName,
                 progress, 0.4, 0.56, ct);
+            progress?.Report(new("Battle scenery", 0.96));
+            Gen5WorldExtractor.ExportBattleScenery(fs, Directory.CreateDirectory(Path.Combine(temp, "battle")).FullName);
             progress?.Report(new("NPC sprites", 0.97));
             Gen5WorldExtractor.ExportNpcSprites(fs, world.Zones, Path.Combine(characterDir, "npc"));
         }

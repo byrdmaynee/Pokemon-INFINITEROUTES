@@ -36,6 +36,10 @@ public sealed class GameAssets
     public IReadOnlyList<EncounterTable> LoadEncounters() => LoadData<List<EncounterTable>>("encounters") ?? [];
 
     /// <summary>Trainers indexed by id (<see cref="NpcInfo.TrainerId"/>).</summary>
+    /// <summary>A battle scenery model (backdrop "batt_bg01", platform "batt_stage01", …) as glTF, or null if missing.</summary>
+    public string? BattleSceneryPath(string name) =>
+        Path.Combine(Directory, "battle", name + ".gltf") is var path && File.Exists(path) ? path : null;
+
     /// <summary>The 80×80 battle sprite of trainer class <paramref name="trainerClass"/>.</summary>
     public string TrainerSpritePath(int trainerClass) => Path.Combine(Directory, "sprites", "trainers", $"{trainerClass:D3}.png");
 

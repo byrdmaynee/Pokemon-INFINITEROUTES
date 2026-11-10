@@ -652,6 +652,30 @@ public partial class OverworldScreen : Control
         OpenBattle(new Core.Battle.SingleBattle(OfflineSession.Data, OfflineSession.Party, OfflineSession.Bag, wild, OfflineSession.Rng));
     }
 
+    /// <summary>
+    /// The ROM's battle backdrop and platform models for a battle here. Picked by the kind of place (the zone header's
+    /// scenery group, indoors or out, tall grass) and the season, since the game's own zone-to-backdrop table isn't
+    /// decoded yet: seasonal fields in grass, seasonal roads elsewhere outdoors, the forest, sand and beach sets,
+    /// caves, plain rooms, and the gym arena for gym leaders.
+    /// </summary>
+    (string Backdrop, string Stage) BattleScenery(Core.Battle.SingleBattle battle)
+    {
+        var zone = _zones.GetValueOrDefault(_zone);
+        var outdoor = _map.Key == _assets.LoadOverworld()?.Key;
+        var season = "abcd"[(int)_season];
+        var set = battle.Trainer is { } trainer && Core.Player.Badges.EarnedBy(trainer) is not null ? "19"
+            : !outdoor ? (zone?.Encounters >= 0 ? "05" : "14")
+            : zone?.BattleScenery switch
+            {
+                2 => "03",   // Pinwheel Forest
+                4 => "10",   // the desert routes
+                15 => "11",  // the beaches of Routes 17 and 18
+                _ => IsTallGrass(_tile) ? $"02{season}" : $"04{season}",
+            };
+        var stage = set.StartsWith("04", StringComparison.Ordinal) ? "04" : set;
+        return ($"batt_bg{set}", $"batt_stage{stage}");
+    }
+
     async void OpenBattle(Core.Battle.SingleBattle battle)
     {
         if (_battle is not null)
@@ -670,7 +694,7 @@ public partial class OverworldScreen : Control
         if (!IsInstanceValid(this))
             return;
 
-        _battle = new BattleScreen(battle, _assets);
+        _battle = new BattleScreen(battle, _assets, BattleScenery(battle));
         _battle.Finished += EndBattle;
         AddChild(_battle);
         MoveChild(_fade, -1);

@@ -59,17 +59,35 @@ public partial class BattleScreen : Control
     // Godot needs a parameterless constructor to recreate script instances.
     public BattleScreen() : this(null!, null!) { }
 
-    public BattleScreen(SingleBattle battle, GameAssets assets)
+    /// <summary>A battle shown over the ROM's <paramref name="scenery"/> (backdrop and platform model names).</summary>
+    public BattleScreen(SingleBattle battle, GameAssets assets, (string Backdrop, string Stage)? scenery = null)
     {
         _battle = battle;
         _assets = assets;
         _typeNames = assets?.LoadText("types") ?? [];
+        _scenery = scenery ?? ("batt_bg01", "batt_stage01");
+    }
+
+    readonly (string Backdrop, string Stage) _scenery;
+    BattleBackdrop _backdrop = null!;
+
+    /// <summary>The backdrop and platforms on screen; smoke tests swap them to check each one.</summary>
+    public string Scenery => $"{_backdrop.Backdrop} + {_backdrop.Stage}";
+
+    public void SetScenery(string backdrop, string stage)
+    {
+        _backdrop.Load(backdrop, stage);
+        QueueRedraw();
     }
 
     public override void _Ready()
     {
         SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         MouseFilter = MouseFilterEnum.Stop;
+
+        _backdrop = new BattleBackdrop(_assets, _scenery.Backdrop, _scenery.Stage);
+        AddChild(_backdrop);
+        _backdrop.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
         _foeSprite = Sprite(_assets.BattleSpritePath(_battle.Foe.Mon.Species.Id, _battle.Foe.Mon.Shiny ? "front-shiny" : "front"), 2.6f);
         _playerSprite = Sprite(_assets.BattleSpritePath(_battle.Player.Mon.Species.Id, _battle.Player.Mon.Shiny ? "back-shiny" : "back"), 3.2f);
@@ -157,6 +175,7 @@ public partial class BattleScreen : Control
         var w = Size.X;
         var h = Size.Y - 150;
         PlaceSprite(_foeSprite, new Vector2(w * 0.72f, h * 0.52f));
+        _backdrop.PlaceStages(new Vector2(w * 0.72f, h * 0.5f), w * 0.34f, new Vector2(w * 0.27f, h * 0.98f), w * 0.44f);
         if (_trainerSprite is not null)
             PlaceSprite(_trainerSprite, new Vector2(w * 0.72f, h * 0.52f));
         PlaceSprite(_playerSprite, new Vector2(w * 0.27f, h + 8));
@@ -173,6 +192,9 @@ public partial class BattleScreen : Control
 
     public override void _Draw()
     {
+        // The ROM's scenery replaces this plain field when it's there.
+        if (_backdrop.Loaded)
+            return;
         var w = Size.X;
         var h = Size.Y - 150;
         // Sky and field, then the two platforms.

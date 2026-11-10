@@ -20,6 +20,12 @@ public static class DebugCapture
             World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
             Continue(main, dir);
         }
+        else if (args.FirstOrDefault(a => a.StartsWith("--capture-battle=", StringComparison.Ordinal)) is { } battle)
+        {
+            var dir = battle["--capture-battle=".Length..];
+            World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
+            Scenery(main, dir);
+        }
         else if (args.FirstOrDefault(a => a.StartsWith("--capture=", StringComparison.Ordinal)) is { } arg)
         {
             var dir = arg["--capture=".Length..];
@@ -29,6 +35,39 @@ public static class DebugCapture
             World.OfflineSession.SaveDirOverride = save;
             Run(main, dir);
         }
+    }
+
+    /// <summary>Starts a wild battle and shows it over every backdrop the ROM has (with its matching platform).</summary>
+    static async void Scenery(Main main, string dir)
+    {
+        var tree = main.GetTree();
+        async Task Wait(double seconds) => await main.ToSignal(tree.CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
+        main.Push(() => new World.OverworldScreen());
+        await Wait(1.5);
+        if (main.CurrentScreen is World.OverworldScreen world)
+        {
+            world.RandomEncounters = false;
+            world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 504, 3, new Random(7)));
+            await Wait(4.5);
+            var folder = System.IO.Path.GetDirectoryName(ClientServices.UnovaAssets!.BattleSceneryPath("batt_bg01")) ?? "";
+            foreach (var path in Directory.GetFiles(folder, "batt_bg*.gltf").Order())
+            {
+                var bg = System.IO.Path.GetFileNameWithoutExtension(path);
+                // batt_bg04b → batt_stage04b, else the plain number.
+                var stage = $"batt_stage{bg["batt_bg".Length..]}";
+                if (ClientServices.UnovaAssets.BattleSceneryPath(stage) is null)
+                    stage = $"batt_stage{bg["batt_bg".Length..][..2]}";
+                world.CurrentBattle?.SetScenery(bg, stage);
+                await Wait(0.4);
+                main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, $"{bg}.png"));
+                GD.Print($"[capture] scenery {world.CurrentBattle?.Scenery}");
+            }
+        }
+        GD.Print("[capture] done");
+        tree.Quit();
     }
 
     /// <summary>Opens the world from the save a previous capture left and reports what came back.</summary>
