@@ -182,6 +182,7 @@ public static class OfflineSession
                 break;
             case BattleOutcome.Won:
                 Progress.WildWins++;
+                Money += battle.PrizeMoney;   // Pay Day coins
                 break;
             case BattleOutcome.Caught:
                 Progress.Caught++;

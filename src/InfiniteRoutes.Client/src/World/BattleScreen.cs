@@ -216,6 +216,12 @@ public partial class BattleScreen : Control
 
     void ShowCommands()
     {
+        // Charging, recharging or rampaging: the move is already decided.
+        if (_battle.PlayerLocked)
+        {
+            Play(_battle.Fight(0));
+            return;
+        }
         _moves.Visible = false;
         _commands.Visible = true;
         _message.Text = $"What will {_battle.Player.Mon.Name} do?";

@@ -28,7 +28,14 @@ public sealed partial class SingleBattle
     static double Effectiveness(Battler user, Battler target, int type)
     {
         var types = target.Types;
-        if (Has(user, Abilities.Scrappy) && type is TypeChart.Normal or TypeChart.Fighting && types.Contains(TypeChart.Ghost))
+        if (target.IdentifiedBy == Moves.MiracleEye && type == TypeChart.Psychic && types.Contains(TypeChart.Dark))
+        {
+            types = types.Where(t => t != TypeChart.Dark).ToList();
+            if (types.Count == 0)
+                return 1;
+        }
+        if ((Has(user, Abilities.Scrappy) || target.IdentifiedBy is not (0 or Moves.MiracleEye))
+            && type is TypeChart.Normal or TypeChart.Fighting && types.Contains(TypeChart.Ghost))
         {
             types = types.Where(t => t != TypeChart.Ghost).ToList();
             if (types.Count == 0)
@@ -56,6 +63,8 @@ public sealed partial class SingleBattle
     string? Trapped(Battler b)
     {
         var foe = Opponent(b);
+        if (b.TrapTurns > 0 || b.CantEscape || b.Ingrained)
+            return $"{Label(b)} can't escape!";
         if (foe.Mon.Fainted)
             return null;
         var trapped = foe.Ability switch
@@ -160,7 +169,7 @@ public sealed partial class SingleBattle
             events.Add(new MessageEvent($"It doesn't affect {name}..."));
             return true;
         }
-        if (type == TypeChart.Ground && damaging && ItemOf(target) == HeldItems.AirBalloon)
+        if (type == TypeChart.Ground && damaging && (ItemOf(target) == HeldItems.AirBalloon || target.MagnetRise > 0))
         {
             events.Add(new MessageEvent($"It doesn't affect {name}..."));
             return true;
@@ -330,6 +339,12 @@ public sealed partial class SingleBattle
                 events.Add(new MessageEvent(victim.Mon.Status == ailment ? $"{name} is already {Describe(ailment)}!" : "But it failed!"));
             return false;
         }
+        if (source is not null && source != victim && SideOf(victim).Safeguard > 0)
+        {
+            if (loud)
+                events.Add(new MessageEvent($"{name} is protected by Safeguard!"));
+            return false;
+        }
         if (BlocksStatus(victim, ailment, source))
         {
             if (loud)
@@ -377,6 +392,11 @@ public sealed partial class SingleBattle
         var name = Label(victim);
         var statName = StatName(stat);
         var byFoe = source is not null && source != victim;
+        if (stages < 0 && byFoe && SideOf(victim).Mist > 0)
+        {
+            events.Add(new MessageEvent($"{name} is protected by the mist!"));
+            return 0;
+        }
         if (stages < 0 && byFoe)
         {
             var blocked = Defends(victim, source, Abilities.ClearBody) || Defends(victim, source, Abilities.WhiteSmoke)

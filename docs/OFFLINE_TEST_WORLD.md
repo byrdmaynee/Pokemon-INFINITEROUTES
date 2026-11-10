@@ -107,6 +107,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       "Holding: Oran Berry" with a Take button. In battle it eats the berry once its HP drops to half
       ("…restored its health using its Oran Berry!"), and the berry is gone afterwards. Some wild Pokémon hold
       items too; catch one and it shows in the Party tab.
+- [ ] Move effects: Fly/Dig go out of reach for a turn, then strike; Hyper Beam makes its user rest a turn
+      ("…must recharge!"); Protect blocks a hit; Substitute takes hits; Toxic's damage grows each turn; Leech
+      Seed drains; Wrap stops you running; Reflect halves physical hits; Seismic Toss always does the user's
+      level in damage; U-turn hits, then asks who comes in, and the foe attacks the newcomer.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -208,8 +212,8 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
   trainers fight as single battles.
 - In battle: no nicknames or move animations; abilities that need double battles or the field (Pickup, Plus…)
   do nothing yet; Thief, Knock Off and Trick don't move items yet; routes with weather (Route 4's sandstorm) don't bring it into
-  battle yet; moves with
-  special effects beyond damage, status and stat changes just deal damage. The battle background is a placeholder.
+  battle yet; a few rare
+  move effects (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing. The battle background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
   town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't sort, move
   Pokémon between boxes or rename boxes, and other furniture (signs, bookshelves, TVs) does nothing yet.
