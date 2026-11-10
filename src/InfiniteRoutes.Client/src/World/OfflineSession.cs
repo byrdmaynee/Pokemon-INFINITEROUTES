@@ -45,8 +45,46 @@ public static class OfflineSession
     /// <summary>Saves go here instead of the user's save folder (smoke tests); set before the world opens.</summary>
     public static string? SaveDirOverride { get; set; }
 
-    /// <summary>The save file for the loaded game: one per ROM (game code and SHA-1).</summary>
+    /// <summary>The save file for the loaded game: one per ROM (game code and SHA-1) and save slot.</summary>
     public static string SavePath { get; private set; } = "";
+
+    public const int SlotCount = 3;
+
+    /// <summary>The save slot in play (1–3); the last one used is picked again at launch.</summary>
+    public static int Slot { get; private set; } = 1;
+
+    /// <summary>Save files share this path: slot 1 is "{base}.json" (as before slots existed), slot n "{base}-n.json".</summary>
+    static string _saveBase = "";
+
+    public static string SlotPath(int slot) => slot <= 1 ? _saveBase + ".json" : $"{_saveBase}-{slot}.json";
+
+    static string SlotMarker => _saveBase + ".slot";
+
+    /// <summary>What's saved in <paramref name="slot"/>, or null for an empty slot.</summary>
+    public static SaveGame? PeekSlot(int slot) => slot == Slot && LastSaved is null ? null : SaveGame.Read(SlotPath(slot));
+
+    /// <summary>Saves the current game, then continues the one in <paramref name="slot"/> (a new game when it's empty).</summary>
+    public static void SwitchSlot(int slot)
+    {
+        if (slot < 1 || slot > SlotCount || slot == Slot || _assets is null)
+            return;
+        Save();
+        Slot = slot;
+        SavePath = SlotPath(slot);
+        try
+        {
+            File.WriteAllText(SlotMarker, slot.ToString());
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Godot.GD.PushWarning($"Couldn't remember the save slot: {e.Message}");
+        }
+        State = new GameState(new QuestLog([]));
+        LastSaved = null;
+        Continued = Load();
+        if (Party.Count == 0)
+            NewGame();
+    }
     public static DateTime? LastSaved { get; private set; }
     /// <summary>Whether this launch continued a save (false for a new game).</summary>
     public static bool Continued { get; private set; }
@@ -68,7 +106,9 @@ public static class OfflineSession
             Encounters = assets.LoadEncounters();
             Trainers = assets.LoadTrainers();
             _assets = assets;
-            SavePath = Path.Combine(SaveDirOverride ?? Path.Combine(AppPaths.SaveDir, "offline"), $"{assets.Stamp.GameCode}-{assets.Stamp.Sha1[..Math.Min(12, assets.Stamp.Sha1.Length)]}.json");
+            _saveBase = Path.Combine(SaveDirOverride ?? Path.Combine(AppPaths.SaveDir, "offline"), $"{assets.Stamp.GameCode}-{assets.Stamp.Sha1[..Math.Min(12, assets.Stamp.Sha1.Length)]}");
+            Slot = File.Exists(SlotMarker) && int.TryParse(File.ReadAllText(SlotMarker).Trim(), out var last) && last is >= 1 and <= SlotCount ? last : 1;
+            SavePath = SlotPath(Slot);
             State = new GameState(new QuestLog([]));
             Continued = Load();
         }

@@ -84,7 +84,23 @@ public sealed class Pokemon
 
     public int MaxHp => StatValue(Stat.Hp);
     public bool Fainted => Hp <= 0;
-    public string Name => Species.Name;
+    /// <summary>Its nickname, or the species name.</summary>
+    public string Name => Nickname ?? Species.Name;
+
+    /// <summary>The nickname the player gave it; null for none.</summary>
+    public string? Nickname { get; private set; }
+
+    /// <summary>The longest nickname, as in Black/White.</summary>
+    public const int MaxNicknameLength = 10;
+
+    /// <summary>Gives it a nickname (trimmed, at most <see cref="MaxNicknameLength"/> characters); blank or the species name clears it.</summary>
+    public void Rename(string? nickname)
+    {
+        var name = (nickname ?? "").Trim();
+        if (name.Length > MaxNicknameLength)
+            name = name[..MaxNicknameLength];
+        Nickname = name.Length == 0 || name == Species.Name ? null : name;
+    }
     public IReadOnlyList<int> Types => Species.TypeIds ?? [0];
 
     Pokemon(SpeciesInfo species, int level, Nature nature, Gender gender, bool shiny, int[] ivs)
@@ -132,7 +148,7 @@ public sealed class Pokemon
     /// <summary>Everything needed to rebuild this Pokémon later (saves, mail, market listings).</summary>
     public PokemonSave ToSave() =>
         new(Species.Id, Level, Exp, Nature, Gender, Shiny, [.. Ivs], [.. Evs], Hp, Status, SleepTurns,
-            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot, HeldItem);
+            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot, HeldItem, Nickname);
 
     /// <summary>Rebuilds a saved Pokémon; null when its species isn't in <paramref name="data"/> (a different ROM).</summary>
     public static Pokemon? FromSave(BattleData data, PokemonSave save)
@@ -149,6 +165,7 @@ public sealed class Pokemon
         };
         mon.SetAbilitySlot(save.AbilitySlot);
         mon.HeldItem = Math.Max(0, save.HeldItem);
+        mon.Rename(save.Nickname);
         save.Evs.CopyTo(mon.Evs, 0);
         foreach (var m in save.Moves.Take(4))
             if (data.Move(m.Move) is { } move)
@@ -242,7 +259,7 @@ public sealed class Pokemon
 public sealed record MoveSave(int Move, int Pp);
 
 public sealed record PokemonSave(int Species, int Level, int Exp, Nature Nature, Gender Gender, bool Shiny, int[] Ivs, int[] Evs,
-    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0, int HeldItem = 0);
+    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0, int HeldItem = 0, string? Nickname = null);
 
 /// <summary>Total experience needed to reach a level, for the six growth rates (personal byte 0x15).</summary>
 public static class ExpCurve

@@ -295,8 +295,17 @@ public static class DebugCapture
                     await Wait(throwNo == 0 ? 2.4 : 0.5);
                     if (throwNo == 0)
                         Save("17b-throw");
-                    for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 20; waited += 0.1)
+                    for (var waited = 0.0; world.CurrentBattle is { Busy: true, Naming: false } && waited < 20; waited += 0.1)
                         await Wait(0.1);
+                    if (world.CurrentBattle is { Naming: true } naming)
+                    {
+                        // The nickname prompt after the catch.
+                        await Wait(0.4);
+                        Save("17c-nickname");
+                        naming.SubmitNickname("Pup");
+                        for (var waited = 0.0; world.CurrentBattle is { Busy: true } && waited < 10; waited += 0.1)
+                            await Wait(0.1);
+                    }
                     await Wait(0.2);
                     if (catchBattle is { NeedsSwitch: true })
                         break;

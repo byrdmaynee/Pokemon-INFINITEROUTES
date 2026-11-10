@@ -639,6 +639,25 @@ public partial class OverworldScreen : Control
         CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, 0.3).SetDelay(0.05);
     }
 
+    /// <summary>Puts the player where the save in play left off (after switching save slots), or at home for a new game.</summary>
+    void PlaceFromSave()
+    {
+        if (OfflineSession.State.Location is not { } saved || !_zones.TryGetValue(saved.Zone, out var zone) || _assets.LoadMap(zone.Map) is not { } map)
+        {
+            GoHome();
+            return;
+        }
+        _zone = saved.Zone;
+        EnterMap(map);
+        _tile = new Vector2I(saved.X, saved.Y);
+        var facing = (Facing)Math.Clamp(saved.Facing, 0, 3);
+        _dir = FacingToDir(facing);
+        StreamChunks();
+        UpdateHud();
+        UpdateQuestHud();
+        Arrive(_tile, facing, autoStep: false);
+    }
+
     /// <summary>Puts the player back at the start in Nuvema Town (blacking out, starting over).</summary>
     void GoHome()
     {
@@ -853,6 +872,7 @@ public partial class OverworldScreen : Control
             CheckQuests();
         };
         _menu.StartedOver += GoHome;
+        _menu.SlotChanged += PlaceFromSave;
         AddChild(_menu);
         MoveChild(_fade, -1);
     }

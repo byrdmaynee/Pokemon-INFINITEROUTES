@@ -170,4 +170,34 @@ public class SaveGameTests
                 Directory.Delete(dir, recursive: true);
         }
     }
+
+    [Fact]
+    public void Nicknames_and_box_names_are_saved_and_boxes_sort()
+    {
+        var data = Data();
+        var rng = new Random(9);
+        var state = new GameState(new QuestLog(StarterQuests.Unova(Trainers)));
+        var lead = Pokemon.Create(data, 2, 12, rng);
+        lead.Rename("  Leafy McLeafface  ");
+        Assert.Equal("Leafy McLe", lead.Name);   // trimmed to ten characters
+        state.Party.Add(lead);
+        state.Box.Add(Pokemon.Create(data, 4, 5, rng));
+        state.Box.Add(Pokemon.Create(data, 2, 30, rng));
+        state.Box.Add(Pokemon.Create(data, 3, 9, rng));
+        state.RenameBox(0, "Grass types");
+        Assert.Equal("Grass ty", state.BoxNames[0]);
+
+        state.SortBox(0, BoxSort.Number);
+        Assert.Equal([2, 3, 4], state.Box.Select(m => m.Species.Id));
+        state.SortBox(0, BoxSort.Level);
+        Assert.Equal([30, 9, 5], state.Box.Select(m => m.Level));
+
+        var loaded = SaveGame.FromJson(SaveGame.From(state, "IRAO", Now).ToJson())!.Restore(data, new QuestLog(StarterQuests.Unova(Trainers)));
+        Assert.Equal("Leafy McLe", loaded.Party[0].Name);
+        Assert.Equal("Grass ty", loaded.BoxNames[0]);
+        Assert.Equal("Box 2", loaded.BoxNames[1]);
+
+        lead.Rename("");
+        Assert.Equal("Bulba", lead.Name);
+    }
 }

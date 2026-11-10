@@ -26,6 +26,10 @@ public partial class GameMenu : Control
     [Signal]
     public delegate void StartedOverEventHandler();
 
+    /// <summary>The player switched save slots; the world moves to where that save left off.</summary>
+    [Signal]
+    public delegate void SlotChangedEventHandler();
+
     static readonly Dictionary<string, Texture2D?> Icons = new();
 
     readonly GameAssets _assets;
@@ -48,6 +52,9 @@ public partial class GameMenu : Control
     MarketQuery _query = new();
     (ListingKind Kind, int Item, Pokemon? Mon)? _selling;
     bool _confirmStartOver;
+    /// <summary>The party Pokémon being nicknamed, or −1; whether the PC box name is being edited.</summary>
+    int _renaming = -1;
+    bool _renamingBox;
     int _box, _pcPick = -1;
     bool _confirmRelease;
 
@@ -123,6 +130,8 @@ public partial class GameMenu : Control
         {
             _useItem = 0;
             _giveItem = 0;
+            _renaming = -1;
+            _renamingBox = false;
             _confirmStartOver = false;
             _pcPick = -1;
             _confirmRelease = false;
@@ -190,11 +199,34 @@ public partial class GameMenu : Control
             var moves = string.Join(", ", mon.Moves.Select(m => $"{m.Move.Name} {m.Pp}/{m.MaxPp}"));
             var stats = $"Atk {mon.StatValue(Stat.Attack)} · Def {mon.StatValue(Stat.Defense)} · SpA {mon.StatValue(Stat.SpAttack)} · SpD {mon.StatValue(Stat.SpDefense)} · Spe {mon.StatValue(Stat.Speed)} · {mon.Nature} · {mon.AbilityName}";
             var held = mon.HeldItem != 0 ? $"   Holding: {OfflineSession.Data.ItemName(mon.HeldItem)}" : "";
+            if (index == _renaming)
+            {
+                var field = new LineEdit { Text = mon.Name, MaxLength = Pokemon.MaxNicknameLength, CustomMinimumSize = new Vector2(220, 0), SelectAllOnFocus = true };
+                void Submit(string text)
+                {
+                    var before = mon.Name;
+                    mon.Rename(text);
+                    _renaming = -1;
+                    Rebuild(mon.Name == before ? null : $"{before} is now called {mon.Name}.");
+                }
+                field.TextSubmitted += Submit;
+                list.AddChild(U.HBox(8, new TextureRect { Texture = Icon(mon), CustomMinimumSize = new Vector2(48, 48), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize, StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered },
+                    U.Text($"Nickname for {mon.Species.Name}:", 16), field, U.Button("OK", () => Submit(field.Text), 15),
+                    U.Button("Clear", () => Submit(""), 15)));
+                field.CallDeferred(Control.MethodName.GrabFocus);
+                continue;
+            }
             var button = Row($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}  {status}{held}\n{moves}\n{stats}", () => PickPokemon(index), Icon(mon));
             button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             var row = U.HBox(6, button);
             if (mon.HeldItem != 0 && _useItem == 0 && _giveItem == 0)
                 row.AddChild(U.Button("Take", () => TakeItem(index), 15));
+            if (_useItem == 0 && _giveItem == 0)
+                row.AddChild(U.Button("Name", () =>
+                {
+                    _renaming = index;
+                    Rebuild(null);
+                }, 15));
             list.AddChild(row);
         }
         if (OfflineSession.Box.Count > 0)
@@ -256,6 +288,13 @@ public partial class GameMenu : Control
 
     // ── PC ────────────────────────────────────────────────────────────────────────────────────────────────────
 
+    void SortBox(BoxSort by)
+    {
+        OfflineSession.State.SortBox(_box, by);
+        _pcPick = -1;
+        Rebuild($"Sorted {OfflineSession.State.BoxNames[_box]} by {(by == BoxSort.Number ? "Pokédex number" : by == BoxSort.Level ? "level" : "name")}.");
+    }
+
     string BuildPc()
     {
         var state = OfflineSession.State;
@@ -278,12 +317,42 @@ public partial class GameMenu : Control
         box.SizeFlagsHorizontal = SizeFlags.ExpandFill;
         columns.AddChild(box);
         var start = _box * GameState.BoxSize;
+        Control title;
+        if (_renamingBox)
+        {
+            var field = new LineEdit { Text = state.BoxNames[_box], MaxLength = GameState.MaxBoxNameLength, CustomMinimumSize = new Vector2(160, 0), SelectAllOnFocus = true };
+            void Submit(string text)
+            {
+                state.RenameBox(_box, text);
+                _renamingBox = false;
+                Rebuild(null);
+            }
+            field.TextSubmitted += Submit;
+            title = U.HBox(6, field, U.Button("OK", () => Submit(field.Text), 15));
+            field.CallDeferred(Control.MethodName.GrabFocus);
+        }
+        else
+        {
+            var name = U.Button($"{state.BoxNames[_box]}   {Math.Clamp(state.Box.Count - start, 0, GameState.BoxSize)} / {GameState.BoxSize}", () =>
+            {
+                _renamingBox = true;
+                Rebuild(null);
+            }, 18);
+            name.TooltipText = "Rename this box";
+            name.Flat = true;
+            name.AddThemeColorOverride("font_color", U.Accent);
+            title = name;
+        }
         box.AddChild(U.HBox(10,
             U.Button("◀", () => TurnBox(-1)),
-            U.Text($"Box {_box + 1}   {Math.Clamp(state.Box.Count - start, 0, GameState.BoxSize)} / {GameState.BoxSize}", 19, U.Accent),
+            title,
             U.Button("▶", () => TurnBox(1)),
             U.Spacer(),
-            U.Text($"{state.Box.Count} stored in {GameState.BoxCount} boxes", 15, U.Muted)));
+            U.Text("Sort:", 15, U.Muted),
+            U.Button("No.", () => SortBox(BoxSort.Number), 14),
+            U.Button("Lv", () => SortBox(BoxSort.Level), 14),
+            U.Button("Name", () => SortBox(BoxSort.Name), 14),
+            U.Text($"{state.Box.Count} stored", 15, U.Muted)));
         var grid = new GridContainer { Columns = 6 };
         grid.AddThemeConstantOverride("h_separation", 6);
         grid.AddThemeConstantOverride("v_separation", 6);
@@ -947,7 +1016,40 @@ public partial class GameMenu : Control
         var actions = U.HBox(12, U.Text(saved, 15, U.Muted), U.Spacer(),
             U.Button("Save now", () => Rebuild(OfflineSession.Save() ? "Game saved." : "Couldn't save — see the log.")), startOver);
         _body.AddChild(actions);
+
+        // Save slots: three separate games on this ROM.
+        var slots = U.VBox(4, U.Text("Save slots", 17, U.Accent));
+        for (var slot = 1; slot <= OfflineSession.SlotCount; slot++)
+        {
+            var n = slot;
+            var current = slot == OfflineSession.Slot;
+            var summary = current ? CurrentSlotSummary() : OfflineSession.PeekSlot(slot) is { } other ? SlotSummary(other) : "Empty — a new game";
+            var play = U.Button(current ? "Playing" : "Play", () =>
+            {
+                OfflineSession.SwitchSlot(n);
+                EmitSignal(SignalName.SlotChanged);
+                Rebuild(OfflineSession.Continued ? $"Continuing slot {n}." : $"Slot {n}: a new game begins. Your starter is waiting at home.");
+            }, 15);
+            play.Disabled = current;
+            slots.AddChild(U.HBox(10, U.Text($"Slot {slot}", 16, current ? U.Accent : U.Muted), U.Text(summary, 15), U.Spacer(), play));
+        }
+        _body.AddChild(slots);
         return "Your trainer card. Online, other players see it when they inspect you (PvP rating, guild and showcase come later).";
+    }
+
+    static string CurrentSlotSummary()
+    {
+        var lead = OfflineSession.Party.FirstOrDefault();
+        var played = OfflineSession.PlayTime;
+        return $"{lead?.Name} Lv{lead?.Level} · {OfflineSession.Progress.Badges.Count} badges · {(int)played.TotalHours}:{played.Minutes:00} played";
+    }
+
+    static string SlotSummary(Core.Player.SaveGame save)
+    {
+        var lead = save.Party.FirstOrDefault() is { } first && OfflineSession.Data.HasSpecies(first.Species)
+            ? $"{first.Nickname ?? OfflineSession.Data.Species(first.Species).Name} Lv{first.Level}" : "—";
+        var played = save.Progress.PlayTime;
+        return $"{lead} · {save.Progress.Badges.Count} badges · {(int)played.TotalHours}:{played.Minutes:00} played · saved {save.Saved:g}";
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -1033,13 +1135,15 @@ public partial class GameMenu : Control
         if (!close)
             return;
         GetViewport().SetInputAsHandled();
-        if (cancel && (_useItem != 0 || _giveItem != 0 || _selling is not null || _mail is not null || _confirmStartOver || _pcPick >= 0))
+        if (cancel && (_useItem != 0 || _giveItem != 0 || _renaming >= 0 || _renamingBox || _selling is not null || _mail is not null || _confirmStartOver || _pcPick >= 0))
         {
             _confirmStartOver = false;
             _pcPick = -1;
             _confirmRelease = false;
             _useItem = 0;
             _giveItem = 0;
+            _renaming = -1;
+            _renamingBox = false;
             _selling = null;
             _mail = null;
             Rebuild(null);

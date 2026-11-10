@@ -43,6 +43,14 @@ public partial class BattleScreen : Control
     /// <summary>True while the player is choosing a move to forget for a new one. Public so smoke tests can answer.</summary>
     public bool Asking { get; private set; }
 
+    /// <summary>True while the player is choosing a nickname for a Pokémon they just caught.</summary>
+    public bool Naming { get; private set; }
+
+    TaskCompletionSource<string?>? _nickname;
+
+    /// <summary>Answers the nickname prompt (null: no nickname); for smoke tests.</summary>
+    public void SubmitNickname(string? name) => _nickname?.TrySetResult(name);
+
     /// <summary>The last ability banner shown ("Sandile's Intimidate"), for smoke tests.</summary>
     public string? LastAbility { get; private set; }
 
@@ -410,6 +418,12 @@ public partial class BattleScreen : Control
         }
         if (!IsInstanceValid(this))
             return;
+        if (_battle.Outcome == BattleOutcome.Caught)
+        {
+            await AskNickname(_battle.Foe.Mon);
+            if (!IsInstanceValid(this))
+                return;
+        }
         _busy = false;
         if (_battle.Over)
         {
@@ -448,6 +462,40 @@ public partial class BattleScreen : Control
         fade.TweenInterval(1.2);
         fade.TweenProperty(banner, "modulate", Colors.Transparent, 0.3);
         fade.TweenCallback(Callable.From(banner.QueueFree));
+    }
+
+    /// <summary>"Give a nickname to the caught X?": a name field, Enter or OK to keep it, Esc or Skip for none.</summary>
+    async Task AskNickname(Pokemon mon)
+    {
+        _nickname = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _message.Text = $"Give a nickname to the caught {mon.Species.Name}?";
+        var field = new LineEdit { PlaceholderText = mon.Species.Name, MaxLength = Pokemon.MaxNicknameLength, CustomMinimumSize = new Vector2(240, 0) };
+        field.TextSubmitted += text => _nickname?.TrySetResult(text);
+        field.GuiInput += e =>
+        {
+            if (e.IsActionPressed("ui_cancel"))
+                _nickname?.TrySetResult(null);
+        };
+        var panel = new PanelContainer();
+        panel.AddThemeStyleboxOverride("panel", Box(new Color(0.12f, 0.16f, 0.22f, 0.97f), new Color(0.9f, 0.55f, 0.25f), 3));
+        panel.AddChild(Ui.Ui.VBox(10, Ui.Ui.Text($"Nickname for {mon.Species.Name}", 20, Ui.Ui.Accent), field,
+            Ui.Ui.HBox(8, Ui.Ui.Button("OK", () => _nickname?.TrySetResult(field.Text)), Ui.Ui.Button("Skip", () => _nickname?.TrySetResult(null)))));
+        AddChild(panel);
+        panel.Position = new Vector2(Size.X / 2 - 160, Size.Y - 150 - 170);
+        field.GrabFocus();
+        Naming = true;
+        var name = await _nickname.Task;
+        Naming = false;
+        _nickname = null;
+        if (!IsInstanceValid(this))
+            return;
+        panel.QueueFree();
+        mon.Rename(name);
+        if (mon.Nickname is not null)
+        {
+            _message.Text = $"{mon.Species.Name} is now called {mon.Nickname}!";
+            await Wait(MessageSeconds);
+        }
     }
 
     /// <summary>
@@ -612,8 +660,10 @@ public partial class BattleScreen : Control
     {
         if (e.IsActionPressed("ui_cancel"))
         {
-            // Esc never leaves the battle: it backs out of the move list or a list panel, otherwise does nothing.
-            if (_picker.Visible && _pickerCancel is not null)
+            // Esc never leaves the battle: it skips a nickname, backs out of the move list or a list panel, otherwise does nothing.
+            if (Naming)
+                SubmitNickname(null);
+            else if (_picker.Visible && _pickerCancel is not null)
                 ClosePicker();
             else if (_moves.Visible)
                 ShowCommands();

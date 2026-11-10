@@ -21,7 +21,7 @@ public sealed record ProgressSave(Dictionary<int, DateTime> Badges, List<int> De
 /// </summary>
 public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLocation? Location, List<PokemonSave> Party,
     List<PokemonSave> Box, List<ItemSave> Bag, ProgressSave Progress, QuestLogSave Quests, List<MailSave> Mail,
-    List<Friend> Friends, List<string> Ignored, List<ListingSave> Market)
+    List<Friend> Friends, List<string> Ignored, List<ListingSave> Market, List<string>? BoxNames = null)
 {
     public const int CurrentVersion = 1;
 
@@ -45,7 +45,8 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
                 m.Attachments.Select(a => new AttachmentSave(a.Money, a.Item, a.Count, a.Pokemon?.ToSave())).ToList())).ToList(),
             [.. state.Friends.Friends],
             [.. state.Friends.Ignored],
-            state.Market.Listings.Select(l => new ListingSave(l.Id, l.Seller, l.Kind, l.Item, l.Count, l.Pokemon?.ToSave(), l.Price, l.Listed, l.Expires)).ToList());
+            state.Market.Listings.Select(l => new ListingSave(l.Id, l.Seller, l.Kind, l.Item, l.Count, l.Pokemon?.ToSave(), l.Price, l.Listed, l.Expires)).ToList(),
+            [.. state.BoxNames]);
     }
 
     /// <summary>Rebuilds the game. <paramref name="quests"/> is a fresh log over the current quest catalog.</summary>
@@ -68,6 +69,8 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
         state.Box.AddRange(Box.Select(s => Pokemon.FromSave(data, s)).OfType<Pokemon>());
         foreach (var item in Bag)
             state.Bag.Add(item.Item, item.Count);
+        for (var i = 0; i < Math.Min(BoxNames?.Count ?? 0, GameState.BoxCount); i++)
+            state.RenameBox(i, BoxNames![i]);
         state.Progress.PartyCount = state.Party.Count;
         quests.Load(Quests);
         state.Mail.Load(Mail.Select(m => new MailMessage

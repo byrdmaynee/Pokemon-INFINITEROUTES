@@ -114,6 +114,11 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Trainer AI: trainers don't use moves that can't work (Thunder Wave on a Ground type, a Ground move on a
       flier, a status move on a Pokémon that already has one); smarter ones go for their strongest attack and a
       knockout, and gym leaders use their Potion once their Pokémon is low ("Cilan used a Potion!").
+- [ ] Nicknames: after catching a Pokémon a box asks for a nickname (type one and press Enter, or Esc/Skip);
+      the Party tab's Name button renames any party Pokémon (Clear goes back to the species name).
+- [ ] PC: click the box name to rename it; Sort: No. / Lv / Name reorders the box.
+- [ ] Save slots: the Trainer Card lists three slots. Play on an empty slot starts a new game; Play on the first
+      slot again brings back that game where you left it. Relaunching continues the last slot you played.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -213,14 +218,14 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - Animated objects (a/2/1/0) are still static.
 - Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
   trainers fight as single battles.
-- In battle: no nicknames or move animations; abilities that need double battles or the field (Pickup, Plus…)
-  do nothing yet; Thief, Knock Off and Trick don't move items yet; routes with weather (Route 4's sandstorm) don't bring it into
-  battle yet; a few rare
-  move effects (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing. The battle background is a placeholder.
+- In battle: no move animations; abilities that need double battles or the field (Pickup, Plus…) do nothing
+  yet; routes with weather (Route 4's sandstorm) don't bring it into battle yet; a few rare move effects
+  (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing. The battle
+  background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and
-  town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't sort, move
-  Pokémon between boxes or rename boxes, and other furniture (signs, bookshelves, TVs) does nothing yet.
-- No other players; one save slot per ROM. Friends and market sellers are sample data; mail between players,
+  town specialties (not yet the ROM's mart tables) and only stock balls and medicine. The PC can't move
+  Pokémon between boxes yet, and other furniture (signs, bookshelves, TVs) does nothing yet.
+- No other players. Friends and market sellers are sample data; mail between players,
   whispers, trades, price history and IV/EV market filters need the server. Badges are drawn shapes,
   not the ROM's badge art, and quests are a starter set rather than ROM story flags.
 - No sound or music.

@@ -18,6 +18,39 @@ public sealed class GameState(QuestLog quests)
     public List<Pokemon> Party { get; } = new();
     /// <summary>The PC: deposited Pokémon and catches that didn't fit in the party, in order (box n holds 30n…30n+29).</summary>
     public List<Pokemon> Box { get; } = new();
+
+    /// <summary>The PC boxes' names ("Box 1" … unless renamed).</summary>
+    public List<string> BoxNames { get; } = Enumerable.Range(1, BoxCount).Select(i => $"Box {i}").ToList();
+
+    public const int MaxBoxNameLength = 8;
+
+    /// <summary>Renames box <paramref name="box"/>; a blank name puts back "Box n".</summary>
+    public void RenameBox(int box, string name)
+    {
+        if (box < 0 || box >= BoxCount)
+            return;
+        name = name.Trim();
+        if (name.Length > MaxBoxNameLength)
+            name = name[..MaxBoxNameLength];
+        BoxNames[box] = name.Length == 0 ? $"Box {box + 1}" : name;
+    }
+
+    /// <summary>Sorts the Pokémon in box <paramref name="box"/> by Pokédex number, level (highest first) or name.</summary>
+    public void SortBox(int box, BoxSort by)
+    {
+        var start = box * BoxSize;
+        if (box < 0 || box >= BoxCount || start >= Box.Count)
+            return;
+        var count = Math.Min(BoxSize, Box.Count - start);
+        var sorted = (by switch
+        {
+            BoxSort.Level => Box.GetRange(start, count).OrderByDescending(m => m.Level).ThenBy(m => m.Species.Id),
+            BoxSort.Name => Box.GetRange(start, count).OrderBy(m => m.Name, StringComparer.CurrentCultureIgnoreCase),
+            _ => Box.GetRange(start, count).OrderBy(m => m.Species.Id).ThenByDescending(m => m.Level),
+        }).ToList();
+        for (var i = 0; i < count; i++)
+            Box[start + i] = sorted[i];
+    }
     public Bag Bag { get; } = new();
     public PlayerProgress Progress { get; init; } = new();
     public QuestLog Quests { get; } = quests;
@@ -71,3 +104,5 @@ public sealed class GameState(QuestLog quests)
         return (true, $"{mon.Name} was released. Bye-bye, {mon.Name}!");
     }
 }
+
+public enum BoxSort { Number, Level, Name }
