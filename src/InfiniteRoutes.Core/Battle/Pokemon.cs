@@ -65,6 +65,9 @@ public sealed class Pokemon
     /// <summary>Turns left asleep while <see cref="Status"/> is <see cref="Ailment.Sleep"/>.</summary>
     public int SleepTurns { get; set; }
 
+    /// <summary>The item it holds (see <see cref="HeldItems"/>); 0 for none.</summary>
+    public int HeldItem { get; set; }
+
     /// <summary>Which of the species' abilities this Pokémon has: 0 or 1, or 2 for its hidden ability.</summary>
     public int AbilitySlot { get; private set; }
 
@@ -117,13 +120,19 @@ public sealed class Pokemon
                 mon.Moves.Add(new MoveSlot(move));
         if (species.Abilities.Count > 1)
             mon.AbilitySlot = rng.Next(2);
+        // Wild held items: the common one half the time (always, when both slots name the same item), the rare one 5%.
+        if (species.WildItems is [var common, var rare, ..] && (common | rare) != 0)
+        {
+            var roll = rng.Next(100);
+            mon.HeldItem = common != 0 && common == rare ? common : roll < 50 ? common : roll < 55 ? rare : 0;
+        }
         return mon;
     }
 
     /// <summary>Everything needed to rebuild this Pokémon later (saves, mail, market listings).</summary>
     public PokemonSave ToSave() =>
         new(Species.Id, Level, Exp, Nature, Gender, Shiny, [.. Ivs], [.. Evs], Hp, Status, SleepTurns,
-            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot);
+            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot, HeldItem);
 
     /// <summary>Rebuilds a saved Pokémon; null when its species isn't in <paramref name="data"/> (a different ROM).</summary>
     public static Pokemon? FromSave(BattleData data, PokemonSave save)
@@ -139,6 +148,7 @@ public sealed class Pokemon
             SleepTurns = save.SleepTurns,
         };
         mon.SetAbilitySlot(save.AbilitySlot);
+        mon.HeldItem = Math.Max(0, save.HeldItem);
         save.Evs.CopyTo(mon.Evs, 0);
         foreach (var m in save.Moves.Take(4))
             if (data.Move(m.Move) is { } move)
@@ -232,7 +242,7 @@ public sealed class Pokemon
 public sealed record MoveSave(int Move, int Pp);
 
 public sealed record PokemonSave(int Species, int Level, int Exp, Nature Nature, Gender Gender, bool Shiny, int[] Ivs, int[] Evs,
-    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0);
+    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0, int HeldItem = 0);
 
 /// <summary>Total experience needed to reach a level, for the six growth rates (personal byte 0x15).</summary>
 public static class ExpCurve

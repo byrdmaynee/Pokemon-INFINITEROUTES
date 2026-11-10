@@ -40,6 +40,8 @@ public partial class GameMenu : Control
 
     // Choices in progress, kept across rebuilds of the tab.
     int _useItem;
+    /// <summary>An item picked in the Bag to give to a party Pokémon to hold.</summary>
+    int _giveItem;
     string? _questId;
     MailMessage? _mail;
     MarketView _marketView;
@@ -120,6 +122,7 @@ public partial class GameMenu : Control
         if (tab != _tab)
         {
             _useItem = 0;
+            _giveItem = 0;
             _confirmStartOver = false;
             _pcPick = -1;
             _confirmRelease = false;
@@ -186,19 +189,56 @@ public partial class GameMenu : Control
             var status = mon.Fainted ? "FNT" : mon.Status == Ailment.None ? "" : mon.Status.ToString();
             var moves = string.Join(", ", mon.Moves.Select(m => $"{m.Move.Name} {m.Pp}/{m.MaxPp}"));
             var stats = $"Atk {mon.StatValue(Stat.Attack)} · Def {mon.StatValue(Stat.Defense)} · SpA {mon.StatValue(Stat.SpAttack)} · SpD {mon.StatValue(Stat.SpDefense)} · Spe {mon.StatValue(Stat.Speed)} · {mon.Nature} · {mon.AbilityName}";
-            var button = Row($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}  {status}\n{moves}\n{stats}", () => PickPokemon(index), Icon(mon));
-            list.AddChild(button);
+            var held = mon.HeldItem != 0 ? $"   Holding: {OfflineSession.Data.ItemName(mon.HeldItem)}" : "";
+            var button = Row($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}  {status}{held}\n{moves}\n{stats}", () => PickPokemon(index), Icon(mon));
+            button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            var row = U.HBox(6, button);
+            if (mon.HeldItem != 0 && _useItem == 0 && _giveItem == 0)
+                row.AddChild(U.Button("Take", () => TakeItem(index), 15));
+            list.AddChild(row);
         }
         if (OfflineSession.Box.Count > 0)
             list.AddChild(U.Text($"{OfflineSession.Box.Count} Pokémon in the PC: use the PC in any Pokémon Center to swap them in.", 15, U.Muted, wrap: true));
-        return _useItem != 0
-            ? $"Use the {OfflineSession.Data.ItemName(_useItem)} on which Pokémon?  Esc: cancel"
-            : "Pick a Pokémon to make it lead. To use medicine, pick it in the Bag.";
+        return _useItem != 0 ? $"Use the {OfflineSession.Data.ItemName(_useItem)} on which Pokémon?  Esc: cancel"
+            : _giveItem != 0 ? $"Give the {OfflineSession.Data.ItemName(_giveItem)} to which Pokémon?  Esc: cancel"
+            : "Pick a Pokémon to make it lead. Medicine is used and items are given from the Bag.";
+    }
+
+    /// <summary>Puts a party Pokémon's held item back in the Bag.</summary>
+    void TakeItem(int index)
+    {
+        var mon = OfflineSession.Party[index];
+        if (mon.HeldItem == 0)
+            return;
+        var name = OfflineSession.Data.ItemName(mon.HeldItem);
+        OfflineSession.Bag.Add(mon.HeldItem);
+        mon.HeldItem = 0;
+        Rebuild($"Received the {name} from {mon.Name}.");
     }
 
     void PickPokemon(int index)
     {
         var party = OfflineSession.Party;
+        if (_giveItem != 0)
+        {
+            var item = _giveItem;
+            _giveItem = 0;
+            var mon = party[index];
+            if (!OfflineSession.Bag.Take(item))
+            {
+                Rebuild(null);
+                return;
+            }
+            var data = OfflineSession.Data;
+            var swapped = mon.HeldItem;
+            if (swapped != 0)
+                OfflineSession.Bag.Add(swapped);
+            mon.HeldItem = item;
+            Rebuild(swapped != 0
+                ? $"{mon.Name} was given the {data.ItemName(item)} to hold; the {data.ItemName(swapped)} went back to the Bag."
+                : $"{mon.Name} was given the {data.ItemName(item)} to hold.");
+            return;
+        }
         if (_useItem != 0)
         {
             var item = _useItem;
@@ -412,20 +452,22 @@ public partial class GameMenu : Control
             {
                 var id = item;
                 var medicine = ItemEffect.For(item) is ItemEffect.Heal or ItemEffect.Cure or ItemEffect.Revive;
+                var ball = ItemEffect.For(item) is ItemEffect.Ball;
                 var button = Row($"{data.ItemName(item)}   ×{count}", () =>
                 {
-                    _useItem = id;
+                    _useItem = medicine ? id : 0;
+                    _giveItem = medicine ? 0 : id;
                     _tab = Tab.Party;
                     Rebuild(null);
                 });
-                button.Disabled = !medicine;
+                button.Disabled = ball;
                 column.AddChild(button);
             }
             if (column.GetChildCount() == 1)
                 column.AddChild(U.Text("Empty", 15, U.Muted));
             pockets.AddChild(column);
         }
-        return "Pick a medicine, then a Pokémon to use it on. Balls are thrown in battle; sell items in the Market.";
+        return "Pick a medicine to use, or any other item to give a Pokémon to hold. Balls are thrown in battle.";
     }
 
     // ── Badges ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -991,12 +1033,13 @@ public partial class GameMenu : Control
         if (!close)
             return;
         GetViewport().SetInputAsHandled();
-        if (cancel && (_useItem != 0 || _selling is not null || _mail is not null || _confirmStartOver || _pcPick >= 0))
+        if (cancel && (_useItem != 0 || _giveItem != 0 || _selling is not null || _mail is not null || _confirmStartOver || _pcPick >= 0))
         {
             _confirmStartOver = false;
             _pcPick = -1;
             _confirmRelease = false;
             _useItem = 0;
+            _giveItem = 0;
             _selling = null;
             _mail = null;
             Rebuild(null);

@@ -48,6 +48,8 @@ public static class Gen5Personal
             FormCount: r[0x20],
             TypeIds: r[7] != r[6] ? [r[6], r[7]] : [r[6]],
             AbilityIds: abilityIds,
-            HiddenAbilityId: r[0x1A]);
+            HiddenAbilityId: r[0x1A],
+            WildItems: [BinaryPrimitives.ReadUInt16LittleEndian(r[0x0C..]), BinaryPrimitives.ReadUInt16LittleEndian(r[0x0E..]),
+                BinaryPrimitives.ReadUInt16LittleEndian(r[0x10..])]);
     }
 }

@@ -48,6 +48,12 @@ public sealed class Battler(Pokemon mon, BattleSide side)
     public bool Loafing { get; set; }
     /// <summary>Ends of turn survived since coming out (Speed Boost, Slow Start).</summary>
     public int TurnsOut { get; set; }
+    /// <summary>The move a Choice item locked it into (0: none yet).</summary>
+    public int ChoiceMove { get; set; }
+    /// <summary>It used up or lost its item this battle (Unburden).</summary>
+    public bool LostItem { get; set; }
+    /// <summary>The last berry it ate (Harvest).</summary>
+    public int LastBerry { get; set; }
 
     public int Stage(BattleStat stat) => Stages[(int)stat];
 }
@@ -129,6 +135,7 @@ public sealed partial class SingleBattle
             Array.Fill(mon.Ivs, p.Difficulty * 31 / 255);
             if ((p.GenderAbility >> 4) is var ability and >= 1 and <= 3)
                 mon.SetAbilitySlot(ability - 1);
+            mon.HeldItem = p.HeldItem;
             if (p.Moves is { Count: > 0 } moves)
             {
                 mon.Moves.Clear();
@@ -181,6 +188,8 @@ public sealed partial class SingleBattle
         if (Waiting)
             return [];
         var events = new List<BattleEvent>();
+        if (ChoiceLock(Player) is { } locked && !MustStruggle && slot >= 0 && slot < Player.Mon.Moves.Count && Player.Mon.Moves[slot].Move.Id != locked)
+            return [new MessageEvent($"{Player.Mon.Name} can only use {_data.Move(locked)?.Name}!")];
         var playerMove = Choose(Player, slot);
         if (playerMove is null)
             return [new MessageEvent("There's no PP left for this move!")];
@@ -210,7 +219,7 @@ public sealed partial class SingleBattle
             return [];
         if (Trainer is not null)
             return [new MessageEvent("No! There's no running from a Trainer battle!")];
-        var runAway = Has(Player, Abilities.RunAway);
+        var runAway = Has(Player, Abilities.RunAway) || ItemOf(Player) == HeldItems.SmokeBall;
         if (!runAway && Trapped(Player) is { } trap)
             return [new AbilityEvent(BattleSide.Foe, Foe.AbilityName), new MessageEvent(trap)];
         var events = new List<BattleEvent>();
@@ -385,6 +394,8 @@ public sealed partial class SingleBattle
         var moves = b.Mon.Moves;
         if (moves.All(m => m.Pp <= 0))
             return _data.Move(BattleData.Struggle) is { } struggle ? (struggle, -1) : null;
+        if (b.Side == BattleSide.Foe && ChoiceLock(b) is { } locked)
+            slot = moves.FindIndex(m => m.Move.Id == locked);
         if (b.Side == BattleSide.Foe && (slot >= moves.Count || moves[slot].Pp <= 0))
         {
             var usable = Enumerable.Range(0, moves.Count).Where(i => moves[i].Pp > 0).ToList();
@@ -406,13 +417,16 @@ public sealed partial class SingleBattle
         bool stallMine = Has(Player, Abilities.Stall), stallTheirs = Has(Foe, Abilities.Stall);
         if (stallMine != stallTheirs)
             return stallTheirs;
+        int itemMine = ItemOrder(Player), itemTheirs = ItemOrder(Foe);
+        if (itemMine != itemTheirs)
+            return itemMine > itemTheirs;
         int a = EffectiveSpeed(Player), b = EffectiveSpeed(Foe);
         return a != b ? a > b : _rng.Next(2) == 0;
     }
 
     int EffectiveSpeed(Battler b)
     {
-        var speed = WeatherSpeed(b, Staged(b.Mon.StatValue(Stat.Speed), b.Stage(BattleStat.Speed)));
+        var speed = ItemSpeed(b, WeatherSpeed(b, Staged(b.Mon.StatValue(Stat.Speed), b.Stage(BattleStat.Speed))));
         if (Has(b, Abilities.SlowStart) && b.TurnsOut < 5)
             speed /= 2;
         if (Has(b, Abilities.QuickFeet) && b.Mon.Status != Ailment.None)
@@ -433,17 +447,20 @@ public sealed partial class SingleBattle
             pp.Pp = Math.Max(0, pp.Pp - (Has(target, Abilities.Pressure) ? 2 : 1));
         }
         events.Add(new MessageEvent($"{name} used {move.Name}!"));
+        LeppaBerry(user, slot, events);
+        if (ItemOf(user) is HeldItems.ChoiceBand or HeldItems.ChoiceSpecs or HeldItems.ChoiceScarf && user.ChoiceMove == 0)
+            user.ChoiceMove = move.Id;
         var type = MoveType(user, move);
         if (WeatherMove(move) is var weather and not Weather.None)
         {
-            if (!SetWeather(weather, 5, events))
+            if (!SetWeather(weather, HeldItems.RockWeather(ItemOf(user)) == weather ? 8 : 5, events))
                 events.Add(new MessageEvent("But it failed!"));
             return;
         }
 
         var selfTargeted = move.Target == 7 || (move.Kind == MoveKind.StatChange && move.StatChanges.All(c => c.Stages > 0))
             || move.Kind == MoveKind.Heal;
-        if (!selfTargeted && !Hits(user, target, move))
+        if (!selfTargeted && !Hits(user, target, move, movedFirst))
         {
             events.Add(new MessageEvent(move.Kind == MoveKind.OneHitKo ? $"{Label(target)} is unaffected!" : $"{name}'s attack missed!"));
             return;
@@ -486,12 +503,17 @@ public sealed partial class SingleBattle
             }
             var hits = HitCount(user, move);
             var landed = 0;
+            var gem = UseGem(user, move, type, events);
             for (var h = 0; h < hits && !target.Mon.Fainted && !user.Mon.Fainted; h++, landed++)
             {
                 var crit = IsCritical(user, target, move);
-                var damage = CalculateDamage(user, target, move, type, crit, effectiveness, movedFirst);
+                var berry = UseResistBerry(target, type, effectiveness, events);
+                var damage = CalculateDamage(user, target, move, type, crit, effectiveness, movedFirst, gem, berry);
                 // Sturdy: a Pokémon at full HP survives any one hit with 1 HP.
                 var endured = target.Mon.Hp == target.Mon.MaxHp && damage >= target.Mon.Hp && Defends(target, user, Abilities.Sturdy);
+                var hungOn = "";
+                if (!endured && HangsOn(target, damage, out hungOn))
+                    damage = target.Mon.Hp - 1;
                 if (endured)
                     damage = target.Mon.Hp - 1;
                 dealt += Damage(target, damage, events);
@@ -502,7 +524,10 @@ public sealed partial class SingleBattle
                     events.Add(new AbilityEvent(target.Side, target.AbilityName));
                     events.Add(new MessageEvent($"{Label(target)} endured the hit!"));
                 }
+                if (hungOn != "")
+                    events.Add(new MessageEvent(hungOn));
                 AfterHit(user, target, move, type, crit, events);
+                ItemAfterHit(user, target, move, type, events);
             }
             if (effectiveness > 1)
                 events.Add(new MessageEvent("It's super effective!"));
@@ -518,6 +543,8 @@ public sealed partial class SingleBattle
             else if (move.Recoil > 0 && dealt > 0)
             {
                 var drained = Math.Max(1, dealt * move.Recoil / 100);
+                if (ItemOf(user) == HeldItems.BigRoot)
+                    drained = drained * 13 / 10;
                 if (Has(target, Abilities.LiquidOoze))
                 {
                     events.Add(new AbilityEvent(target.Side, target.AbilityName));
@@ -529,6 +556,7 @@ public sealed partial class SingleBattle
             }
             if (target.Mon.Fainted)
                 OnKnockOut(user, target, move, events);
+            ItemAfterMove(user, move, dealt, events);
         }
 
         if (move.Kind == MoveKind.Heal && move.Heal > 0)
@@ -544,7 +572,8 @@ public sealed partial class SingleBattle
         ApplyAilment(user, target, move, events);
         ApplyStatChanges(user, target, move, events);
         var flinch = move.FlinchChance > 0 ? move.FlinchChance
-            : Has(user, Abilities.Stench) && move.Category != MoveCategory.Status && dealt > 0 ? 10 : 0;
+            : (Has(user, Abilities.Stench) || ItemOf(user) is HeldItems.KingsRock or HeldItems.RazorFang)
+              && move.Category != MoveCategory.Status && dealt > 0 ? 10 : 0;
         if (flinch > 0 && movedFirst && !target.Mon.Fainted && SecondaryLands(user, target, flinch)
             && !Defends(target, user, Abilities.InnerFocus))
             target.Flinched = true;
@@ -622,7 +651,7 @@ public sealed partial class SingleBattle
         return true;
     }
 
-    bool Hits(Battler user, Battler target, MoveInfo move)
+    bool Hits(Battler user, Battler target, MoveInfo move, bool movedFirst = true)
     {
         var weatherAccuracy = WeatherAccuracy(move);
         if (move.NeverMisses || move.Accuracy == 0 || weatherAccuracy > 100 || Has(user, Abilities.NoGuard) || Has(target, Abilities.NoGuard))
@@ -646,6 +675,12 @@ public sealed partial class SingleBattle
         if ((ActiveWeather == Weather.Sandstorm && Defends(target, user, Abilities.SandVeil))
             || (ActiveWeather == Weather.Hail && Defends(target, user, Abilities.SnowCloak)))
             chance = chance * 4 / 5;
+        if (ItemOf(target) is HeldItems.BrightPowder or HeldItems.LaxIncense)
+            chance = chance * 9 / 10;
+        if (ItemOf(user) == HeldItems.WideLens)
+            chance = chance * 11 / 10;
+        if (ItemOf(user) == HeldItems.ZoomLens && !movedFirst)
+            chance = chance * 6 / 5;
         return _rng.Next(100) < chance;
     }
 
@@ -668,7 +703,14 @@ public sealed partial class SingleBattle
             return false;
         // Gen 5 stages: 1/16, 1/8, 1/4, 1/3, 1/2.
         int[] odds = [16, 8, 4, 3, 2];
-        var stage = move.CritStage + (Has(user, Abilities.SuperLuck) ? 1 : 0);
+        var stage = move.CritStage + (Has(user, Abilities.SuperLuck) ? 1 : 0)
+            + ItemOf(user) switch
+            {
+                HeldItems.ScopeLens or HeldItems.RazorClaw => 1,
+                HeldItems.LuckyPunch when user.Mon.Species.Id == 113 => 2,
+                HeldItems.Stick when user.Mon.Species.Id == 83 => 2,
+                _ => 0,
+            };
         return _rng.Next(odds[Math.Clamp(stage, 0, odds.Length - 1)]) == 0;
     }
 
@@ -680,7 +722,8 @@ public sealed partial class SingleBattle
     /// abilities that change power, attack, defense or the result. Critical hits ignore the attacker's negative and the
     /// defender's positive stat stages.
     /// </summary>
-    int CalculateDamage(Battler user, Battler target, MoveInfo move, int type, bool crit, double effectiveness, bool movedFirst)
+    int CalculateDamage(Battler user, Battler target, MoveInfo move, int type, bool crit, double effectiveness, bool movedFirst,
+        bool gem = false, bool resistBerry = false)
     {
         var physical = move.Category == MoveCategory.Physical;
         var atkStage = Defends(target, user, Abilities.Unaware) ? 0 : user.Stage(physical ? BattleStat.Attack : BattleStat.SpAttack);
@@ -690,9 +733,11 @@ public sealed partial class SingleBattle
             atkStage = Math.Max(0, atkStage);
             defStage = Math.Min(0, defStage);
         }
-        var attack = Staged(user.Mon.StatValue(physical ? Stat.Attack : Stat.SpAttack), atkStage);
-        var defense = Math.Max(1, Staged(target.Mon.StatValue(physical ? Stat.Defense : Stat.SpDefense), defStage));
-        var power = WeatherPower(move, move.Power);
+        var attack = ItemAttack(user, physical, Staged(user.Mon.StatValue(physical ? Stat.Attack : Stat.SpAttack), atkStage));
+        var defense = Math.Max(1, ItemDefense(target, physical, Staged(target.Mon.StatValue(physical ? Stat.Defense : Stat.SpDefense), defStage)));
+        var power = ItemPower(user, move, type, WeatherPower(move, move.Power));
+        if (gem)
+            power = power * 3 / 2;
         var status = user.Mon.Status;
         var weather = ActiveWeather;
 
@@ -757,6 +802,12 @@ public sealed partial class SingleBattle
             damage = damage * 3 / 4;
         if (target.Mon.Hp == target.Mon.MaxHp && Defends(target, user, Abilities.Multiscale))
             damage /= 2;
+        if (effectiveness > 1 && ItemOf(user) == HeldItems.ExpertBelt)
+            damage = damage * 6 / 5;
+        if (ItemOf(user) == HeldItems.LifeOrb)
+            damage = damage * 13 / 10;
+        if (resistBerry)
+            damage /= 2;
         if (physical && status == Ailment.Burn && !Has(user, Abilities.Guts))
             damage /= 2;
         return Math.Max(1, damage);
@@ -791,6 +842,7 @@ public sealed partial class SingleBattle
             }
             victim.ConfusionTurns = 2 + _rng.Next(4);
             events.Add(new MessageEvent($"{name} became confused!"));
+            StatusBerry(victim, events);
             return;
         }
         if (move.Ailment > Ailment.Poison)
@@ -850,6 +902,8 @@ public sealed partial class SingleBattle
             }
             if (!b.Mon.Fainted && !Over)
                 AbilityEndOfTurn(b, events);
+            if (!b.Mon.Fainted && !Over)
+                ItemEndOfTurn(b, events);
             b.TurnsOut++;
         }
 
@@ -885,6 +939,9 @@ public sealed partial class SingleBattle
                 if (Trainer is { } trainer)
                 {
                     PrizeMoney = trainer.PrizeBase * 4 * _foeParty[^1].Level;
+                    // Amulet Coin and Luck Incense double it.
+                    if (_party.Any(p => p.HeldItem is HeldItems.AmuletCoin or HeldItems.LuckIncense))
+                        PrizeMoney *= 2;
                     events.Add(new MessageEvent($"You defeated {trainer.Title}!"));
                     events.Add(new MessageEvent($"You got ₽{PrizeMoney} for winning!"));
                 }
@@ -910,23 +967,35 @@ public sealed partial class SingleBattle
     /// Gen 5 scaled experience for beating a wild Pokémon, shared by <paramref name="participants"/> Pokémon:
     /// base EXP × level / 5 / participants × ((2L + 10) / (L + Lp + 10))^2.5 + 1.
     /// </summary>
-    public static int ExpYield(Pokemon defeated, Pokemon winner, int participants = 1, bool trainer = false)
+    public static int ExpYield(Pokemon defeated, Pokemon winner, int participants = 1, bool trainer = false) =>
+        ExpShare(defeated, winner, 1.0 / Math.Max(1, participants), trainer);
+
+    /// <summary>Scaled experience for <paramref name="share"/> of the whole; a Lucky Egg adds half.</summary>
+    static int ExpShare(Pokemon defeated, Pokemon winner, double share, bool trainer)
     {
         double lv = defeated.Level, own = winner.Level;
-        var scaled = defeated.Species.BaseExp * lv / 5 / Math.Max(1, participants) * Math.Pow((2 * lv + 10) / (lv + own + 10), 2.5);
-        return (int)Math.Floor((Math.Floor(scaled) + 1) * (trainer ? 1.5 : 1));
+        var scaled = defeated.Species.BaseExp * lv / 5 * share * Math.Pow((2 * lv + 10) / (lv + own + 10), 2.5);
+        var exp = (Math.Floor(scaled) + 1) * (trainer ? 1.5 : 1);
+        return (int)Math.Floor(winner.HeldItem == HeldItems.LuckyEgg ? Math.Floor(exp) * 1.5 : exp);
     }
 
-    /// <summary>Every Pokémon that was sent out against the wild one and is still standing shares the experience.</summary>
+    /// <summary>
+    /// Every Pokémon that was sent out against the defeated one and is still standing shares the experience; with
+    /// an Exp. Share in the party, the fighters split half and the holders the other half.
+    /// </summary>
     void AwardExp(List<BattleEvent> events)
     {
-        var earners = _participants.Where(p => !p.Fainted && IndexOf(p) >= 0).ToList();
+        var fighters = _participants.Where(p => !p.Fainted && IndexOf(p) >= 0).ToList();
+        var holders = _party.Where(p => !p.Fainted && p.HeldItem == HeldItems.ExpShare).ToList();
+        var earners = fighters.Union(holders).ToList();
         foreach (var mon in earners)
         {
             if (mon.Level >= 100)
                 continue;
             var index = IndexOf(mon);
-            var exp = ExpYield(Foe.Mon, mon, earners.Count, Trainer is not null);
+            var share = (fighters.Contains(mon) ? (holders.Count > 0 ? 0.5 : 1.0) / fighters.Count : 0)
+                + (holders.Contains(mon) ? 0.5 / holders.Count : 0);
+            var exp = ExpShare(Foe.Mon, mon, share, Trainer is not null);
             var levels = mon.GainExp(exp, _data);
             events.Add(new MessageEvent($"{mon.Name} gained {exp} Exp. Points!"));
             events.Add(new ExpEvent(index, exp, mon.Level));

@@ -5,7 +5,8 @@ public static class Abilities
 {
     public const int None = 0, Stench = 1, Drizzle = 2, SpeedBoost = 3, SandVeil = 8, CloudNine = 13, SwiftSwim = 33,
         Chlorophyll = 34, RainDish = 44, SandStream = 45, Drought = 70, AirLock = 76, SnowCloak = 81, Hydration = 93,
-        SolarPower = 94, LeafGuard = 102, IceBody = 115, SnowWarning = 117, Overcoat = 142, SandRush = 146, SandForce = 159, BattleArmor = 4, Sturdy = 5, Limber = 7, Static = 9, VoltAbsorb = 10,
+        SolarPower = 94, LeafGuard = 102, IceBody = 115, SnowWarning = 117, Overcoat = 142, SandRush = 146, SandForce = 159,
+        Gluttony = 82, Unburden = 84, Klutz = 103, Frisk = 119, Unnerve = 127, Harvest = 139, BattleArmor = 4, Sturdy = 5, Limber = 7, Static = 9, VoltAbsorb = 10,
         WaterAbsorb = 11, CompoundEyes = 14, Insomnia = 15, Immunity = 17, FlashFire = 18, ShieldDust = 19, OwnTempo = 20,
         Intimidate = 22, ShadowTag = 23, RoughSkin = 24, WonderGuard = 25, Levitate = 26, EffectSpore = 27, Synchronize = 28,
         ClearBody = 29, NaturalCure = 30, LightningRod = 31, SereneGrace = 32, Trace = 36, HugePower = 37, PoisonPoint = 38,
@@ -27,6 +28,7 @@ public static class Abilities
     {
         Drizzle, SandVeil, CloudNine, SwiftSwim, Chlorophyll, RainDish, SandStream, Drought, AirLock, SnowCloak, Hydration,
         SolarPower, LeafGuard, IceBody, SnowWarning, Overcoat, SandRush, SandForce, FlowerGift,
+        Gluttony, Unburden, Klutz, Frisk, Unnerve, Harvest,
         Stench, SpeedBoost, BattleArmor, Sturdy, Limber, Static, VoltAbsorb, WaterAbsorb, CompoundEyes, Insomnia, Immunity,
         FlashFire, ShieldDust, OwnTempo, Intimidate, ShadowTag, RoughSkin, WonderGuard, Levitate, EffectSpore, Synchronize,
         ClearBody, NaturalCure, LightningRod, SereneGrace, Trace, HugePower, PoisonPoint, InnerFocus, MagmaArmor, WaterVeil,

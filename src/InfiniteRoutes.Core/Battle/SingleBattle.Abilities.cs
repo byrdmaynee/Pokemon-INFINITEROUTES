@@ -75,6 +75,7 @@ public sealed partial class SingleBattle
         if (b.Mon.Fainted || other.Mon.Fainted)
             return;
         var name = Label(b);
+        ItemEntry(b, events);
         if (WeatherAbility(b.Ability) is var weather and not Weather.None)
         {
             if (Weather != weather)
@@ -156,6 +157,11 @@ public sealed partial class SingleBattle
         if (type == TypeChart.Ground && damaging && Defends(target, user, Abilities.Levitate))
         {
             events.Add(Popup(target));
+            events.Add(new MessageEvent($"It doesn't affect {name}..."));
+            return true;
+        }
+        if (type == TypeChart.Ground && damaging && ItemOf(target) == HeldItems.AirBalloon)
+        {
             events.Add(new MessageEvent($"It doesn't affect {name}..."));
             return true;
         }
@@ -349,6 +355,7 @@ public sealed partial class SingleBattle
             events.Add(Popup(victim));
             Inflict(source, ailment, null, events, loud: false);
         }
+        StatusBerry(victim, events);
         return true;
     }
 
@@ -400,6 +407,8 @@ public sealed partial class SingleBattle
             events.Add(Popup(victim));
             ChangeStage(victim, BattleStat.Attack, 2, null, events);
         }
+        if (delta < 0)
+            WhiteHerb(victim, events);
         return delta;
     }
 }

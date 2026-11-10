@@ -314,6 +314,15 @@ public static class DebugCapture
                 world.ToggleMenu();
                 await Wait(0.2);
 
+                // Held items: Snivy holds an Oran Berry from the Bag (eaten once it drops to half HP in a later battle).
+                if (World.OfflineSession.Bag.Take(Core.Battle.HeldItems.OranBerry))
+                    lead.HeldItem = Core.Battle.HeldItems.OranBerry;
+                world.ToggleMenu();
+                await Wait(0.5);
+                Save("19h-holding");
+                world.ToggleMenu();
+                await Wait(0.2);
+
                 // Weather: a Kyogre's Drizzle brings rain to the battle; then run (Run is bottom right of the commands).
                 world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 382, 5, new Random(5)));
                 for (var waited = 0.0; world.CurrentBattle is not { Battle.Weather: not Core.Battle.Weather.None } && waited < 10; waited += 0.1)
@@ -476,6 +485,7 @@ public static class DebugCapture
                     await Wait(0.6);
                     Save("23-after-trainer");
                     GD.Print($"[capture] learn-move prompt answered: {(learnedMoves == "" ? "never asked" : learnedMoves)}");
+                    GD.Print($"[capture] {lead.Name} holds {(lead.HeldItem == 0 ? "nothing (its Oran Berry was eaten)" : World.OfflineSession.Data.ItemName(lead.HeldItem))}");
                     GD.Print($"[capture] trainer battle {trainerBattle?.Outcome} vs {trainerBattle?.Trainer?.Title}; money {World.OfflineSession.Money}; beaten {string.Join(",", World.OfflineSession.DefeatedTrainers)}; spotted again: {world.Busy}");
                 }
 

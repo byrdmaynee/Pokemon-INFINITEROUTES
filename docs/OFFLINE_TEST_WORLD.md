@@ -103,6 +103,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - [ ] Weather: Rain Dance, Sunny Day, Sandstorm or Hail (or a Pokémon with Drizzle, Drought, Sand Stream or
       Snow Warning) changes the weather: a message, rain/hail falling or sand blowing over the field (sun: a warm
       tint), "Rain continues to fall." each turn, sandstorm/hail damage, and it ends after five turns from a move.
+- [ ] Held items: you start with 2 Oran Berries. In X → Bag, pick one, then a party Pokémon: it now shows
+      "Holding: Oran Berry" with a Take button. In battle it eats the berry once its HP drops to half
+      ("…restored its health using its Oran Berry!"), and the berry is gone afterwards. Some wild Pokémon hold
+      items too; catch one and it shows in the Party tab.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -202,8 +206,8 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 - Animated objects (a/2/1/0) are still static.
 - Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
   trainers fight as single battles.
-- In battle: no nicknames, held items or move animations; abilities that need held items, double battles or the
-  field (Pickup, Frisk, Plus…) do nothing yet; routes with weather (Route 4's sandstorm) don't bring it into
+- In battle: no nicknames or move animations; abilities that need double battles or the field (Pickup, Plus…)
+  do nothing yet; Thief, Knock Off and Trick don't move items yet; routes with weather (Route 4's sandstorm) don't bring it into
   battle yet; moves with
   special effects beyond damage, status and stat changes just deal damage. The battle background is a placeholder.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and

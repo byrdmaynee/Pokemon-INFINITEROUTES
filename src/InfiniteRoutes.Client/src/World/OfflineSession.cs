@@ -137,6 +137,7 @@ public static class OfflineSession
         Bag.Add(ItemEffect.Antidote, 2);
         Bag.Add(ItemEffect.ParlyzHeal, 2);
         Bag.Add(ItemEffect.ReviveItem, 1);
+        Bag.Add(HeldItems.OranBerry, 2);
         Progress.PartyCount = Party.Count;
         foreach (var id in StarterQuests.Initial)
             Quests.Start(id, Progress, now);
