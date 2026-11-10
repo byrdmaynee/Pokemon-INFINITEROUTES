@@ -138,6 +138,10 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
       a bite and a battle, or "Not even a nibble…".
 - [ ] Every so often leaves fly from a patch of tall grass near you (shaking grass), dust puffs rise in a cave,
       or rings spread on the water while surfing. Step in for a special wild Pokémon (dust can hold a gem).
+- [ ] Move animations from the game: Tackle and Pound put up sparks on the target, Vine Whip, Ember, Water Gun,
+      Flamethrower, Thunderbolt and Surf play their own particle effects (flames fly across, a bolt strikes, a
+      wave rises), the target shakes or squashes and flashes a colour, and some moves dim the background. The foe's
+      moves play aimed back at your Pokémon.
 - [ ] Beating the wild Pokémon: it faints, Snivy gains EXP (the bar fills), and levels up with
       "grew to Lv. N!" and new moves (Vine Whip at 7) when it gets enough.
 - [ ] A fifth move (Snivy: Growth at 13, Leaf Tornado at 16, once it knows four): a list asks which move to
@@ -235,9 +239,9 @@ anything else is a bug worth reporting with the HUD's location, season and tile 
 ## Things that are expected to be missing (not bugs yet)
 
 - Animated objects (a/2/1/0) are still static.
-- Trainers have no battle sprite or intro/defeat lines yet, pick moves at random, and double/triple/rotation
-  trainers fight as single battles.
-- In battle: no move animations; abilities that need double battles or the field (Pickup, Plus…) do nothing
+- Double/triple/rotation trainers fight as single battles.
+- Move animations: the camera moves, sounds and background effects (Psychic's warping, screen scrolls) aren't
+  played yet, and Pokémon movements are approximate. Abilities that need double battles or the field (Pickup, Plus…) do nothing
   yet; routes with weather (Route 4's sandstorm) don't bring it into battle yet; a few rare move effects
   (Transform, Encore, Bide, Future Sight, Pursuit, Beat Up) just deal damage or do nothing.
 - Other Pokémon Center staff only show their script number. Mart shelves are our own badge tiers and

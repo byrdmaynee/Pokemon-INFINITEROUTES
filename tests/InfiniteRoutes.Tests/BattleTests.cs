@@ -161,6 +161,23 @@ public class BattleTests
     }
 
     [Fact]
+    public void Move_animation_plays_before_the_hit_and_once_per_move()
+    {
+        var data = Data();
+        var rng = new Random(11);
+        var battle = new SingleBattle(data, Pokemon.Create(data, 495, 9, rng), Pokemon.Create(data, 504, 3, rng), rng);
+        battle.Start();
+        var events = battle.Fight(2).ToList();   // Vine Whip; Patrat answers
+        var anims = events.OfType<MoveAnimationEvent>().ToList();
+        Assert.Contains(new MoveAnimationEvent(BattleSide.Player, 22), anims);
+        Assert.Equal(anims.Count, anims.Distinct().Count());
+        var vineWhip = events.IndexOf(new MoveAnimationEvent(BattleSide.Player, 22));
+        var used = events.FindIndex(e => e is MessageEvent { Text: var t } && t.EndsWith("used Vine Whip!"));
+        var hit = events.FindIndex(vineWhip, e => e is HpEvent { Side: BattleSide.Foe });
+        Assert.True(used < vineWhip && vineWhip < hit);
+    }
+
+    [Fact]
     public void Battle_plays_out_until_one_side_faints()
     {
         var data = Data();

@@ -27,6 +27,8 @@ public sealed record CatchEvent(int Ball, int Shakes, bool Caught) : BattleEvent
 public sealed record TrainerEvent(bool Visible) : BattleEvent;
 /// <summary><see cref="Side"/>'s ability <see cref="Ability"/> takes effect; the messages that follow say what it did.</summary>
 public sealed record AbilityEvent(BattleSide Side, string Ability) : BattleEvent;
+/// <summary>The move's animation plays now (the user's side attacking with move id <paramref name="Move"/>).</summary>
+public sealed record MoveAnimationEvent(BattleSide User, int Move) : BattleEvent;
 
 /// <summary>
 /// A Pokémon on the field: the Pokémon plus what resets when it leaves (stat stages, confusion, flinch, a traced
@@ -634,8 +636,14 @@ public sealed partial class SingleBattle
             events.Add(new MessageEvent(failure));
             return;
         }
-        if (move.Category == MoveCategory.Status && StatusMove(user, target, move, events))
-            return;
+        var animated = false;
+        if (move.Category == MoveCategory.Status)
+        {
+            events.Add(new MoveAnimationEvent(user.Side, move.Id));
+            animated = true;
+            if (StatusMove(user, target, move, events))
+                return;
+        }
 
         var selfTargeted = move.Target == 7 || (move.Kind == MoveKind.StatChange && move.StatChanges.All(c => c.Stages > 0))
             || move.Kind == MoveKind.Heal;
@@ -667,6 +675,8 @@ public sealed partial class SingleBattle
             return;
         if (user.LockOn > 0 && !selfTargeted)
             user.LockOn = 0;
+        if (!animated)
+            events.Add(new MoveAnimationEvent(user.Side, move.Id));
 
         if (move.Kind == MoveKind.OneHitKo)
         {

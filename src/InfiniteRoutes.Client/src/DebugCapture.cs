@@ -20,6 +20,14 @@ public static class DebugCapture
             World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
             Continue(main, dir);
         }
+        else if (args.FirstOrDefault(a => a.StartsWith("--capture-moves=", StringComparison.Ordinal)) is { } moves)
+        {
+            var dir = moves["--capture-moves=".Length..];
+            World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
+            var list = args.FirstOrDefault(a => a.StartsWith("--moves=", StringComparison.Ordinal)) is { } m
+                ? m["--moves=".Length..].Split(',').Select(int.Parse).ToArray() : [1, 33, 52, 53, 55, 57, 85, 94];
+            MoveAnimations(main, dir, list);
+        }
         else if (args.FirstOrDefault(a => a.StartsWith("--capture-battle=", StringComparison.Ordinal)) is { } battle)
         {
             var dir = battle["--capture-battle=".Length..];
@@ -35,6 +43,41 @@ public static class DebugCapture
             World.OfflineSession.SaveDirOverride = save;
             Run(main, dir);
         }
+    }
+
+    /// <summary>Starts a wild battle and plays each move's ROM animation (the player's, then the foe's), with screenshots along the way.</summary>
+    static async void MoveAnimations(Main main, string dir, int[] moves)
+    {
+        var tree = main.GetTree();
+        async Task Wait(double seconds) => await main.ToSignal(tree.CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
+        main.Push(() => new World.OverworldScreen());
+        await Wait(1.5);
+        if (main.CurrentScreen is World.OverworldScreen world)
+        {
+            world.RandomEncounters = false;
+            world.StartBattle(Core.Battle.Pokemon.Create(World.OfflineSession.Data, 504, 3, new Random(7)));
+            await Wait(4.5);
+            if (world.CurrentBattle is { } screen)
+                foreach (var move in moves)
+                    foreach (var side in new[] { Core.Battle.BattleSide.Player, Core.Battle.BattleSide.Foe })
+                    {
+                        var play = screen.Effects.Play(move, side);
+                        for (var shot = 0; shot < 4 && !play.IsCompleted; shot++)
+                        {
+                            await Wait(0.35);
+                            main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, $"move{move}-{side}-{shot}.png"));
+                        }
+                        await play;
+                        var (_, peak) = screen.Effects.Played.LastOrDefault();
+                        GD.Print($"[capture] move {move} by {side}: peak {peak} particles");
+                        await Wait(0.3);
+                    }
+        }
+        GD.Print("[capture] done");
+        tree.Quit();
     }
 
     /// <summary>Starts a wild battle and shows it over every backdrop the ROM has (with its matching platform).</summary>

@@ -67,6 +67,10 @@ public static class Gen5Layout
     /// animations, 34–83; "a"–"d" variants are the four seasons), then 2D battle UI graphics.
     /// </summary>
     public const string BattleStages = "a/0/1/1";
+    /// <summary>Battle effect scripts, one per move (file n = move n), then a few extra effects.</summary>
+    public const string MoveAnimations = "a/0/6/6";
+    /// <summary>The particle files (SPA) those scripts load.</summary>
+    public const string MoveParticles = "a/0/0/6";
     /// <summary>Overworld character models (BMD0) and textures (BTX0).</summary>
     public const string OverworldSprites = "a/0/4/9";
     /// <summary>Sprite id → <see cref="OverworldSprites"/> member (see <see cref="Gen5OverworldTable"/>).</summary>

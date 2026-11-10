@@ -10,6 +10,7 @@ const string Usage = """
       ir-extract validate <rom>          Run the full validation the game client runs (prints SHA-1)
       ir-extract ls <rom> [dir]          List the ROM filesystem
       ir-extract narc <rom> <path>       List the files inside a NARC archive in the ROM
+      ir-extract moveanim <rom> <out>    Export the Gen 5 move animation scripts and particles
       ir-extract scan <folder>           Find and validate every supported ROM in a folder
       ir-extract library                 Show the player's ROM library (roms.pkir)
       ir-extract extract <rom>           Validate, then extract assets into the local cache
@@ -43,6 +44,7 @@ try
         "scan" when args.Length >= 2 => Scan(args[1]),
         "library" => Library(),
         "extract" when args.Length >= 2 => Extract(args[1]),
+        "moveanim" when args.Length >= 3 => MoveAnim(args[1], args[2]),
         "bmd" when args.Length >= 5 => BmdExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "btx" when args.Length >= 5 => BtxExport(args[1], args[2], int.Parse(args[3]), args[4]),
         "map" when args.Length >= 5 => MapExport(args[1], int.Parse(args[2]), int.Parse(args[3]), args[4]),
@@ -137,6 +139,15 @@ int Extract(string path)
         }));
     Console.Error.WriteLine();
     Console.WriteLine($"Extracted to {dir} in {sw.Elapsed.TotalSeconds:F1}s");
+    return 0;
+}
+
+int MoveAnim(string rom, string outDir)
+{
+    using var fs = NitroFs.Open(RomSource.OpenSeekable(rom));
+    Directory.CreateDirectory(outDir);
+    InfiniteRoutes.Extractor.Gen5.Gen5MoveAnimations.Export(fs, outDir);
+    Console.WriteLine($"Move animations written to {outDir}");
     return 0;
 }
 

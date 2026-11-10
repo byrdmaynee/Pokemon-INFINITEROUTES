@@ -36,6 +36,22 @@ public sealed class GameAssets
     public IReadOnlyList<EncounterTable> LoadEncounters() => LoadData<List<EncounterTable>>("encounters") ?? [];
 
     /// <summary>Trainers indexed by id (<see cref="NpcInfo.TrainerId"/>).</summary>
+    /// <summary>Every move's battle effect script (index = move id), each command <c>[opcode, args…]</c>.</summary>
+    public IReadOnlyList<IReadOnlyList<int[]>> LoadMoveAnimations()
+    {
+        var path = Path.Combine(Directory, "anim", "moves.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<List<List<int[]>>>(File.ReadAllText(path), Json.Indented) ?? [] : [];
+    }
+
+    /// <summary>Particle file <paramref name="index"/> of the move effects, or null if missing.</summary>
+    public Nitro3D.SpaFile? LoadParticles(int index)
+    {
+        var path = Path.Combine(Directory, "anim", "particles", $"{index}.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<Nitro3D.SpaFile>(File.ReadAllText(path), Json.Indented) : null;
+    }
+
+    public string ParticleImagePath(string image) => Path.Combine(Directory, "anim", "particles", image);
+
     /// <summary>A battle scenery model (backdrop "batt_bg01", platform "batt_stage01", …) as glTF, or null if missing.</summary>
     public string? BattleSceneryPath(string name) =>
         Path.Combine(Directory, "battle", name + ".gltf") is var path && File.Exists(path) ? path : null;

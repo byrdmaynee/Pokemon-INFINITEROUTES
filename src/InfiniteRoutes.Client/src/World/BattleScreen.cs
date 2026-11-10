@@ -70,6 +70,12 @@ public partial class BattleScreen : Control
 
     readonly (string Backdrop, string Stage) _scenery;
     BattleBackdrop _backdrop = null!;
+    ColorRect _dim = null!;
+    BattleEffects _effects = null!;
+    Vector2 _playerFeet, _foeFeet;
+
+    /// <summary>The move animation player; smoke tests read what it played.</summary>
+    public BattleEffects Effects => _effects;
 
     /// <summary>The backdrop and platforms on screen; smoke tests swap them to check each one.</summary>
     public string Scenery => $"{_backdrop.Backdrop} + {_backdrop.Stage}";
@@ -88,11 +94,20 @@ public partial class BattleScreen : Control
         _backdrop = new BattleBackdrop(_assets, _scenery.Backdrop, _scenery.Stage);
         AddChild(_backdrop);
         _backdrop.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        // Move animations dim the background behind the Pokémon.
+        _dim = new ColorRect { Color = Colors.Transparent, MouseFilter = MouseFilterEnum.Ignore };
+        AddChild(_dim);
+        _dim.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
         _foeSprite = Sprite(_assets.BattleSpritePath(_battle.Foe.Mon.Species.Id, _battle.Foe.Mon.Shiny ? "front-shiny" : "front"), 2.6f);
         _playerSprite = Sprite(_assets.BattleSpritePath(_battle.Player.Mon.Species.Id, _battle.Player.Mon.Shiny ? "back-shiny" : "back"), 3.2f);
         if (_battle.Trainer is { } trainer)
             _trainerSprite = Sprite(_assets.TrainerSpritePath(trainer.Class), 3f);
+
+        _effects = new BattleEffects(_assets, side => side == BattleSide.Player ? _playerFeet : _foeFeet,
+            side => side == BattleSide.Player ? _playerSprite : _foeSprite, _dim);
+        AddChild(_effects);
+        _effects.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
 
         _weather = new WeatherLayer();
         AddChild(_weather);
@@ -174,7 +189,9 @@ public partial class BattleScreen : Control
     {
         var w = Size.X;
         var h = Size.Y - 150;
-        PlaceSprite(_foeSprite, new Vector2(w * 0.72f, h * 0.52f));
+        _foeFeet = new Vector2(w * 0.72f, h * 0.52f);
+        _playerFeet = new Vector2(w * 0.27f, h + 8);
+        PlaceSprite(_foeSprite, _foeFeet);
         _backdrop.PlaceStages(new Vector2(w * 0.72f, h * 0.5f), w * 0.34f, new Vector2(w * 0.27f, h * 0.98f), w * 0.44f);
         if (_trainerSprite is not null)
             PlaceSprite(_trainerSprite, new Vector2(w * 0.72f, h * 0.52f));
@@ -448,6 +465,9 @@ public partial class BattleScreen : Control
                     break;
                 case WeatherEvent w:
                     _weather.Weather = w.Weather;
+                    break;
+                case MoveAnimationEvent anim:
+                    await _effects.Play(anim.Move, anim.User);
                     break;
             }
         }
