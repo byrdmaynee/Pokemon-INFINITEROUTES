@@ -29,7 +29,7 @@ public partial class OverworldScreen
     Core.Player.SaveGame? _onlineState;
 
     /// <summary>True while the chat line or an online panel has the keyboard (no walking then).</summary>
-    bool OnlineUiBusy => _chatInput?.HasFocus() == true || _elevatePrompt is not null || _onlineMenu is not null || _spectating != 0;
+    bool OnlineUiBusy => _chatInput?.HasFocus() == true || _elevatePrompt is not null || _onlineMenu is not null || _spectating != 0 || AdminPanelOpen;
 
     /// <summary>Chat lines shown so far, as plain text; for smoke tests.</summary>
     public List<string> ChatLines { get; } = [];

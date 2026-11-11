@@ -71,14 +71,16 @@ public class AdminChatTests
     [Fact]
     public void Roles_include_lower_ones_and_cannot_grant_upward()
     {
-        Assert.Contains(Permissions.Who, Permissions.Of(Role.Moderator));
-        Assert.DoesNotContain(Permissions.Teleport, Permissions.Of(Role.Moderator));
-        Assert.Contains(Permissions.Teleport, Permissions.Of(Role.Owner));
-        Assert.True(Permissions.CanGrant(Role.Admin, Role.Player, Role.GameMaster));
-        Assert.False(Permissions.CanGrant(Role.Admin, Role.Player, Role.Admin));
-        Assert.False(Permissions.CanGrant(Role.Admin, Role.Owner, Role.Player));
-        Assert.False(Permissions.CanGrant(Role.GameMaster, Role.Player, Role.Helper));
-        Assert.True(Permissions.CanGrant(Role.Owner, Role.Admin, Role.Owner));
+        static RoleInfo R(Role r) => new(r.ToString(), Permissions.BuiltinRank(r), true, Permissions.Defaults(r).ToHashSet());
+        Assert.True(R(Role.Moderator).Has(Permissions.Who));
+        Assert.False(R(Role.Moderator).Has(Permissions.Teleport));
+        Assert.True(R(Role.Owner).Has(Permissions.Teleport));   // Owners have everything, stored or not
+        Assert.True(Permissions.CanGrant(R(Role.Admin), R(Role.Player), R(Role.GameMaster)));
+        Assert.False(Permissions.CanGrant(R(Role.Admin), R(Role.Player), R(Role.Admin)));
+        Assert.False(Permissions.CanGrant(R(Role.Admin), R(Role.Owner), R(Role.Player)));
+        Assert.False(Permissions.CanGrant(R(Role.GameMaster), R(Role.Player), R(Role.Helper)));
+        Assert.True(Permissions.CanGrant(R(Role.Owner), R(Role.Admin), R(Role.Owner)));
+        Assert.Equal(Permissions.Catalog.Count, R(Role.Owner).All.Count);
     }
 
     [Fact]
@@ -287,7 +289,7 @@ public class AdminChatTests
 
     // ---- helpers --------------------------------------------------------------------------------------------------
 
-    static GameRules Rules()
+    internal static GameRules Rules()
     {
         var types = new[] { TypeChart.Grass };
         var snivy = new SpeciesInfo(StarterKit.Species, "Snivy", new(45, 45, 55, 63, 45, 55), ["Grass"], 45, new(0, 0, 0, 0, 0, 0), 31, 20, 70, 3, [1],

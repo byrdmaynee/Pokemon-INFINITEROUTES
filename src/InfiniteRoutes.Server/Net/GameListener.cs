@@ -90,7 +90,7 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
                 player = joined;
                 connection.Send(new Welcome(player.Id, player.Name, player.Channel, config.Channels, player.Location, config.Name));
                 world.SendState(player);
-                if (player.Role > Admin.Role.Player)
+                if (world.RoleOf(player).IsStaff)
                     connection.Send(world.StatusOf(player));
                 log.LogInformation("{Name} joined channel {Channel} from {Endpoint}", player.Name, player.Channel, endpoint);
             }
@@ -110,7 +110,7 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
                     connection.Close("Too many messages.");
                     break;
                 }
-                if (message is Elevate or AdminCommand)
+                if (message is Elevate or AdminCommand or AdminAction)
                     await admin.Handle(player, message);
                 else
                     world.Handle(player, message);
@@ -138,6 +138,8 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
             return (null, $"This server speaks protocol {Protocol.Version}; your game speaks {hello.Version}. Update the game.");
         if (await accounts.FromToken(hello.Token) is not { } account)
             return (null, "Your login has expired. Log in again.");
+        if (AccountService.BanMessage(account) is { } banned)
+            return (null, banned);
         var character = await LoadCharacter(hello);
         return character is null || character.AccountId != account.Id ? (null, "That character isn't on your account.") : (account, null);
     }

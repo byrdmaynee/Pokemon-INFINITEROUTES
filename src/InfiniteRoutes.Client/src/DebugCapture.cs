@@ -76,7 +76,12 @@ public static class DebugCapture
         try
         {
             Online.OnlineSession.LoadServers();
-            var server = Online.OnlineSession.Servers.FirstOrDefault(s => s.Host == "127.0.0.1") ?? Core.Config.ServerList.LocalTest;
+            var port = OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--api-port=", StringComparison.Ordinal)) is { } p
+                ? int.Parse(p["--api-port=".Length..]) : Core.Config.ServerEntry.DefaultApiPort;
+            var server = Online.OnlineSession.Servers.FirstOrDefault(s => s.Host == "127.0.0.1" && s.ApiPort == port) ?? new Core.Config.ServerEntry("Local test server", "127.0.0.1", port);
+            if (!Online.OnlineSession.Servers.Contains(server))
+                Online.OnlineSession.Update(server, server);   // the login screen only offers listed servers
+            GD.Print($"[capture] server {server.Host}:{server.ApiPort}");
             main.Push(() => new LoginScreen(server));
             await Wait(0.5);
             var login = (LoginScreen)main.CurrentScreen!;
@@ -157,6 +162,38 @@ public static class DebugCapture
                     world.OpenPlayerMenu(line["rclick:".Length..], main.GetViewport().GetVisibleRect().Size / 2);
                     await Wait(0.4);
                     GD.Print($"[capture] player menu: {string.Join(" | ", world.PlayerMenuItems)}");
+                }
+                else if (line.StartsWith("w:", StringComparison.Ordinal))
+                {
+                    // The admin window: w:open=Name, w:tab=N, w:reason=..., w:press=Text, w:spin=I,V, w:text=I,V, w:dump.
+                    var (op, value) = line[2..].IndexOf('=') is var eq and >= 0 ? (line[2..(2 + eq)], line[(3 + eq)..]) : (line[2..], "");
+                    var window = world.AdminWindowOpen;
+                    string result;
+                    if (op == "open")
+                    {
+                        world.OpenPlayerForTest(value);
+                        result = "opened";
+                    }
+                    else if (window is null)
+                        result = "the admin window is closed";
+                    else
+                        result = op switch
+                        {
+                            "tab" => Run(() => window.TestTab(int.Parse(value))),
+                            "reason" => Run(() => window.TestReason(value)),
+                            "press" => window.TestPress(value),
+                            "spin" => window.TestSpin(int.Parse(value.Split(',')[0]), double.Parse(value.Split(',')[1], System.Globalization.CultureInfo.InvariantCulture)),
+                            "text" => window.TestText(int.Parse(value.Split(',')[0]), value[(value.IndexOf(',') + 1)..]),
+                            "dump" => $"tab {window.CurrentTab}; status \"{window.StatusText}\"; editor {window.EditorOpen is { } e && GodotObject.IsInstanceValid(e)}\n    {window.TestLabels()}",
+                            _ => "unknown",
+                        };
+                    await Wait(0.9);
+                    GD.Print($"[capture] {line}: {result}");
+                    static string Run(Action a)
+                    {
+                        a();
+                        return "ok";
+                    }
                 }
                 else if (line.StartsWith("shot:", StringComparison.Ordinal))
                     Shot(line["shot:".Length..]);

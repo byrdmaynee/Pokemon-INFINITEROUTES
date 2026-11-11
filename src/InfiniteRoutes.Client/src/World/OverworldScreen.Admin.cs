@@ -5,33 +5,32 @@ using OnlineSession = InfiniteRoutes.Client.Online.OnlineSession;
 namespace InfiniteRoutes.Client.World;
 
 /// <summary>
-/// The in-game admin GUI (BUILD_SPEC §11.2–11.3), shown only in Admin Mode and only with the buttons the role allows
-/// (the server checks every action again):
+/// The in-game admin GUI (BUILD_SPEC §11.2–11.3), shown only in Admin Mode and only with what the role allows (the
+/// server checks every action again):
 /// <list type="bullet">
-/// <item>F9: the admin panel — everyone online (refreshed every few seconds) with Inspect, Go to, Summon, Spectate,
-/// Mute and Kick; a reason box for mutes and kicks; Invisible and Noclip; an announcement; leaving Admin Mode.</item>
-/// <item>Inspect opens a window with the player's account, character and game.</item>
-/// <item>Right-clicking another player in the world opens the same actions for them.</item>
+/// <item>F9: the <see cref="AdminWindow"/> — players, the player editor, roles and the audit log.</item>
+/// <item>Right-clicking another player in the world: quick actions, and opening them in the window.</item>
+/// <item>/inspect's answer opens a read-only window.</item>
 /// <item>Spectating: the camera follows the watched player (and the map loads around them); /spectate off returns.</item>
 /// </list>
 /// </summary>
 public partial class OverworldScreen
 {
-    PanelContainer? _adminPanel;
-    VBoxContainer? _adminRows;
-    LineEdit? _adminReason;
+    AdminWindow? _adminWindow;
     PanelContainer? _inspector;
     PopupMenu? _playerMenu;
-    double _adminRefresh;
     int _spectating;
     string _spectatingName = "";
 
     /// <summary>The player being spectated, or 0; for smoke tests.</summary>
     public int SpectatingId => _spectating;
 
-    public bool AdminPanelOpen => _adminPanel is not null;
+    public bool AdminPanelOpen => _adminWindow is not null && IsInstanceValid(_adminWindow);
 
-    /// <summary>The rows the admin panel shows now; for smoke tests.</summary>
+    /// <summary>The admin window while it's open; for smoke tests.</summary>
+    public AdminWindow? AdminWindowOpen => AdminPanelOpen ? _adminWindow : null;
+
+    /// <summary>The player list the admin window showed last; for smoke tests.</summary>
     public List<AdminPlayerRow> AdminPanelRows { get; } = [];
 
     bool Can(string permission) => _admin is { Elevated: true } a && a.Permissions.Contains(permission);
@@ -46,17 +45,17 @@ public partial class OverworldScreen
         _spectatingName = status.Name;
         _player.Visible = _spectating == 0;
         UpdateHud();
-        RefreshAdminPanel();
     }
 
-    /// <summary>Redraws an open admin panel (its toggles and buttons follow Admin Mode, invisibility, spectating).</summary>
+    /// <summary>Admin Mode's state changed: the window follows (and closes when Admin Mode ends).</summary>
     void RefreshAdminPanel()
     {
-        if (_adminPanel is null)
+        if (!AdminPanelOpen)
             return;
-        ToggleAdminPanel();
-        if (_admin is { Elevated: true })
+        if (_admin is not { Elevated: true })
             ToggleAdminPanel();
+        else
+            _adminWindow!.StatusChanged();
     }
 
     /// <summary>While spectating: the map around the watched player loads, and the (hidden) character stays with them.</summary>
@@ -75,140 +74,88 @@ public partial class OverworldScreen
 
     string SpectateHud => _spectating != 0 ? $"\n👁 Spectating {_spectatingName} — /spectate off" : "";
 
-    // ---- The panel ---------------------------------------------------------------------------------------------------
+    // ---- The window --------------------------------------------------------------------------------------------------
 
-    /// <summary>F9: opens or closes the admin panel (Admin Mode only).</summary>
+    /// <summary>F9: opens or closes the admin window (Admin Mode only).</summary>
     public void ToggleAdminPanel()
     {
-        if (_adminPanel is not null)
+        if (AdminPanelOpen)
         {
-            _adminPanel.QueueFree();
-            _adminPanel = null;
+            _adminWindow!.QueueFree();
+            _adminWindow = null;
             return;
         }
-        if (_admin is not { Elevated: true } admin)
+        if (_admin is not { Elevated: true })
         {
-            AddSystem("The admin panel needs Admin Mode (/admin).");
+            AddSystem("The admin window needs Admin Mode (/admin).");
             return;
         }
-        _adminRows = Ui.Ui.VBox(4);
-        _adminReason = new LineEdit { PlaceholderText = "Reason (required for mute and kick)", CustomMinimumSize = new Vector2(420, 0) };
-        var announce = new LineEdit { PlaceholderText = "Announcement to everyone", CustomMinimumSize = new Vector2(420, 0) };
-        var content = Ui.Ui.VBox(8, Ui.Ui.Text($"Admin panel — {admin.Role}", 20, Ui.Ui.Accent));
-        var toggles = Ui.Ui.HBox(8);
-        if (Can("admin.invisible"))
-            toggles.AddChild(Ui.Ui.Button(admin.Invisible ? "Invisible: on" : "Invisible: off", () => SendAdmin($"invisible {(_admin!.Invisible ? "off" : "on")}")));
-        if (Can("admin.noclip"))
-            toggles.AddChild(Ui.Ui.Button(admin.Noclip ? "Noclip: on" : "Noclip: off", () => SendAdmin($"noclip {(_admin!.Noclip ? "off" : "on")}")));
-        if (_spectating != 0)
-            toggles.AddChild(Ui.Ui.Button("Stop spectating", () => SendAdmin("spectate off")));
-        toggles.AddChild(Ui.Ui.Button("Leave Admin Mode", () => SendAdmin("exit")));
-        content.AddChild(toggles);
-        if (Can("server.announce"))
-            content.AddChild(Ui.Ui.HBox(8, announce, Ui.Ui.Button("Announce", () =>
-            {
-                if (announce.Text.Trim().Length > 0)
-                    SendAdmin($"announce {announce.Text.Trim()}");
-                announce.Text = "";
-            })));
-        content.AddChild(_adminReason);
-        var scroll = new ScrollContainer { CustomMinimumSize = new Vector2(760, 300), HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
-        scroll.AddChild(_adminRows);
-        _adminRows.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-        content.AddChild(scroll);
-        content.AddChild(Ui.Ui.Text("Every action is in the audit log. F9 closes.", 13, Ui.Ui.Muted));
-        var panel = new PanelContainer();
-        panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(0.08f, 0.09f, 0.13f, 0.95f), BorderColor = new Color(0.98f, 0.6f, 0.35f), BorderWidthLeft = 3,
-            ContentMarginLeft = 16, ContentMarginRight = 16, ContentMarginTop = 12, ContentMarginBottom = 12,
-        });
-        panel.AddChild(content);
-        AddChild(panel);
-        panel.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterRight);
-        panel.GrowHorizontal = GrowDirection.Begin;
-        panel.GrowVertical = GrowDirection.Both;
-        panel.OffsetRight = -16;
-        _adminPanel = panel;
-        ShowRows();
-        SendAdmin("players");
+        _adminWindow = new AdminWindow(m => OnlineSession.Game?.Send(m), () => _admin);
+        AddChild(_adminWindow);
+        _adminWindow.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+        _adminWindow.GrowHorizontal = _adminWindow.GrowVertical = GrowDirection.Both;
+    }
+
+    /// <summary>Opens the window on a player's page.</summary>
+    void OpenInWindow(string name)
+    {
+        if (!AdminPanelOpen)
+            ToggleAdminPanel();
+        _adminWindow?.Open(name);
     }
 
     void SetAdminRows(AdminPlayers players)
     {
         AdminPanelRows.Clear();
         AdminPanelRows.AddRange(players.Players);
-        ShowRows();
+        if (AdminPanelOpen)
+            _adminWindow!.SetRows(players);
     }
 
-    void ShowRows()
+    /// <summary>Hands the window what the server sent for it.</summary>
+    void ShowAdminData(Message message)
     {
-        if (_adminRows is null)
+        if (!AdminPanelOpen)
             return;
-        Ui.Ui.ClearChildren(_adminRows);
-        var me = OnlineSession.Game?.Welcome.PlayerId;
-        foreach (var row in AdminPanelRows)
+        switch (message)
         {
-            var flags = (row.Role != "Player" ? $" · {row.Role}" : "") + (row.Elevated ? " · admin" : "") + (row.Invisible ? " · invisible" : "")
-                + (row.MutedUntil is { } m ? $" · muted to {m}" : "");
-            var line = Ui.Ui.HBox(6, Ui.Ui.Text($"{row.Name} ({row.Account}) — ch {row.Channel}, zone {row.Location.Zone} {row.Location.X},{row.Location.Y}{flags}", 14));
-            line.GetChild<Label>(0).SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            if (row.Id != me)
-                foreach (var (label, action) in Actions(row.Name))
-                    line.AddChild(SmallButton(label, action));
-            _adminRows.AddChild(line);
+            case AdminPlayerDetail detail:
+                _adminWindow!.ShowDetail(detail);
+                break;
+            case AdminRoles roles:
+                _adminWindow!.SetRoles(roles);
+                break;
+            case AdminAudit audit:
+                _adminWindow!.SetAudit(audit);
+                break;
         }
-    }
-
-    static Button SmallButton(string text, Action action)
-    {
-        var b = Ui.Ui.Button(text, action, 13);
-        b.CustomMinimumSize = new Vector2(0, 26);
-        return b;
     }
 
     /// <summary>The actions this staff member may take on a player, as (label, action).</summary>
     List<(string Label, Action Action)> Actions(string name)
     {
         var list = new List<(string, Action)>();
-        string Reason() => _adminReason?.Text.Trim() is { Length: > 0 } r ? r : "";
         if (Can("player.view"))
-            list.Add(("Inspect", () => SendAdmin($"inspect {name}")));
+            list.Add(("Open in admin window", () => OpenInWindow(name)));
         if (Can("world.teleport"))
             list.Add(("Go to", () => SendAdmin($"tp {name}")));
         if (Can("player.summon"))
             list.Add(("Summon", () => SendAdmin($"summon {name}")));
         if (Can("admin.spectate"))
             list.Add(("Spectate", () => SendAdmin($"spectate {name}")));
-        if (Can("chat.mute"))
-            list.Add(("Mute 10m", () =>
-            {
-                if (Reason() is { Length: > 0 } r)
-                    SendAdmin($"mute {name} 10 {r}");
-                else
-                    AddSystem("Type a reason first (the box in the admin panel).");
-            }));
-        if (Can("player.kick"))
-            list.Add(("Kick", () =>
-            {
-                if (Reason() is { Length: > 0 } r)
-                    SendAdmin($"kick {name} {r}");
-                else
-                    AddSystem("Type a reason first (the box in the admin panel).");
-            }));
+        if (Can("player.view"))
+            list.Add(("Inspect", () => SendAdmin($"inspect {name}")));
         return list;
     }
 
-    /// <summary>Keeps the panel's list fresh while it's open.</summary>
+    /// <summary>Closes the window when Admin Mode ends.</summary>
     void TickAdmin(double delta)
     {
-        if (_adminPanel is not null && (_adminRefresh += delta) >= 3)
+        if (_adminWindow is not null && (!IsInstanceValid(_adminWindow) || _admin is not { Elevated: true }))
         {
-            _adminRefresh = 0;
-            if (_admin is { Elevated: true })
-                SendAdmin("players");
-            else
-                ToggleAdminPanel();
+            if (IsInstanceValid(_adminWindow))
+                _adminWindow.QueueFree();
+            _adminWindow = null;
         }
         FollowSpectated();
     }
@@ -218,6 +165,8 @@ public partial class OverworldScreen
     /// <summary>An admin reply meant for a window (true when it was shown there instead of in chat).</summary>
     bool ShowAdminWindow(AdminReply reply)
     {
+        if (AdminPanelOpen && reply.Topic.Length == 0)
+            _adminWindow!.ShowReply(reply);
         if (!reply.Topic.StartsWith("inspect:", StringComparison.Ordinal))
             return false;
         _inspector?.QueueFree();
@@ -228,7 +177,7 @@ public partial class OverworldScreen
             label.CustomMinimumSize = new Vector2(520, 0);
             lines.AddChild(label);
         }
-        lines.AddChild(Ui.Ui.Text("Read-only. Editing players comes with the M4 admin panels.", 13, Ui.Ui.Muted));
+        lines.AddChild(Ui.Ui.Text("Read-only. F9 → Player edits players.", 13, Ui.Ui.Muted));
         var panel = new PanelContainer();
         lines.AddChild(Ui.Ui.Button("Close", () =>
         {
@@ -295,4 +244,7 @@ public partial class OverworldScreen
     /// <summary>The labels of the right-click menu now open; for smoke tests.</summary>
     public IReadOnlyList<string> PlayerMenuItems =>
         _playerMenu is { } m ? Enumerable.Range(0, m.ItemCount).Select(i => m.GetItemText(i)).Where(t => t.Length > 0).ToList() : [];
+
+    /// <summary>Opens a player in the admin window; for smoke tests.</summary>
+    public void OpenPlayerForTest(string name) => OpenInWindow(name);
 }

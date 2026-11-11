@@ -14,6 +14,7 @@ const string Usage = """
       ir-server check [--config <server.pkir>]   Check the config and data pack, then exit
       ir-server admin grant <account> <role>     Set an account's role (Player, Helper, Moderator, GameMaster,
                                                  Admin, Owner) — how the first Owner is made
+      ir-server admin roles                      List the roles and their permissions
       ir-server admin staff                      List accounts with a staff role
       ir-server admin audit [count]              Show the latest audit log entries
     """;
@@ -109,22 +110,28 @@ static async Task<int> AdminCli(ServerConfig config, string[] args)
     using (var db = factory.CreateDbContext())
         InfiniteRoutes.Server.Data.Schema.Ensure(db);
     var accounts = new InfiniteRoutes.Server.Accounts.AccountService(factory, config, new InfiniteRoutes.Server.Accounts.StartPoint(0, 0, 0, 0));
+    var roles = new InfiniteRoutes.Server.Admin.RoleService(factory);
+    roles.Load();
     switch (args.FirstOrDefault())
     {
         case "grant" when args.Length == 3:
-            if (!Enum.TryParse<InfiniteRoutes.Server.Admin.Role>(args[2], ignoreCase: true, out var role))
+            if (roles.Find(args[2]) is not { } role)
             {
-                Console.Error.WriteLine($"No role {args[2]}. Roles: {string.Join(", ", Enum.GetNames<InfiniteRoutes.Server.Admin.Role>())}.");
+                Console.Error.WriteLine($"No role {args[2]}. Roles: {string.Join(", ", roles.All().Select(r => r.Name))}.");
                 return 1;
             }
-            if (await accounts.SetRole(args[1], role) is { } error)
+            if (await accounts.SetRole(args[1], role.Name) is { } error)
             {
                 Console.Error.WriteLine(error);
                 return 1;
             }
             var account = await accounts.ByName(args[1]);
             await accounts.Audit(account!.Id, "server console", "Server", "grant", account.Name, $"→ {role}");
-            Console.WriteLine($"{account.Name} is now {role}.{(role > InfiniteRoutes.Server.Admin.Role.Player && !account.TotpEnabled && config.Require2fa ? " They need to set up two-factor (Play Online → Account) before Admin Mode." : "")}");
+            Console.WriteLine($"{account.Name} is now {role.Name}.{(role.IsStaff && !account.TotpEnabled && config.Require2fa ? " They need to set up two-factor (Play Online → Account) before Admin Mode." : "")}");
+            return 0;
+        case "roles":
+            foreach (var r in roles.All())
+                Console.WriteLine($"{r.Name,-14} rank {r.Rank,3}{(r.Builtin ? " (built in)" : "")}: {string.Join(", ", r.All)}");
             return 0;
         case "staff":
             foreach (var (name, r, twoFactor) in await accounts.Staff())
@@ -135,7 +142,7 @@ static async Task<int> AdminCli(ServerConfig config, string[] args)
                 Console.WriteLine($"{e.Time:yyyy-MM-dd HH:mm:ss}  {e.Actor} ({e.Role})  {e.Action}  {e.Target}  {e.Details}");
             return 0;
         default:
-            Console.Error.WriteLine("Usage: ir-server admin grant <account> <role> | admin staff | admin audit [count]");
+            Console.Error.WriteLine("Usage: ir-server admin grant <account> <role> | admin roles | admin staff | admin audit [count]");
             return 1;
     }
 }

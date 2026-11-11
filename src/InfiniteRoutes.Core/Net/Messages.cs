@@ -61,6 +61,10 @@ public sealed record NetMove(
 [Union(22, typeof(SetLead))]
 [Union(23, typeof(AdminPlayers))]
 [Union(24, typeof(SpectateStatus))]
+[Union(25, typeof(AdminAction))]
+[Union(26, typeof(AdminPlayerDetail))]
+[Union(27, typeof(AdminRoles))]
+[Union(28, typeof(AdminAudit))]
 public abstract record Message;
 
 /// <summary>Chat channels: near you (same map and channel), the whole server, one player, or the server itself.</summary>
@@ -179,7 +183,8 @@ public sealed record AdminPlayerRow(
     [property: Key(5)] NetLocation Location,
     [property: Key(6)] bool Elevated,
     [property: Key(7)] bool Invisible,
-    [property: Key(8)] string? MutedUntil);
+    [property: Key(8)] string? MutedUntil,
+    [property: Key(9)] bool Online = true);
 
 /// <summary>Everyone online, for the admin panel (the answer to the "players" command).</summary>
 [MessagePackObject]
@@ -211,3 +216,64 @@ public sealed record StateSnapshot([property: Key(0)] string Json) : Message;
 /// <summary>A message for the player: a channel switch, a server announcement, why they were disconnected.</summary>
 [MessagePackObject]
 public sealed record Notice([property: Key(0)] string Text, [property: Key(1)] int Channel = 0) : Message;
+
+// ---- The admin window (BUILD_SPEC §11.3) --------------------------------------------------------------------------
+
+/// <summary>
+/// A structured admin action from the admin window: <see cref="Verb"/> on <see cref="Target"/> (a character or role
+/// name) with named <see cref="Args"/>. <see cref="Reason"/> is required for punishments and economy changes. The
+/// server checks the caller's permissions, applies it, audits it and answers with an <see cref="AdminReply"/> (and a
+/// fresh <see cref="AdminPlayerDetail"/> / <see cref="AdminRoles"/> when those changed).
+/// </summary>
+[MessagePackObject]
+public sealed record AdminAction(
+    [property: Key(0)] string Verb,
+    [property: Key(1)] string Target,
+    [property: Key(2)] IReadOnlyDictionary<string, string> Args,
+    [property: Key(3)] string Reason = "") : Message;
+
+/// <summary>Everything the player editor shows about one character (online or not).</summary>
+[MessagePackObject]
+public sealed record AdminPlayerDetail(
+    [property: Key(0)] string Character,
+    [property: Key(1)] string Account,
+    [property: Key(2)] string Role,
+    [property: Key(3)] bool Online,
+    [property: Key(4)] NetLocation Location,
+    [property: Key(5)] string? MutedUntil,
+    [property: Key(6)] string? BannedUntil,
+    [property: Key(7)] string? BanReason,
+    [property: Key(8)] string? StateJson,
+    [property: Key(9)] string LastSeen) : Message;
+
+/// <summary>A role: its name, rank (higher outranks lower), whether it's built in, and what it may do.</summary>
+[MessagePackObject]
+public sealed record RoleRow(
+    [property: Key(0)] string Name,
+    [property: Key(1)] int Rank,
+    [property: Key(2)] bool Builtin,
+    [property: Key(3)] IReadOnlyList<string> Permissions,
+    [property: Key(4)] int Accounts);
+
+/// <summary>A permission the server knows, with what it lets a role do.</summary>
+[MessagePackObject]
+public sealed record PermissionRow([property: Key(0)] string Key, [property: Key(1)] string Description);
+
+/// <summary>Every role and every permission, for the Roles tab.</summary>
+[MessagePackObject]
+public sealed record AdminRoles([property: Key(0)] IReadOnlyList<RoleRow> Roles, [property: Key(1)] IReadOnlyList<PermissionRow> Catalog) : Message;
+
+/// <summary>One audit log entry; <see cref="Change"/> is the change it can be reverted with (0 when it can't).</summary>
+[MessagePackObject]
+public sealed record AuditRow(
+    [property: Key(0)] long Id,
+    [property: Key(1)] string Time,
+    [property: Key(2)] string Actor,
+    [property: Key(3)] string Role,
+    [property: Key(4)] string Action,
+    [property: Key(5)] string Target,
+    [property: Key(6)] string Details,
+    [property: Key(7)] long Change);
+
+[MessagePackObject]
+public sealed record AdminAudit([property: Key(0)] IReadOnlyList<AuditRow> Entries) : Message;

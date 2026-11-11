@@ -11,7 +11,8 @@ namespace InfiniteRoutes.Server.Admin;
 /// Account screen). In Admin Mode they can run the commands their role allows. The server checks every command; each
 /// one, and every elevation (including failed ones), goes in the append-only audit log.
 /// </summary>
-public sealed class AdminService(WorldService world, AccountService accounts, ServerConfig config, ILogger<AdminService> log)
+public sealed partial class AdminService(WorldService world, AccountService accounts, RoleService roles, ServerConfig config,
+    ILogger<AdminService> log, Game.GameRules? rules = null)
 {
     const int MaxAttempts = 5;
     static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(5);
@@ -35,7 +36,11 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
         new("invisible", Permissions.Invisible, "invisible [on|off]", "hidden from players (not from staff in Admin Mode)"),
         new("noclip", Permissions.Noclip, "noclip [on|off]", "walk through walls at any speed"),
         new("grant", Permissions.Roles, "grant <account> <role>", "set an account's role (below your own; Owner can do any)"),
+        new("ban", Permissions.Ban, "ban <player> <minutes|perm> <reason>", "ban a player's account (and disconnect them)"),
+        new("unban", Permissions.Ban, "unban <player>", "lift a ban"),
+        new("roles", null, "roles", "the roles and their permissions"),
         new("audit", Permissions.AuditRead, "audit [count]", "the latest audit log entries"),
+        new("revert", Permissions.Revert, "revert <change> [force]", "undo a player change from the audit log"),
         new("exit", null, "exit", "leave Admin Mode"),
     ];
 
@@ -51,6 +56,9 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
                 case AdminCommand c:
                     await Run(p, c.Text);
                     break;
+                case AdminAction a:
+                    await Act(p, a);
+                    break;
             }
         }
         catch (Exception e)
@@ -60,12 +68,14 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
         }
     }
 
-    Task Audit(WorldPlayer p, string action, string target, string details) =>
-        accounts.Audit(p.AccountId, p.AccountName, p.Role.ToString(), action, target, details);
+    Task Audit(WorldPlayer p, string action, string target, string details, long change = 0) =>
+        accounts.Audit(p.AccountId, p.AccountName, world.RoleOf(p).Name, action, target, details, change);
+
+    RoleInfo RoleOf(WorldPlayer p) => world.RoleOf(p);
 
     async Task Elevate(WorldPlayer p, Elevate e)
     {
-        if (p.Role == Role.Player)
+        if (!RoleOf(p).IsStaff)
         {
             p.Link.Send(new AdminReply(false, ["Your account has no staff role."]));
             return;
@@ -98,7 +108,7 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
         lock (_attempts)
             _attempts.Remove(p.AccountId);
         world.SetElevated(p, true);
-        p.Link.Send(new AdminReply(true, [$"Admin Mode on ({p.Role}). Type /help for your commands. It ends after {config.ElevationMinutes} minutes without an admin action."]));
+        p.Link.Send(new AdminReply(true, [$"Admin Mode on ({RoleOf(p).Name}). Type /help for your commands. It ends after {config.ElevationMinutes} minutes without an admin action."]));
     }
 
     async Task Run(WorldPlayer p, string text)
@@ -109,7 +119,7 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
         void Reply(bool ok, params string[] lines) => p.Link.Send(new AdminReply(ok, lines));
         if (!p.Elevated)
         {
-            Reply(false, p.Role == Role.Player ? "Your account has no staff role." : "Enter Admin Mode first (/admin).");
+            Reply(false, !RoleOf(p).IsStaff ? "Your account has no staff role." : "Enter Admin Mode first (/admin).");
             return;
         }
         var verb = parts[0].ToLowerInvariant();
@@ -119,9 +129,9 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
             Reply(false, $"Unknown command {verb}. Type /help.");
             return;
         }
-        if (command.Permission is { } perm && !Permissions.Has(p.Role, perm))
+        if (command.Permission is { } perm && !RoleOf(p).Has(perm))
         {
-            Reply(false, $"Your role ({p.Role}) can't use {verb}.");
+            Reply(false, $"Your role ({RoleOf(p).Name}) can't use {verb}.");
             await Audit(p, "denied", verb, string.Join(' ', args));
             return;
         }
@@ -143,7 +153,7 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
         switch (verb)
         {
             case "help":
-                Reply(true, [.. Commands.Where(c => c.Permission is null || Permissions.Has(p.Role, c.Permission)).Select(c => $"/{c.Usage} — {c.Help}")]);
+                Reply(true, [.. Commands.Where(c => c.Permission is null || RoleOf(p).Has(c.Permission)).Select(c => $"/{c.Usage} — {c.Help}")]);
                 return;
             case "exit":
                 world.SetElevated(p, false);
@@ -154,7 +164,7 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
             {
                 var players = world.Players();
                 Reply(true, [$"{players.Count} online:", .. players.Select(o =>
-                    $"{o.Name} ({o.AccountName}{(o.Role > Role.Player ? ", " + o.Role : "")}) — channel {o.Channel}, zone {o.Zone} at {o.X},{o.Y}{(o.Elevated ? " [admin]" : "")}{(o.Elevated && o.Invisible ? " [invisible]" : "")}")]);
+                    $"{o.Name} ({o.AccountName}{(RoleOf(o).IsStaff ? ", " + RoleOf(o).Name : "")}) — channel {o.Channel}, zone {o.Zone} at {o.X},{o.Y}{(o.Elevated ? " [admin]" : "")}{(o.Elevated && o.Invisible ? " [invisible]" : "")}")]);
                 await Audit(p, "who", "", $"{players.Count} online");
                 return;
             }
@@ -170,9 +180,9 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
                     Reply(false, "Usage: mute <player> <minutes 1–43200> <reason> (the reason is required).");
                     return;
                 }
-                if (t.Role >= p.Role && t != p)
+                if (RoleOf(t).Rank >= RoleOf(p).Rank && t != p)
                 {
-                    Reply(false, $"You can't mute a {t.Role}.");
+                    Reply(false, $"You can't mute a {RoleOf(t).Name}.");
                     return;
                 }
                 var reason = string.Join(' ', args.Skip(2));
@@ -219,7 +229,7 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
                     return;
                 var lines = new List<string>
                 {
-                    $"{t.Name} — account {t.AccountName}, role {t.Role}",
+                    $"{t.Name} — account {t.AccountName}, role {RoleOf(t).Name}",
                     $"Channel {t.Channel}, zone {t.Zone} at {t.X},{t.Y}{(t.Elevated ? ", in Admin Mode" : "")}",
                 };
                 if (t.State is { } s)
@@ -244,13 +254,13 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
                     Reply(false, "Give a reason: kick <player> <reason>.");
                     return;
                 }
-                if (t.Role >= p.Role && t != p)
+                if (RoleOf(t).Rank >= RoleOf(p).Rank && t != p)
                 {
-                    Reply(false, $"You can't kick a {t.Role}.");
+                    Reply(false, $"You can't kick a {RoleOf(t).Name}.");
                     return;
                 }
+                await Audit(p, "kick", t.Name, reason);   // logged before it happens
                 world.Kick(t, $"You were disconnected by staff: {reason}");
-                await Audit(p, "kick", t.Name, reason);
                 Reply(true, $"Kicked {t.Name}.");
                 return;
             }
@@ -308,32 +318,44 @@ public sealed class AdminService(WorldService world, AccountService accounts, Se
             }
             case "grant":
             {
-                if (args.Length != 2 || !Enum.TryParse<Role>(args[1], ignoreCase: true, out var role))
+                if (args.Length != 2)
                 {
-                    Reply(false, $"Usage: {command.Usage} (roles: {string.Join(", ", Enum.GetNames<Role>())})");
+                    Reply(false, $"Usage: {command.Usage} (roles: {string.Join(", ", roles.All().Select(r => r.Name))})");
                     return;
                 }
-                if (await accounts.ByName(args[0]) is not { } target)
+                var (ok, message) = await GrantRole(p, args[0], args[1]);
+                Reply(ok, message);
+                return;
+            }
+            case "ban":
+            {
+                if (args.Length < 3)
                 {
-                    Reply(false, $"No account named {args[0]}.");
+                    Reply(false, $"Usage: {command.Usage} (the reason is required).");
                     return;
                 }
-                var current = Permissions.Parse(target.Role);
-                if (!Permissions.CanGrant(p.Role, current, role))
+                var (ok, message) = await Ban(p, args[0], args[1], string.Join(' ', args.Skip(2)));
+                Reply(ok, message);
+                return;
+            }
+            case "unban":
+            {
+                var (ok, message) = await Ban(p, args.FirstOrDefault() ?? "", "off", "");
+                Reply(ok, message);
+                return;
+            }
+            case "roles":
+                Reply(true, [.. roles.All().Select(r => $"{r.Name} (rank {r.Rank}{(r.Builtin ? ", built in" : "")}): {string.Join(", ", r.All)}")]);
+                return;
+            case "revert":
+            {
+                if (args.Length == 0 || !long.TryParse(args[0], out var id))
                 {
-                    Reply(false, $"A {p.Role} can't make a {current} into a {role}.");
-                    await Audit(p, "grant-denied", target.Name, $"{current} → {role}");
+                    Reply(false, $"Usage: {command.Usage}");
                     return;
                 }
-                await accounts.SetRole(target.Name, role);
-                await Audit(p, "grant", target.Name, $"{current} → {role}");
-                // Takes effect for them now if they're online (out of Admin Mode if they were demoted).
-                if (world.Players().FirstOrDefault(o => o.AccountId == target.Id) is { } online)
-                {
-                    online.Role = role;
-                    world.SetElevated(online, online.Elevated && role > Role.Player && role >= current);
-                }
-                Reply(true, $"{target.Name} is now {role}.");
+                var (ok, lines) = await Revert(p, id, args.Skip(1).Any(a => a.Equals("force", StringComparison.OrdinalIgnoreCase)));
+                Reply(ok, [.. lines]);
                 return;
             }
             case "audit":

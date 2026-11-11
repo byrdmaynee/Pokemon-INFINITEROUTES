@@ -24,7 +24,8 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
     public int Appearance { get; } = character.Appearance;
     public long AccountId { get; } = account.Id;
     public string AccountName { get; } = account.Name;
-    public Role Role { get; internal set; } = Permissions.Parse(account.Role);
+    /// <summary>The account's role name (its permissions come from the server's <see cref="RoleService"/>, so edits apply at once).</summary>
+    public string RoleName { get; internal set; } = account.Role;
     public IClientLink Link { get; } = link;
     public int Channel { get; set; } = channel;
     public string Map { get; set; } = map;
@@ -33,7 +34,7 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
     public int Y { get; set; } = character.Y;
     public int Facing { get; set; } = character.Facing;
     /// <summary>The character's game (party, Bag, progress); null when the server has no game data.</summary>
-    public GameState? State { get; } = state;
+    public GameState? State { get; internal set; } = state;
 
     /// <summary>In Admin Mode (password + code checked), until <see cref="ElevatedUntil"/> unless they keep acting.</summary>
     public bool Elevated { get; internal set; }
@@ -80,8 +81,11 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
 /// are thread-safe.
 /// </remarks>
 public sealed class WorldService(IWorldData world, ServerConfig config, Func<IReadOnlyList<PlayerSave>, Task> save,
-    Func<GameState, string>? stateJson = null)
+    Func<GameState, string>? stateJson, RoleService roles)
 {
+    /// <summary>The player's role as it is now.</summary>
+    public RoleInfo RoleOf(WorldPlayer p) => roles.Get(p.RoleName);
+
     public const int ViewRadius = 40;
     public const int MaxChat = 200;
     const double WalkSeconds = 0.26, RunSeconds = 0.13;
@@ -143,7 +147,7 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
                     state = live;
                 RemoveLocked(previous);
             }
-            if (_players.Count >= config.MaxPlayers && Permissions.Parse(account.Role) == Role.Player)
+            if (_players.Count >= config.MaxPlayers && !roles.Get(account.Role).IsStaff)
                 return (null, "The server is full.");
             var counts = Enumerable.Range(1, config.Channels).Select(c => (Channel: c, Count: _players.Values.Count(p => p.Channel == c))).ToList();
             // Fill channels in order, so players meet rather than being spread thin.
@@ -394,7 +398,85 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
     // ---- What admin commands do (AdminService checks who may) ------------------------------------------------------
 
     public AdminStatus StatusOf(WorldPlayer p) =>
-        new(p.Role.ToString(), p.Elevated, p.Elevated && p.Invisible, p.Elevated && p.Noclip, Permissions.Of(p.Role));
+        new(RoleOf(p).Name, p.Elevated, p.Elevated && p.Invisible, p.Elevated && p.Noclip, RoleOf(p).All);
+
+    /// <summary>Tells everyone online whose role changed (or whose role's permissions changed) where they stand now.</summary>
+    public void RefreshStaff()
+    {
+        lock (_gate)
+            foreach (var p in _players.Values)
+            {
+                var role = RoleOf(p);
+                if (p.Elevated && !role.IsStaff)
+                {
+                    p.Elevated = p.Invisible = p.Noclip = false;
+                    StopSpectatingLocked(p);
+                }
+                if (role.IsStaff || p.Elevated)
+                    p.Link.Send(StatusOf(p));
+            }
+    }
+
+    /// <summary>Replaces an online player's whole game (a revert), writes it and sends it to them.</summary>
+    public string? ReplaceState(WorldPlayer p, GameState state)
+    {
+        lock (_gate)
+        {
+            if (!_players.ContainsKey(p.Id))
+                return $"{p.Name} just left; try again.";
+            p.State = state;
+            p.StateDirty = true;
+            SaveNowLocked(p);
+            SendState(p);
+            return null;
+        }
+    }
+
+    /// <summary>An online player's game as JSON now (null when the server keeps none).</summary>
+    public string? StateJsonOf(WorldPlayer p)
+    {
+        lock (_gate)
+            return p.State is { } s && stateJson is not null ? stateJson(s) : null;
+    }
+
+    /// <summary>The online player playing the character named <paramref name="name"/> (exactly), or null.</summary>
+    public WorldPlayer? Playing(string name)
+    {
+        lock (_gate)
+            return _players.Values.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>Changes an online player's role (after the account was changed) and tells them.</summary>
+    public void SetRole(WorldPlayer p, string role)
+    {
+        lock (_gate)
+            p.RoleName = role;
+        RefreshStaff();
+        if (!roles.Get(role).IsStaff)
+            p.Link.Send(StatusOf(p));
+    }
+
+    /// <summary>
+    /// Runs <paramref name="edit"/> on an online player's game state under the world's lock, writes it at once (an admin
+    /// edit is important) and sends them the new state. Returns the state's JSON before and after, or the edit's error.
+    /// </summary>
+    public (string? Before, string? After, string? Error) EditState(WorldPlayer p, Func<GameState, string?> edit)
+    {
+        lock (_gate)
+        {
+            if (p.State is not { } state || stateJson is null)
+                return (null, null, "This server keeps no game state (no battle data).");
+            if (!_players.ContainsKey(p.Id))
+                return (null, null, $"{p.Name} just left; try again.");
+            var before = stateJson(state);
+            if (edit(state) is { } error)
+                return (null, null, error);
+            p.StateDirty = true;
+            SaveNowLocked(p);
+            SendState(p);
+            return (before, stateJson(state), null);
+        }
+    }
 
     /// <summary>Turns Admin Mode on or off for <paramref name="p"/> (off also ends invisibility and noclip).</summary>
     public void SetElevated(WorldPlayer p, bool on)
@@ -525,7 +607,7 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
         lock (_gate)
         {
             var now = DateTime.UtcNow;
-            return _players.Values.OrderBy(p => p.Name).Select(p => new AdminPlayerRow(p.Id, p.Name, p.AccountName, p.Role.ToString(), p.Channel,
+            return _players.Values.OrderBy(p => p.Name).Select(p => new AdminPlayerRow(p.Id, p.Name, p.AccountName, RoleOf(p).Name, p.Channel,
                 p.Location, p.Elevated, p.Elevated && p.Invisible, p.MutedUntil is { } m && m > now ? m.ToLocalTime().ToString("HH:mm") : null)).ToList();
         }
     }

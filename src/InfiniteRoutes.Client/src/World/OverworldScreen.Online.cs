@@ -127,6 +127,9 @@ public partial class OverworldScreen
                 case SpectateStatus spectate:
                     SetSpectating(spectate);
                     break;
+                case AdminPlayerDetail or AdminRoles or AdminAudit:
+                    ShowAdminData(message);
+                    break;
                 case AdminStatus status:
                     SetAdminStatus(status);
                     break;

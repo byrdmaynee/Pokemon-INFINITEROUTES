@@ -45,8 +45,10 @@ public static class ServerHost
         if (rules is not null)
             builder.Services.AddSingleton(rules);
         builder.Services.AddSingleton(s => new AccountService(s.GetRequiredService<IDbContextFactory<IrDb>>(), config, world.Start, rules));
+        builder.Services.AddSingleton<Admin.RoleService>();
         builder.Services.AddSingleton(s => new WorldService(world, config,
-            saves => s.GetRequiredService<AccountService>().SavePlayers(saves), rules is null ? null : rules.Json));
+            saves => s.GetRequiredService<AccountService>().SavePlayers(saves), rules is null ? null : rules.Json,
+            s.GetRequiredService<Admin.RoleService>()));
         builder.Services.AddSingleton<Admin.AdminService>();
         builder.Services.AddSingleton<GameListener>();
         builder.Services.AddHostedService(s => s.GetRequiredService<GameListener>());
@@ -66,6 +68,10 @@ public static class ServerHost
             if (was is > 0 and < Schema.Current)
                 app.Logger.LogInformation("Database upgraded from schema {Old} to {New}", was, Schema.Current);
         }
+        var roleService = app.Services.GetRequiredService<Admin.RoleService>();
+        roleService.Load();
+        var worldService = app.Services.GetRequiredService<WorldService>();
+        roleService.Changed += worldService.RefreshStaff;
         if (app.Services.GetRequiredService<AccountService>().Bootstrap().GetAwaiter().GetResult() is { } bootstrap)
             app.Logger.LogWarning("{Bootstrap}", bootstrap);
         app.UseRateLimiter();
@@ -85,9 +91,9 @@ public static class ServerHost
             await accounts.Register(c.Name, c.Password) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }))
             .RequireRateLimiting("auth");
         api.MapPost("/login", async (Credentials c, AccountService accounts) =>
-            await accounts.Login(c.Name, c.Password) is { } login
+            await accounts.LoginOrWhy(c.Name, c.Password) is var (login, why) && login is not null
                 ? Results.Ok(new { token = login.Token, expires = login.Expires, account = login.Account })
-                : Results.Json(new { error = "Wrong account name or password." }, statusCode: StatusCodes.Status401Unauthorized))
+                : Results.Json(new { error = why ?? "Wrong account name or password." }, statusCode: why is null ? StatusCodes.Status401Unauthorized : StatusCodes.Status403Forbidden))
             .RequireRateLimiting("auth");
         api.MapPost("/logout", async (HttpRequest request, AccountService accounts) =>
         {

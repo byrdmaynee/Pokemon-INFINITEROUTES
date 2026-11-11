@@ -148,7 +148,13 @@ public sealed class Pokemon
     /// <summary>Everything needed to rebuild this Pokémon later (saves, mail, market listings).</summary>
     public PokemonSave ToSave() =>
         new(Species.Id, Level, Exp, Nature, Gender, Shiny, [.. Ivs], [.. Evs], Hp, Status, SleepTurns,
-            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot, HeldItem, Nickname);
+            Moves.Select(m => new MoveSave(m.Move.Id, m.Pp)).ToList(), AbilitySlot, HeldItem, Nickname, AdminOrigin);
+
+    /// <summary>
+    /// Made or changed by staff (BUILD_SPEC §11.4): kept with the Pokémon for good, so anything an admin put into the
+    /// game can always be found. Only staff tools show it.
+    /// </summary>
+    public bool AdminOrigin { get; set; }
 
     /// <summary>Rebuilds a saved Pokémon; null when its species isn't in <paramref name="data"/> (a different ROM).</summary>
     public static Pokemon? FromSave(BattleData data, PokemonSave save)
@@ -171,6 +177,7 @@ public sealed class Pokemon
             if (data.Move(m.Move) is { } move)
                 mon.Moves.Add(new MoveSlot(move) { Pp = Math.Clamp(m.Pp, 0, move.Pp) });
         mon.Hp = Math.Clamp(save.Hp, 0, mon.MaxHp);
+        mon.AdminOrigin = save.AdminOrigin;
         return mon;
     }
 
@@ -259,7 +266,8 @@ public sealed class Pokemon
 public sealed record MoveSave(int Move, int Pp);
 
 public sealed record PokemonSave(int Species, int Level, int Exp, Nature Nature, Gender Gender, bool Shiny, int[] Ivs, int[] Evs,
-    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0, int HeldItem = 0, string? Nickname = null);
+    int Hp, Ailment Status, int SleepTurns, List<MoveSave> Moves, int AbilitySlot = 0, int HeldItem = 0, string? Nickname = null,
+    bool AdminOrigin = false);
 
 /// <summary>Total experience needed to reach a level, for the six growth rates (personal byte 0x15).</summary>
 public static class ExpCurve

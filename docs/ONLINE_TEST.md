@@ -60,25 +60,40 @@ Six lines per ten seconds at most (`[chat]` in server.pkir).
    dotnet run --project <repo>/src/InfiniteRoutes.Server -- admin grant <account> owner
    ```
 
-   (or set `[admin] bootstrap_owner = "<account>"` and restart). `admin staff` lists staff, `admin audit` shows the log.
+   (or set `[admin] bootstrap_owner = "<account>"` and restart). `admin staff` lists staff, `admin roles` lists the
+   roles with their ranks and permissions, `admin audit` shows the log.
 2. In the client: Play Online → log in → **Account and two-factor…** → **Set up two-factor**. Add the key to an
    authenticator app (Google/Microsoft Authenticator, 1Password, …) and type its code to turn it on.
 3. In the game type `/admin`, then your password and the app's current code. The HUD shows ⚑ ADMIN MODE.
 4. `/help` lists what your role can do: `/who`, `/inspect <player>`, `/mute <player> <minutes> <reason>`,
    `/unmute <player>`, `/kick <player> <reason>`, `/announce <text>`, `/tp <player>` or `/tp <zone> <x> <y>`,
    `/summon <player>`, `/spectate <player>` / `/spectate off`, `/invisible`, `/noclip`, `/grant <account> <role>`,
-   `/audit`, `/exit`. Admin Mode ends after 30 minutes without an admin action.
-5. **F9** opens the admin panel: everyone online (refreshed every 3 s) with Inspect, Go to, Summon, Spectate,
-   Mute 10m and Kick buttons (only the ones your role allows; type a reason first for mute and kick), Invisible and
-   Noclip, an announcement box and Leave Admin Mode. Inspect opens a window (read-only). **Right-click** another
-   player in the world for the same actions.
+   `/ban <player> <minutes|perm> <reason>`, `/unban <player>`, `/roles`, `/audit`, `/revert <change> [force]`,
+   `/exit`. Admin Mode ends after 30 minutes without an admin action.
+5. **F9** opens the admin window. Type a **reason** in the box at the top first: every change needs one, and it goes
+   in the audit log. Buttons your role can't use are greyed out (the server checks again anyway).
+   - **Players:** Invisible/Noclip, an announcement box and Leave Admin Mode; who's online, or **Search everyone**
+     by part of a character or account name (offline players too). Open, Go to, Summon, Spectate per player.
+   - **Player:** account, role, where they are, mute/ban state. Set their role, ban (minutes or `perm`) or unban,
+     mute, kick, go to, summon, spectate. Their game, online or offline: set money, give or take items, heal the
+     party, give a Pokémon, release one, and **Edit** a Pokémon (level, nature, shiny, nickname, ability, held item,
+     IVs, EVs, moves). The server checks an edited Pokémon could be obtained normally (level-up moves at its level,
+     IVs/EVs in range, no hidden ability, a real item); one that couldn't needs the "make Pokémon that couldn't be
+     obtained" permission. Pokémon made or edited by staff are marked ★ (only staff see it).
+   - **Roles:** each role's rank and permissions. Owners make roles (copying another's permissions or none), tick
+     and untick permissions, move a role's rank (1–99) and delete unused ones. Owner and Player are fixed.
+   - **Audit:** the latest admin actions; game edits have **Revert**. If the game changed since the edit, it says so
+     and offers **Force revert**.
+   **Right-click** another player in the world for Open in admin window, Go to, Summon, Spectate and Inspect.
 6. Spectating makes you invisible and keeps you with the player — through doors and across the map; the camera
    follows them. You can't walk meanwhile; `/spectate off` (or leaving Admin Mode) returns.
 
-Roles, lowest to highest: Player, Helper (who, mute), Moderator (+ inspect, kick, audit), Game Master (+ announce,
-teleport, summon, spectate, invisible, noclip), Admin (+ grant roles below Admin), Owner (everything). Every elevation
-(and failed try) and every command is in the audit log. Mutes are kept on the account, so logging out doesn't lift
-them.
+Roles are kept in the database and start as Player 0, Helper 10 (who, mute), Moderator 20 (+ look up players,
+kick, ban, read the audit), Game Master 30 (+ announce, teleport, summon, spectate, invisible, noclip, edit items and
+Pokémon), Admin 40 (+ grant roles, unobtainable Pokémon, revert) and Owner 100 (everything, always). The numbers are
+ranks: you can only act on, and grant, roles ranked below yours (Owners can do anything). Every elevation (and failed
+try), every command and every change is in the audit log. Mutes and bans are kept on the account: a banned account
+can't log in and is told why and until when.
 
 ## Your game on the server
 
@@ -106,12 +121,17 @@ of those restarts that player's 30–60 s batch timer, and anything else is save
       shows it all.
 - [ ] X shows your party, Bag and trainer card; with two Pokémon, "Make lead" reorders them and it's kept after
       logging out and in.
+- [ ] F9 in Admin Mode: open the other player, set their money and give an item (their X menu shows it), edit their
+      Pokémon's level, then revert it from the Audit tab. Make a role, tick a permission, grant it to them, and see
+      `/help` on their side change after they enter Admin Mode. Ban them: they're disconnected and can't log in.
 
 ## Not in this slice
 
-Battles, wild Pokémon, NPC scripts, items and the other menu tabs (quests, mail, market) aren't online yet; nor
-is editing players from the panel (M4). Your offline game is separate and unchanged.
+Battles, wild Pokémon, NPC scripts, items and the other menu tabs (quests, mail, market) aren't online yet. Your
+offline game is separate and unchanged.
 An older server database is upgraded in place on start; its characters get a new game the first time they join.
 
 `--capture-online=<dir> --account=<name> --walk=R3U1 --stay=10` plays a scripted session against the local server
-(registering or logging in, trusting the certificate, making a character, walking) with screenshots.
+(registering or logging in, trusting the certificate, making a character, walking) with screenshots. `--api-port=`
+picks a server on another port; `--say=` runs chat lines and steps such as `panel`, `w:open=<name>`, `w:tab=2`,
+`w:reason=…`, `w:press=<button text>`, `w:spin=<n>,<value>` and `w:dump` that drive the admin window.

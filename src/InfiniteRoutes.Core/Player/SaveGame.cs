@@ -96,6 +96,15 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
 
     public static SaveGame? FromJson(string json) => JsonSerializer.Deserialize<SaveGame>(json, Json);
 
+    /// <summary>One Pokémon as JSON, the way saves write it (the admin window sends Pokémon this way).</summary>
+    public static string PokemonJson(PokemonSave pokemon) => JsonSerializer.Serialize(pokemon, Json);
+
+    public static PokemonSave? PokemonFromJson(string json) => JsonSerializer.Deserialize<PokemonSave>(json, Json);
+
+    /// <summary>The save's JSON without its timestamp, so two saves of the same game compare equal.</summary>
+    public static string Comparable(string json) =>
+        FromJson(json) is { } save ? JsonSerializer.Serialize(save with { Saved = default }, Json) : json;
+
     /// <summary>
     /// Writes the save safely: to a temporary file first, then swapped in, keeping the previous save as <c>.bak</c>,
     /// so a crash mid-write never leaves a broken save behind.

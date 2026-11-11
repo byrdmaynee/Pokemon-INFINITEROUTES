@@ -58,8 +58,18 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
         return null;
     }
 
+    /// <summary>Why the account can't play now (banned), or null.</summary>
+    public static string? BanMessage(Account a) =>
+        a.BannedUntil is { } until && until > DateTime.UtcNow
+            ? (until == DateTime.MaxValue ? "This account is banned" : $"This account is banned until {until.ToLocalTime():yyyy-MM-dd HH:mm}")
+              + (a.BanReason is { Length: > 0 } r ? $": {r}" : ".")
+            : null;
+
     /// <summary>Checks the password and starts a session; null when the name or password is wrong.</summary>
-    public async Task<LoginResult?> Login(string name, string password)
+    public async Task<LoginResult?> Login(string name, string password) => (await LoginOrWhy(name, password)).Result;
+
+    /// <summary>Like <see cref="Login"/>, with the reason when it's refused (wrong password, or banned).</summary>
+    public async Task<(LoginResult? Result, string? Error)> LoginOrWhy(string name, string password)
     {
         await using var db = await dbs.CreateDbContextAsync();
         var key = (name ?? "").ToLowerInvariant();
@@ -68,15 +78,17 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
         {
             // Spend the same time as a real check, so timing doesn't reveal which names exist.
             Hash(password ?? "", new byte[16], Iterations);
-            return null;
+            return (null, null);
         }
         if (!CryptographicOperations.FixedTimeEquals(Hash(password ?? "", account.PasswordSalt, account.PasswordIterations), account.PasswordHash))
-            return null;
+            return (null, null);
+        if (BanMessage(account) is { } banned)
+            return (null, banned);
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var expires = DateTime.UtcNow.AddHours(config.SessionHours);
         db.Sessions.Add(new Session { AccountId = account.Id, TokenHash = TokenHash(token), Created = DateTime.UtcNow, Expires = expires });
         await db.SaveChangesAsync();
-        return new LoginResult(token, expires, account.Name);
+        return (new LoginResult(token, expires, account.Name), null);
     }
 
     /// <summary>The account a token belongs to, if it's a live session.</summary>
@@ -212,22 +224,84 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
     }
 
     /// <summary>Sets an account's role (the command line's <c>admin grant</c>, and admins in game); null when it worked.</summary>
-    public async Task<string?> SetRole(string accountName, Role role)
+    public Task<string?> SetRole(string accountName, Role role) => SetRole(accountName, role.ToString());
+
+    /// <summary>Sets an account's role by name (the caller checks the role exists); null when it worked.</summary>
+    public async Task<string?> SetRole(string accountName, string role)
     {
         await using var db = await dbs.CreateDbContextAsync();
         var key = (accountName ?? "").ToLowerInvariant();
         if (await db.Accounts.FirstOrDefaultAsync(a => a.NameKey == key) is not { } a)
             return $"No account named {accountName}.";
-        a.Role = role.ToString();
+        a.Role = role;
         await db.SaveChangesAsync();
         return null;
     }
 
-    public async Task<List<(string Name, Role Role, bool TwoFactor)>> Staff()
+    /// <summary>Accounts with any role but Player, with their role name and whether two-factor is on.</summary>
+    public async Task<List<(string Name, string Role, bool TwoFactor)>> Staff()
     {
         await using var db = await dbs.CreateDbContextAsync();
-        var rows = await db.Accounts.AsNoTracking().Where(a => a.Role != "Player").ToListAsync();
-        return rows.Select(a => (a.Name, Permissions.Parse(a.Role), a.TotpEnabled)).OrderByDescending(x => x.Item2).ToList();
+        var rows = await db.Accounts.AsNoTracking().ToListAsync();
+        return rows.Where(a => !a.Role.Equals("Player", StringComparison.OrdinalIgnoreCase)).Select(a => (a.Name, a.Role, a.TotpEnabled)).OrderBy(x => x.Name).ToList();
+    }
+
+    /// <summary>Bans an account until <paramref name="until"/> (<see cref="DateTime.MaxValue"/>: for good; null lifts it) and ends its logins.</summary>
+    public async Task SetBan(long account, DateTime? until, string? reason)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        if (await db.Accounts.FirstOrDefaultAsync(a => a.Id == account) is not { } a)
+            return;
+        (a.BannedUntil, a.BanReason) = (until, until is null ? null : reason);
+        if (until is not null)
+            await db.Sessions.Where(s => s.AccountId == account).ExecuteDeleteAsync();
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>A character by name (case doesn't matter), with its account.</summary>
+    public async Task<Character?> CharacterNamed(string name)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        var key = (name ?? "").ToLowerInvariant();
+        return await db.Characters.AsNoTracking().Include(c => c.Account).FirstOrDefaultAsync(c => c.NameKey == key);
+    }
+
+    /// <summary>Characters whose name or account name contains <paramref name="text"/> (at most 30), with their accounts.</summary>
+    public async Task<List<Character>> SearchCharacters(string text)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        var key = (text ?? "").ToLowerInvariant();
+        return await db.Characters.AsNoTracking().Include(c => c.Account)
+            .Where(c => c.NameKey.Contains(key) || c.Account!.NameKey.Contains(key)).OrderBy(c => c.NameKey).Take(30).ToListAsync();
+    }
+
+    /// <summary>Writes an offline character's game state.</summary>
+    public async Task SaveState(long character, string json)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        await db.Characters.Where(c => c.Id == character).ExecuteUpdateAsync(u => u.SetProperty(c => c.StateJson, json));
+    }
+
+    /// <summary>Records a staff edit of a character's game (for revert); returns its id.</summary>
+    public async Task<long> RecordChange(long character, string name, string actor, string before, string after)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        var change = new StateChange { Time = DateTime.UtcNow, CharacterId = character, Character = name, Actor = actor, Before = before, After = after };
+        db.Changes.Add(change);
+        await db.SaveChangesAsync();
+        return change.Id;
+    }
+
+    public async Task<StateChange?> Change(long id)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        return await db.Changes.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
+    }
+
+    public async Task MarkReverted(long id)
+    {
+        await using var db = await dbs.CreateDbContextAsync();
+        await db.Changes.Where(c => c.Id == id).ExecuteUpdateAsync(u => u.SetProperty(c => c.Reverted, true));
     }
 
     /// <summary>[admin] bootstrap_owner: makes that account Owner if it exists and there's no Owner yet.</summary>
@@ -236,7 +310,7 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
         if (string.IsNullOrWhiteSpace(config.BootstrapOwner))
             return null;
         await using var db = await dbs.CreateDbContextAsync();
-        if (await db.Accounts.AnyAsync(a => a.Role == "Owner"))
+        if (await db.Accounts.AnyAsync(a => a.Role == nameof(Role.Owner)))
             return null;
         var key = config.BootstrapOwner.ToLowerInvariant();
         if (await db.Accounts.FirstOrDefaultAsync(a => a.NameKey == key) is not { } a)
@@ -257,11 +331,11 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
         await db.SaveChangesAsync();
     }
 
-    /// <summary>Appends to the audit log (BUILD_SPEC §11.4).</summary>
-    public async Task Audit(long account, string actor, string role, string action, string target, string details)
+    /// <summary>Appends to the audit log (BUILD_SPEC §11.4), linked to the change it made when there is one.</summary>
+    public async Task Audit(long account, string actor, string role, string action, string target, string details, long change = 0)
     {
         await using var db = await dbs.CreateDbContextAsync();
-        db.Audit.Add(new AuditEntry { Time = DateTime.UtcNow, AccountId = account, Actor = actor, Role = role, Action = action, Target = target, Details = details });
+        db.Audit.Add(new AuditEntry { Time = DateTime.UtcNow, AccountId = account, Actor = actor, Role = role, Action = action, Target = target, Details = details, Change = change });
         await db.SaveChangesAsync();
     }
 

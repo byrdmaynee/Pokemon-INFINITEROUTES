@@ -1304,6 +1304,8 @@ public partial class OverworldScreen : Control
 
     void UpdateCamera(bool snap, float delta = 0)
     {
+        if (!_camera.IsInsideTree())
+            return;   // this frame took us off the screen (kicked or disconnected)
         // Roughly the DS framing: about 16 tiles across, looking down at ~45°.
         var offset = new Vector3(0, 17, 17) * _zoom;
         var target = _player.Position + offset;

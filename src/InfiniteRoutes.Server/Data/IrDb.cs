@@ -24,6 +24,9 @@ public sealed class Account
     /// <summary>Chat is blocked until this time (UTC), for <see cref="MuteReason"/>; null when not muted.</summary>
     public DateTime? MutedUntil { get; set; }
     public string? MuteReason { get; set; }
+    /// <summary>The account can't log in until this time (UTC; <see cref="DateTime.MaxValue"/> for good); null when not banned.</summary>
+    public DateTime? BannedUntil { get; set; }
+    public string? BanReason { get; set; }
     public List<Character> Characters { get; set; } = [];
 }
 
@@ -72,6 +75,34 @@ public sealed class AuditEntry
     public string Action { get; set; } = "";
     public string Target { get; set; } = "";
     public string Details { get; set; } = "";
+    /// <summary>The <see cref="StateChange"/> this action made (0: none), which the log can revert.</summary>
+    public long Change { get; set; }
+}
+
+/// <summary>A role (BUILD_SPEC §11.1): its rank and its comma-separated permissions. Built-in roles can't be deleted.</summary>
+public sealed class RoleDef
+{
+    public string Name { get; set; } = "";
+    public string NameKey { get; set; } = "";
+    public int Rank { get; set; }
+    public string Permissions { get; set; } = "";
+    public bool Builtin { get; set; }
+}
+
+/// <summary>
+/// A staff edit to a character's game (BUILD_SPEC §11.4: every write is reversible): the state before and after. Revert
+/// puts "before" back, if the state is still what the edit left ("after"); otherwise it says what changed since.
+/// </summary>
+public sealed class StateChange
+{
+    public long Id { get; set; }
+    public DateTime Time { get; set; }
+    public long CharacterId { get; set; }
+    public string Character { get; set; } = "";
+    public string Actor { get; set; } = "";
+    public string Before { get; set; } = "";
+    public string After { get; set; } = "";
+    public bool Reverted { get; set; }
 }
 
 /// <summary>
@@ -84,6 +115,8 @@ public sealed class IrDb(DbContextOptions<IrDb> options) : DbContext(options)
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Character> Characters => Set<Character>();
     public DbSet<AuditEntry> Audit => Set<AuditEntry>();
+    public DbSet<RoleDef> Roles => Set<RoleDef>();
+    public DbSet<StateChange> Changes => Set<StateChange>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -94,6 +127,13 @@ public sealed class IrDb(DbContextOptions<IrDb> options) : DbContext(options)
             e.Property(a => a.NameKey).HasMaxLength(32);
         });
         b.Entity<AuditEntry>(e => e.ToTable("AuditEntries"));
+        b.Entity<RoleDef>(e =>
+        {
+            e.ToTable("Roles");
+            e.HasKey(r => r.Name);
+            e.HasIndex(r => r.NameKey).IsUnique();
+        });
+        b.Entity<StateChange>(e => e.ToTable("StateChanges"));
         b.Entity<Session>(e =>
         {
             e.HasIndex(s => s.TokenHash).IsUnique();

@@ -180,6 +180,13 @@ sealed class TestClient : IAsyncDisposable
 
     public bool Closed => _reader?.IsCompleted ?? false;
 
+    /// <summary>Drops every message of type <typeparamref name="T"/> received so far.</summary>
+    public void Drain<T>() where T : Message
+    {
+        lock (_inbox)
+            _inbox.RemoveAll(m => m is T);
+    }
+
     public async ValueTask DisposeAsync()
     {
         _tcp.Dispose();
