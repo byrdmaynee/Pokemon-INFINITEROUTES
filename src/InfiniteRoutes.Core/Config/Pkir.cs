@@ -28,13 +28,24 @@ public static class Pkir
     public static TomlTable LoadOrEmpty(string path) =>
         File.Exists(path) ? Parse(File.ReadAllText(path, Encoding.UTF8), path) : new TomlTable();
 
-    /// <summary>Writes atomically: temp file + replace, so a crash never leaves a half-written config.</summary>
+    /// <summary>
+    /// Writes atomically: a temp file of its own + replace, so a crash never leaves a half-written config and two
+    /// processes (two game windows) writing at once don't trip over each other's temp file.
+    /// </summary>
     public static void WriteAtomic(string path, string text)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        var temp = path + ".tmp";
+        var temp = $"{path}.{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
         File.WriteAllText(temp, text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        File.Move(temp, path, overwrite: true);
+        try
+        {
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp))
+                File.Delete(temp);
+        }
     }
 
     /// <summary>

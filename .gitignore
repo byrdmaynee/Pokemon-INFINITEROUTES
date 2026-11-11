@@ -23,3 +23,9 @@ export_presets.cfg
 *.pkir.tmp
 *.bak
 .env
+
+# Server runtime files (if a server is run inside the repo)
+*.db
+*.db-shm
+*.db-wal
+server-cert.pfx

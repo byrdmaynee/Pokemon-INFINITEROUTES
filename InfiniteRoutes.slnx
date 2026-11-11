@@ -6,6 +6,7 @@
     <Project Path="src/InfiniteRoutes.Core/InfiniteRoutes.Core.csproj" />
     <Project Path="src/InfiniteRoutes.Extractor.Cli/InfiniteRoutes.Extractor.Cli.csproj" />
     <Project Path="src/InfiniteRoutes.Extractor/InfiniteRoutes.Extractor.csproj" />
+    <Project Path="src/InfiniteRoutes.Server/InfiniteRoutes.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/InfiniteRoutes.Tests/InfiniteRoutes.Tests.csproj" />

@@ -1,4 +1,4 @@
-﻿using Godot;
+using Godot;
 using InfiniteRoutes.Client.Ui;
 
 namespace InfiniteRoutes.Client;
@@ -19,6 +19,12 @@ public static class DebugCapture
             var dir = cont["--capture-continue=".Length..];
             World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
             Continue(main, dir);
+        }
+        else if (args.FirstOrDefault(a => a.StartsWith("--capture-online=", StringComparison.Ordinal)) is { } online)
+        {
+            string Arg(string name, string fallback) => args.FirstOrDefault(a => a.StartsWith($"--{name}=", StringComparison.Ordinal)) is { } v ? v[(name.Length + 3)..] : fallback;
+            OnlinePlay(main, online["--capture-online=".Length..], Arg("account", "Tester"), Arg("walk", "R4"), double.Parse(Arg("stay", "12"), System.Globalization.CultureInfo.InvariantCulture),
+                Arg("say", "").Split(';', StringSplitOptions.RemoveEmptyEntries));
         }
         else if (args.FirstOrDefault(a => a.StartsWith("--capture-doubles=", StringComparison.Ordinal)) is { } doubles)
         {
@@ -49,6 +55,150 @@ public static class DebugCapture
                 Directory.Delete(save, recursive: true);
             World.OfflineSession.SaveDirOverride = save;
             Run(main, dir);
+        }
+    }
+
+    /// <summary>
+    /// Plays online against the local test server: registers (or logs in) <paramref name="account"/>, trusts the
+    /// certificate, makes or picks a character, joins, walks <paramref name="walk"/> (letters U/D/L/R each followed by a
+    /// step count, e.g. "R4D2"), then stays <paramref name="stay"/> seconds, with screenshots and who it saw.
+    /// </summary>
+    static async void OnlinePlay(Main main, string dir, string account, string walk, double stay, string[] say)
+    {
+        var tree = main.GetTree();
+        async Task Wait(double seconds) => await main.ToSignal(tree.CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+        void Shot(string name) => main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, name + ".png"));
+        System.IO.Directory.CreateDirectory(dir);
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
+        World.OverworldScreen? world = null;
+        try
+        {
+            Online.OnlineSession.LoadServers();
+            var server = Online.OnlineSession.Servers.FirstOrDefault(s => s.Host == "127.0.0.1") ?? Core.Config.ServerList.LocalTest;
+            main.Push(() => new LoginScreen(server));
+            await Wait(0.5);
+            var login = (LoginScreen)main.CurrentScreen!;
+            login.Submit(account, "password123", register: true);
+            for (var i = 0; i < 40 && main.CurrentScreen is LoginScreen; i++)
+            {
+                await Wait(0.25);
+                if (login.TrustPending is { } trust)
+                {
+                    Shot("01-trust");
+                    GD.Print("[capture] trusting the server certificate");
+                    trust();
+                }
+            }
+            if (main.CurrentScreen is LoginScreen again)
+            {
+                GD.Print($"[capture] register: {again.Status}");
+                again.Submit(account, "password123", register: false);
+                for (var i = 0; i < 40 && main.CurrentScreen is LoginScreen; i++)
+                    await Wait(0.25);
+            }
+            if (main.CurrentScreen is not CharacterScreen characters)
+            {
+                GD.Print($"[capture] login failed: {(main.CurrentScreen as LoginScreen)?.Status}");
+                return;
+            }
+            await Wait(1.5);
+            if (characters.Characters.Count == 0)
+            {
+                characters.GetTree();
+                var name = new string(account.Where(char.IsLetterOrDigit).Take(10).ToArray());
+                var (made, error) = await Online.OnlineSession.Client!.CreateCharacter(name, account.Length % 2);
+                GD.Print($"[capture] created {made?.Name} {error}");
+                main.Back();
+                main.Push(() => new CharacterScreen());
+                await Wait(1.5);
+                characters = (CharacterScreen)main.CurrentScreen!;
+            }
+            Shot("02-characters");
+            characters.Play(characters.Characters[0]);
+            for (var i = 0; i < 40 && main.CurrentScreen is not World.OverworldScreen; i++)
+                await Wait(0.25);
+            world = main.CurrentScreen as World.OverworldScreen;
+            if (world is null)
+            {
+                GD.Print($"[capture] join failed: {characters.Status}");
+                return;
+            }
+            await Wait(2);
+            GD.Print($"[capture] joined at {world.PlayerTile}; sees {string.Join(", ", world.OtherPlayers)}");
+            Shot("03-joined");
+            for (var i = 0; i + 1 < walk.Length; i += 2)
+            {
+                var dirv = walk[i] switch { 'U' => Vector2I.Up, 'D' => Vector2I.Down, 'L' => Vector2I.Left, _ => Vector2I.Right };
+                for (var n = 0; n < walk[i + 1] - '0'; n++)
+                {
+                    for (var t = 0; t < 20 && !world.TryStep(dirv); t++)
+                        await Wait(0.05);
+                    await Wait(0.32);
+                }
+            }
+            await Wait(1);
+            GD.Print($"[capture] walked to {world.PlayerTile}; sees {string.Join(", ", world.OtherPlayers)}");
+            Shot("04-walked");
+            // Chat lines and commands ("/admin!" enters Admin Mode with the test password and no code).
+            foreach (var line in say)
+            {
+                if (line == "/admin!")
+                    Online.OnlineSession.Game?.Send(new Core.Net.Elevate("password123", ""));
+                else if (line == "panel")
+                {
+                    world.ToggleAdminPanel();
+                    await Wait(1);
+                    GD.Print($"[capture] admin panel open {world.AdminPanelOpen}; rows {string.Join(", ", world.AdminPanelRows.Select(r => r.Name))}");
+                }
+                else if (line.StartsWith("rclick:", StringComparison.Ordinal))
+                {
+                    world.OpenPlayerMenu(line["rclick:".Length..], main.GetViewport().GetVisibleRect().Size / 2);
+                    await Wait(0.4);
+                    GD.Print($"[capture] player menu: {string.Join(" | ", world.PlayerMenuItems)}");
+                }
+                else if (line.StartsWith("shot:", StringComparison.Ordinal))
+                    Shot(line["shot:".Length..]);
+                else if (line.StartsWith("step:", StringComparison.Ordinal) && line.Length >= 7)
+                {
+                    var dirv = line[5] switch { 'U' => Vector2I.Up, 'D' => Vector2I.Down, 'L' => Vector2I.Left, _ => Vector2I.Right };
+                    for (var n = 0; n < line[6] - '0'; n++)
+                    {
+                        for (var t = 0; t < 20 && !world.TryStep(dirv); t++)
+                            await Wait(0.05);
+                        await Wait(0.4);
+                    }
+                }
+                else if (line.StartsWith("wait:", StringComparison.Ordinal))
+                    await Wait(double.Parse(line["wait:".Length..], System.Globalization.CultureInfo.InvariantCulture));
+                else if (line == "menu")
+                {
+                    world.OpenOnlineMenuForTest();
+                    await Wait(0.6);
+                    Shot("05-menu");
+                    world.OpenOnlineMenuForTest();
+                }
+                else
+                    world.SubmitChat(line);
+                await Wait(0.8);
+            }
+            for (var t = 0.0; t < stay; t += 1)
+            {
+                await Wait(1);
+                if (Math.Abs(t - stay / 2) < 0.5)
+                    Shot("05-later");
+            }
+            GD.Print($"[capture] spectating {world.SpectatingId}; admin mode {world.AdminMode}; party {string.Join(", ", world.OnlineState?.Party.Select(p => p.Species) ?? [])}");
+            foreach (var line in world.ChatLines)
+                GD.Print($"[capture] chat: {line}");
+            GD.Print($"[capture] at the end at {world.PlayerTile}; sees {string.Join(", ", world.OtherPlayers)}");
+            Shot("06-end");
+        }
+        finally
+        {
+            GD.Print("[capture] done");
+            tree.Quit();
         }
     }
 

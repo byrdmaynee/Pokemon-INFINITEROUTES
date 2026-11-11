@@ -23,6 +23,14 @@ public static class AppPaths
         ? Path.Combine(h, "saves")
         : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppFolderName, "saves");
 
+    /// <summary>
+    /// The game server's own folder when it's started without a server.pkir beside it (from an IDE, say): its config,
+    /// database and certificate go here rather than into the source tree.
+    /// </summary>
+    public static string ServerDir => HomeOverride is { } h
+        ? Path.Combine(h, "server")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), AppFolderName, "server");
+
     public static string RomLibraryFile => Path.Combine(ConfigDir, "roms.pkir");
 
     public static string ServersFile => Path.Combine(ConfigDir, "servers.pkir");

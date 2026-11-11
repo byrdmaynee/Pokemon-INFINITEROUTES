@@ -20,6 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\InfiniteRoutes.Extractor\InfiniteRoutes.Extractor.csproj" />
+    <ProjectReference Include="..\..\src\InfiniteRoutes.Server\InfiniteRoutes.Server.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
 </Project>

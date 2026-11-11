@@ -8,10 +8,11 @@ An online Pokémon MMO built on the player's own Nintendo DS games. The design i
 
 | Path | What |
 |---|---|
-| `src/InfiniteRoutes.Core` | Shared code: `.pkir` config files, app paths |
+| `src/InfiniteRoutes.Core` | Shared code: `.pkir` config files, app paths, battle engine, game protocol |
 | `src/InfiniteRoutes.Extractor` | NDS readers (header, NitroFS, NARC), ROM validation, ROM library |
 | `src/InfiniteRoutes.Extractor.Cli` | `ir-extract` command-line tool |
 | `src/InfiniteRoutes.Client` | Godot 4.7 (.NET) game client |
+| `src/InfiniteRoutes.Server` | `ir-server` game server (accounts API, TLS game port, world) |
 | `tests/InfiniteRoutes.Tests` | Unit tests (synthetic ROMs, no real game data) |
 | `data/rom_manifest.json` | Supported games, regions, and known-good dump hashes |
 
@@ -46,6 +47,10 @@ Then use any of these:
 The first run shows the setup wizard; after that the client opens on the main menu. To try a fresh first run without touching your real settings, set `IR_HOME` to an empty folder before launching.
 
 **Screenshot smoke test:** `"%GODOT%" --path src/InfiniteRoutes.Client -- --capture=<folder>` walks through the screens, saves a PNG of each, and quits.
+
+## Run a server
+
+See [docs/ONLINE_TEST.md](docs/ONLINE_TEST.md): `ir-server init`, point `data_pack` at your extraction cache, `ir-server`, then **Play Online** in the client.
 
 ## ROM tool
 

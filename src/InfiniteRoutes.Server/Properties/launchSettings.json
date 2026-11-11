@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "Run server": {
+      "commandName": "Project",
+      "commandLineArgs": "run"
+    },
+    "Check config": {
+      "commandName": "Project",
+      "commandLineArgs": "check"
+    }
+  }
+}

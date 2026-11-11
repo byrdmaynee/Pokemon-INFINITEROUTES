@@ -11,7 +11,7 @@ namespace InfiniteRoutes.Client.World;
 /// </summary>
 public partial class OverworldScreen
 {
-    public const int SurfMove = 57, SuperRod = 447;
+    public const int SurfMove = 57, SuperRod = Core.Player.StarterKit.SuperRod;
 
     enum Phenomenon { ShakingGrass, RipplingWater, DustCloud }
 

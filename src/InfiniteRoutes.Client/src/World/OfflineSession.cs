@@ -15,8 +15,6 @@ namespace InfiniteRoutes.Client.World;
 public static class OfflineSession
 {
     /// <summary>Snivy, Black/White's grass starter; the test world hands it out at level 5.</summary>
-    const int StarterSpecies = 495;
-    const int StarterLevel = 5;
     public const int PartySize = GameState.PartySize;
     public const string PlayerName = "Player";
     const string Juniper = "Prof. Juniper", MarketDesk = "Global Market", QuestDesk = "Quest Board";
@@ -170,16 +168,7 @@ public static class OfflineSession
         var now = DateTime.Now;
         _playClock = now;
         State = new GameState(NewQuestLog());
-        Party.Add(Pokemon.Create(Data, StarterSpecies, StarterLevel, Rng));
-        Bag.Add(ItemEffect.PokeBall, 10);
-        Bag.Add(ItemEffect.GreatBall, 3);
-        Bag.Add(ItemEffect.Potion, 5);
-        Bag.Add(ItemEffect.Antidote, 2);
-        Bag.Add(ItemEffect.ParlyzHeal, 2);
-        Bag.Add(ItemEffect.ReviveItem, 1);
-        Bag.Add(HeldItems.OranBerry, 2);
-        Bag.Add(OverworldScreen.SuperRod);   // the test world hands it out at the start
-        Progress.PartyCount = Party.Count;
+        StarterKit.Fill(State, Data, Rng);   // the same start as on a server
         foreach (var id in StarterQuests.Initial)
             Quests.Start(id, Progress, now);
         Mail.Send(Juniper, "Welcome to Unova!",

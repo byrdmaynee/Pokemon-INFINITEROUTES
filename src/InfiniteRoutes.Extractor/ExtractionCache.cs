@@ -16,6 +16,24 @@ public static class ExtractionCache
     public static string DirectoryFor(string gameCode, string sha1) =>
         Path.Combine(AppPaths.CacheDir, gameCode, sha1, ExtractorVersion);
 
+    /// <summary>
+    /// The newest finished extraction (current extractor version) of any of <paramref name="gameIds"/> in this user's
+    /// cache — what the game server uses as its data pack when told "auto".
+    /// </summary>
+    public static string? FindLocal(params string[] gameIds)
+    {
+        if (!Directory.Exists(AppPaths.CacheDir))
+            return null;
+        return Directory.EnumerateDirectories(AppPaths.CacheDir)
+            .SelectMany(code => Directory.EnumerateDirectories(code))
+            .Select(sha => Path.Combine(sha, ExtractorVersion))
+            .Select(dir => (Dir: dir, Stamp: ReadStamp(dir)))
+            .Where(x => x.Stamp is { } s && gameIds.Contains(s.GameId))
+            .OrderByDescending(x => x.Stamp!.CompletedUtc)
+            .Select(x => x.Dir)
+            .FirstOrDefault();
+    }
+
     /// <summary>True when a finished extraction with the current extractor version is on disk.</summary>
     public static bool IsComplete(string directory) => ReadStamp(directory) is not null;
 

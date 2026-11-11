@@ -19,7 +19,6 @@ public partial class OverworldScreen : Control
     const float RunSeconds = 0.13f;
     const float FadeSeconds = 0.18f;
     const int StartZone = 389;   // Nuvema Town
-    const string PlayerCharacter = "hero";
 
     GameAssets _assets = null!;
     readonly Dictionary<int, ZoneInfo> _zones = new();
@@ -73,14 +72,20 @@ public partial class OverworldScreen : Control
     {
         if (ClientServices.UnovaAssets is not { } assets || assets.LoadOverworld() is not { } overworld)
         {
-            var missing = Page.Create("Offline Test World", Ui.Ui.Text(
-                "No map data yet. Re-extract your Black/White ROM in Settings → ROM Library.", 18, Ui.Ui.Warn, wrap: true));
+            // Say why: most often the ROM's drive isn't connected (the library checks the file at every launch).
+            var rom = new[] { "white", "black" }.Select(id => ClientServices.Library[id]).FirstOrDefault(e => e.Path is not null);
+            var why = rom is { Status: Extractor.Roms.RomStatus.Unreadable or Extractor.Roms.RomStatus.Missing }
+                ? $"Your {(rom.GameId == "black" ? "Black" : "White")} ROM wasn't found at {rom.Path}.\n{rom.Message}\nReconnect it (or point Settings → ROM Library at its new place) and restart."
+                : "No map data yet. Re-extract your Black/White ROM in Settings → ROM Library.";
+            GD.PushWarning($"Overworld unavailable: {why}");
+            var missing = Page.Create(_online ? "Unova" : "Offline Test World", Ui.Ui.Text(why, 18, Ui.Ui.Warn, wrap: true));
             AddChild(missing);
             missing.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
             return;
         }
         _assets = assets;
-        _battles = OfflineSession.Ensure(assets);
+        // Online the game data (names) is still needed, but the offline save isn't played.
+        _battles = OfflineSession.Ensure(assets) && !_online;
         foreach (var z in assets.LoadZones())
             _zones[z.Id] = z;
 
@@ -146,10 +151,13 @@ public partial class OverworldScreen : Control
         _saved.GrowHorizontal = GrowDirection.Begin;
         _saved.OffsetRight = -16;
         _saved.OffsetBottom = -12;
-        var help = Ui.Ui.Text("Arrows / WASD: walk · Shift: run · Z / Enter: talk · X: menu · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
+        var help = Ui.Ui.Text(_online
+            ? "Arrows / WASD: walk · Shift: run · Enter / T: chat · /: command · X: menu · Wheel: zoom · Esc: leave"
+            : "Arrows / WASD: walk · Shift: run · Z / Enter: talk · X: menu · Wheel: zoom · F3: collision · F4: season · Esc: menu", 14, Ui.Ui.Muted);
         AddChild(help);
         help.SetAnchorsAndOffsetsPreset(LayoutPreset.BottomLeft);
         help.Position = new Vector2(16, -36);
+        BuildChat();
         _dialog = new PanelContainer { Visible = false };
         _dialog.AddThemeStyleboxOverride("panel", new StyleBoxFlat
         {
@@ -172,7 +180,17 @@ public partial class OverworldScreen : Control
 
         // Continue where the save left off, or start at home.
         Facing? facing = null;
-        if (_battles && OfflineSession.State.Location is { } saved && _zones.TryGetValue(saved.Zone, out var savedZone)
+        if (_online && OnlineStart() is { } start && _zones.TryGetValue(start.Zone, out var startZone)
+            && assets.LoadMap(startZone.Map) is { } startMap)
+        {
+            // Online: where the server says.
+            _zone = start.Zone;
+            EnterMap(startMap);
+            _tile = start.Tile;
+            facing = start.Facing;
+            _dir = FacingToDir(start.Facing);
+        }
+        else if (_battles && OfflineSession.State.Location is { } saved && _zones.TryGetValue(saved.Zone, out var savedZone)
             && assets.LoadMap(savedZone.Map) is { } savedMap)
         {
             _zone = saved.Zone;
@@ -217,6 +235,9 @@ public partial class OverworldScreen : Control
         // Closing the window or leaving the world (back to the main menu) saves.
         if (what is (int)NotificationWMCloseRequest or (int)NotificationExitTree && _world is not null && _battles)
             OfflineSession.Save();
+        // Leaving the world online closes the game connection (back to the character list).
+        if (what == (int)NotificationExitTree && _online)
+            InfiniteRoutes.Client.Online.OnlineSession.Leave();
     }
 
     static Sprite3D BuildSprite(string spritePath) =>
@@ -302,6 +323,9 @@ public partial class OverworldScreen : Control
     {
         if (_world is null)
             return;
+        PumpOnline(delta);
+        if (_online)
+            TickAdmin(delta);
         var seconds = Time.GetTicksMsec() / 1000.0;
         foreach (var key in _loaded.Keys)
             if (_animators.TryGetValue(key, out var animator))
@@ -309,7 +333,7 @@ public partial class OverworldScreen : Control
         foreach (var npc in _npcs.Values.SelectMany(l => l).ToList())
             if (npc.Tick(delta))
                 ActNpc(npc);
-        if (!_moving && !_dialog.Visible && _battle is null && _menu is null)
+        if (!_moving && !_dialog.Visible && _battle is null && _menu is null && !OnlineUiBusy)
         {
             var wasRunning = _running;
             var input = Vector2I.Zero;
@@ -334,6 +358,11 @@ public partial class OverworldScreen : Control
     {
         if (_world is null || _battle is not null)
             return;
+        if (OnlineInput(e))
+        {
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         var talk =e.IsActionPressed("ui_accept") || e is InputEventKey { Pressed: true, Keycode: Key.Z, Echo: false };
         if (_dialog.Visible && (talk || e.IsActionPressed("ui_cancel")))
         {
@@ -440,17 +469,20 @@ public partial class OverworldScreen : Control
         if (_warps.TryGetValue(_tile, out var here) && here.Kind is WarpKind.Mat or WarpKind.Edge
             && here.Facing is { } arrival && dir == -FacingToDir(arrival))
         {
-            TakeWarp(here);
+            if (!AskWarp(here, _tile))
+                TakeWarp(here);
             return true;
         }
         if (_warps.TryGetValue(target, out var warp) && warp.Kind is not (WarpKind.Mat or WarpKind.Edge))
         {
-            TakeWarp(warp);
+            if (!AskWarp(warp, target))
+                TakeWarp(warp);
             return true;
         }
-        if (!CanEnter(target) || NpcAt(target) is not null)
+        if (!AdminNoclip && (!CanEnter(target) || NpcAt(target) is not null))
         {
             ShowFrame(0);
+            SendTurn();
             return false;
         }
         Move(target, _running = run && !_surfing);
@@ -460,6 +492,7 @@ public partial class OverworldScreen : Control
     void Move(Vector2I target, bool run)
     {
         _moving = true;
+        SendStep(_tile, target, run);
         _tile = target;
         StreamChunks();
         _height = GroundHeight(_tile, _height);
@@ -1282,6 +1315,8 @@ public partial class OverworldScreen : Control
     {
         var name = LocationAt(_tile) is { Length: > 0 } location ? location : "Unova";
         _hud.Text = $"{name}   ·   {_season}   ·   tile {_tile.X}, {_tile.Y}";
+        if (_online && InfiniteRoutes.Client.Online.OnlineSession.Game?.Welcome is { } welcome)
+            _hud.Text += $"\n{welcome.ServerName} · channel {(_channel > 0 ? _channel : welcome.Channel)} of {welcome.Channels} · {InfiniteRoutes.Client.Online.OnlineSession.Character?.Name}{AdminHud}";
         if (_battles)
             OfflineSession.State.Location = new Core.Player.PlayerLocation(_zone, _tile.X, _tile.Y, (int)DirToFacing(_dir));
         UpdateQuestHud();
