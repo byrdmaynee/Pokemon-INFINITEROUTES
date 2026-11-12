@@ -489,6 +489,30 @@ public sealed partial class AdminWindow : PanelContainer
         _roleDetail.AddChild(Ui.Ui.HBox(6, Ui.Ui.Text("Rank", 14, Ui.Ui.Muted), rank,
             Small("Move", () => Act("role-rank", name, ("rank", ((int)rank.Value).ToString())), owner && !fixedRank),
             Small("Delete role", () => Act("role-delete", name), owner && !role.Builtin)));
+
+        // The beacon over everyone in this role: a picture per choice; the crown only for Owners.
+        var beacons = new OptionButton { Disabled = !owner, CustomMinimumSize = new Vector2(220, 0) };
+        beacons.AddItem("No beacon");
+        beacons.SetItemMetadata(0, "");
+        foreach (var (id, label) in Core.Player.Beacons.All)
+        {
+            if (Core.Player.Beacons.OwnerOnly(id) && role.Rank < 100)
+                continue;
+            var i = beacons.ItemCount;
+            beacons.AddIconItem(BeaconArt.Texture(id)!, label);
+            beacons.SetItemMetadata(i, id);
+            if (id == role.Beacon)
+                beacons.Selected = i;
+        }
+        beacons.AddThemeConstantOverride("icon_max_width", 24);
+        beacons.ItemSelected += i => Act("role-beacon", name, ("beacon", beacons.GetItemMetadata((int)i).AsString()));
+        var preview = new TextureRect
+        {
+            Texture = BeaconArt.Texture(role.Beacon), CustomMinimumSize = new Vector2(36, 36), ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+            StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered, TextureFilter = TextureFilterEnum.Nearest,
+        };
+        _roleDetail.AddChild(Ui.Ui.HBox(6, Ui.Ui.Text("Beacon", 14, Ui.Ui.Muted), beacons, preview,
+            Ui.Ui.Text("shown over the heads of everyone in this role", 13, Ui.Ui.Muted)));
         foreach (var permission in _roles.Catalog)
         {
             var key = permission.Key;

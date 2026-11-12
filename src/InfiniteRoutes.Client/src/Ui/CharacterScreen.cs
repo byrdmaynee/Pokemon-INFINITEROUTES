@@ -1,5 +1,6 @@
 using Godot;
 using InfiniteRoutes.Client.Online;
+using InfiniteRoutes.Core.Config;
 
 namespace InfiniteRoutes.Client.Ui;
 
@@ -30,12 +31,30 @@ public partial class CharacterScreen : Control
             Ui.Text("New character", 16, Ui.Muted),
             Ui.HBox(10, _name, _look, Ui.Button("Create", Create)),
             _status,
-            Ui.HBox(10, Ui.Button("Account and two-factor…", () => Main.Instance.Push(() => new AccountScreen()))));
+            Ui.HBox(10, Ui.Button("Account and two-factor…", () => Main.Instance.Push(() => new AccountScreen())),
+                Ui.Button("Log out", LogOut)));
         var page = Page.Create($"Characters — {client?.Account} on {client?.Info?.Name}", content,
             $"{client?.Info?.Online ?? 0} player(s) online.");
         AddChild(page);
         page.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         Load();
+    }
+
+    /// <summary>Presses "Log out"; for smoke tests.</summary>
+    public void PressLogOut() => LogOut();
+
+    /// <summary>Ends the session (here and on the server), forgets a remembered login, and goes back to the login screen.</summary>
+    async void LogOut()
+    {
+        if (_busy || OnlineSession.Client is not { } client)
+            return;
+        _busy = true;
+        RememberedLogins.ForUser().Forget(client.Server);
+        await client.Logout();
+        if (!IsInstanceValid(this))
+            return;
+        _busy = false;
+        Main.Instance.Back();
     }
 
     async void Load()

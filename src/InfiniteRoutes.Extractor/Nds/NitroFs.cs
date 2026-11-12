@@ -51,6 +51,39 @@ public sealed class NitroFs : IDisposable
 
     public byte[] ReadFile(NitroFileEntry entry) => ReadAt(_stream, entry.Start, entry.Length);
 
+    /// <summary>The ARM9 program, decompressed (header 0x20: ROM offset, 0x2C: size).</summary>
+    public byte[] ReadArm9()
+    {
+        var header = ReadAt(_stream, 0, NdsHeader.Size);
+        var raw = ReadAt(_stream, BitConverter.ToUInt32(header, 0x20), BitConverter.ToUInt32(header, 0x2C));
+        return Blz.Decompress(raw);
+    }
+
+    /// <summary>
+    /// The ARM9 overlays, decompressed. Header 0x50/0x54: the overlay table (32-byte entries: id, RAM address, sizes,
+    /// static initialisers, file id, then the compressed size in the low 24 bits with bit 24 set when compressed).
+    /// </summary>
+    public IEnumerable<byte[]> ReadOverlays()
+    {
+        var header = ReadAt(_stream, 0, NdsHeader.Size);
+        uint tableOffset = BitConverter.ToUInt32(header, 0x50), tableSize = BitConverter.ToUInt32(header, 0x54);
+        uint fatOffset = BitConverter.ToUInt32(header, 0x48);
+        if (tableSize == 0 || tableOffset + tableSize > _stream.Length)
+            yield break;
+        var table = ReadAt(_stream, tableOffset, tableSize);
+        for (var e = 0; e + 32 <= table.Length; e += 32)
+        {
+            var fileId = BitConverter.ToUInt32(table, e + 24);
+            var flags = BitConverter.ToUInt32(table, e + 28);
+            var fat = ReadAt(_stream, fatOffset + fileId * 8, 8);
+            uint start = BitConverter.ToUInt32(fat, 0), end = BitConverter.ToUInt32(fat, 4);
+            if (end <= start || end > _stream.Length)
+                continue;
+            var data = ReadAt(_stream, start, end - start);
+            yield return (flags & 0x01000000) != 0 ? Blz.Decompress(data) : data;
+        }
+    }
+
     /// <summary>Immediate children of a directory ("" = root). Directories end with '/'.</summary>
     public IEnumerable<string> List(string directory = "")
     {

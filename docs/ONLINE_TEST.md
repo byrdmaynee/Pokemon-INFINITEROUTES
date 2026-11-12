@@ -102,6 +102,52 @@ with your position. X shows the party (make one the lead), the Bag and the train
 plan: map changes and logging out save at once (and so will catches, battles, trades… when they come online), each
 of those restarts that player's 30–60 s batch timer, and anything else is saved when it runs out.
 
+## The player menu (X)
+
+X opens the player menu. The HUD shows what's waiting (mail, messages, friend requests, trade offers) and tab titles
+count them.
+
+- **Pokémon & Bag:** your party (make one the lead, or your Active Buddy), PC count, Bag and trainer card.
+- **Market:**
+  - **Buy:** search the Global Market by name or seller, items or Pokémon, sorted, with a highest price.
+  - **Sell:** list an item stack or a Pokémon (party or PC) for 1–7 days. A 2% fee (at least ₽10) is paid now; a
+    sale pays the price less 5% tax. Your listings can be taken down (the goods come back, the fee doesn't).
+  - **Trade:** offer a player money, an item stack and/or a Pokémon, asking money, an item stack and/or a Pokémon
+    (any, or a species they pick from their own). What you offer is held until they accept, decline or 3 days pass.
+- **Friends:** add by character name; requests, accept or decline; who's online, on which channel and where;
+  message, mail or trade from a friend's row; block (no whispers, messages, mail, requests or offers from them).
+- **Mail:** letters with money and/or an item stack attached (taken from you when sent). Purchases, sale earnings,
+  trades and returned goods arrive as letters from the Global Market or the Trade Desk; Collect puts them in your
+  game (a Pokémon goes to the party, or the PC when it's full).
+- **Messages:** direct messages, kept and delivered whether or not the other player is online; with the menu
+  closed, new ones also show in chat.
+- **InfiniteLoots Shop:** shown but can't be opened yet (a shop for game items bought with real money, later).
+
+Goods for someone else always travel by mail, and the database decides who got there first, so two buyers can't both
+get one listing. Nothing in your game changes during a battle.
+
+## Active Buddy
+
+Once you've caught 3 Pokémon, one party Pokémon can follow you around as your Active Buddy: **Active Buddy** on its
+row in X → Pokémon & Bag (offline: **Buddy** in the menu's Pokémon tab), **Put away** to call it back. It walks a tile
+behind you and other players see it following you. With HeartGold or SoulSilver in the ROM Library, Pokémon #1–493
+use that game's own walking sprites (shiny colours and female looks too; the game extracts them on launch like the
+other ROMs). Pokémon after #493 never had walking sprites in a DS game, so they — and every buddy without
+HeartGold/SoulSilver — use the battle sprite: the front walking toward you or sideways, the back walking away. It hides while it has
+fainted (and comes back when healed), while you surf, and stops following if it leaves the party.
+
+## Wild battles
+
+Walking in tall grass can start a wild battle, as offline: the server rolls it on each step from the zone's
+encounter table for the season (a Repel keeps weaker Pokémon away and counts down with your steps). The server plays
+the battle; your game plays the same battle on screen. For each action you pick, the server rolls the dice first and
+sends them back, so both play the same turn and nothing can be predicted in advance. Moves learned (choosing one to
+forget) and a caught Pokémon's nickname go to the server too. When the battle ends the server records it: money and
+wins, the catch in your party (or the PC), EXP, levels, PP and HP. It saves at once when a battle starts and when it
+ends. Losing sends you home with your party healed. You can't walk during a battle; leaving the game mid-battle keeps
+what happened so far. Staff in Admin Mode don't meet wild Pokémon, but `/wild <species> <level>` starts a battle for
+testing (Game Masters and up).
+
 ## What to check
 
 - [ ] You start in Nuvema Town; the top-left box shows the server, your channel and your character's name.
@@ -121,17 +167,27 @@ of those restarts that player's 30–60 s batch timer, and anything else is save
       shows it all.
 - [ ] X shows your party, Bag and trainer card; with two Pokémon, "Make lead" reorders them and it's kept after
       logging out and in.
+- [ ] X with two clients: add each other as friends (the other side sees the request and accepts), list a Poké Ball
+      and buy it from the other client, send a trade offer and accept it, mail ₽50 and collect it, exchange direct
+      messages. Check money and Bags in Pokémon & Bag after collecting. The InfiniteLoots Shop tab can't be opened.
+- [ ] After 3 catches, make a party Pokémon your Active Buddy: it walks a tile behind you, and the other client sees it
+      following you. Put it away and it's gone on both.
+- [ ] Walk in tall grass on Route 1 until a wild Pokémon appears; fight, throw a ball, switch. When it ends, X shows
+      the same HP, EXP and level as the battle did, a catch is in your party (with its nickname), and after logging
+      out and in it's all still there. Lose a battle: you're sent home with your party healed.
 - [ ] F9 in Admin Mode: open the other player, set their money and give an item (their X menu shows it), edit their
       Pokémon's level, then revert it from the Audit tab. Make a role, tick a permission, grant it to them, and see
       `/help` on their side change after they enter Admin Mode. Ban them: they're disconnected and can't log in.
 
 ## Not in this slice
 
-Battles, wild Pokémon, NPC scripts, items and the other menu tabs (quests, mail, market) aren't online yet. Your
-offline game is separate and unchanged.
+Trainer battles, surfing and fishing encounters, NPC scripts, using items outside battle and the other menu tabs
+(quests, mail, market) aren't online yet. Your offline game is separate and unchanged.
 An older server database is upgraded in place on start; its characters get a new game the first time they join.
 
 `--capture-online=<dir> --account=<name> --walk=R3U1 --stay=10` plays a scripted session against the local server
 (registering or logging in, trusting the certificate, making a character, walking) with screenshots. `--api-port=`
 picks a server on another port; `--say=` runs chat lines and steps such as `panel`, `w:open=<name>`, `w:tab=2`,
-`w:reason=…`, `w:press=<button text>`, `w:spin=<n>,<value>` and `w:dump` that drive the admin window.
+`w:reason=…`, `w:press=<button text>`, `w:spin=<n>,<value>` and `w:dump` that drive the admin window, and
+`battle:fight` / `battle:ball` that play the battle on screen to the end and report whether it ever disagreed with
+the server, and `m:open`, `m:tab=N`, `m:market=N`, `m:press=…`, `m:text=…`, `m:spin=…`, `m:dump` for the player menu.

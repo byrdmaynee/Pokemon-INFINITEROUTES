@@ -144,7 +144,7 @@ public sealed class Battler(Pokemon mon, BattleSide side, int slot = 0)
 public sealed partial class SingleBattle
 {
     readonly BattleData _data;
-    readonly Random _rng;
+    Random _rng;
     readonly IReadOnlyList<Pokemon> _party;
     readonly Bag _bag;
     readonly IReadOnlyList<Pokemon> _foeParty;
@@ -184,6 +184,23 @@ public sealed partial class SingleBattle
     public int PrizeMoney { get; private set; }
     public BattleOutcome Outcome { get; private set; }
     public bool Over => Outcome != BattleOutcome.Ongoing;
+
+    /// <summary>
+    /// Replaces the random numbers from here on. Online, the server picks a seed for each action once the player has
+    /// chosen it and the client replays the action with the same seed, so both play the same turn and neither side's
+    /// choice can be fitted to the dice in advance.
+    /// </summary>
+    public void Reseed(int seed) => _rng = new Random(seed);
+
+    /// <summary>
+    /// A short fingerprint of where the battle stands (every Pokémon's HP and status, PP left, the outcome), so a
+    /// server and a client replaying the same battle can tell whether they still agree.
+    /// </summary>
+    public string Digest()
+    {
+        var parts = _party.Concat(_foeParty).Select(m => $"{m.Species.Id}:{m.Level}:{m.Hp}:{(int)m.Status}:{m.Exp}:{string.Join('.', m.Moves.Select(x => x.Pp))}");
+        return $"{(int)Outcome}|{string.Join(',', parts)}|{_bag.Items.Sum(i => i.Item * 31 + i.Count)}";
+    }
 
     /// <summary>The player's Pokémon fainted and another can fight: call <see cref="SendOut"/> before the next action.</summary>
     public bool NeedsSwitch { get; private set; }
@@ -1456,7 +1473,9 @@ public sealed partial class SingleBattle
     /// </summary>
     void AwardExp(Battler defeated, List<BattleEvent> events)
     {
-        var fighters = defeated.FacedBy.Where(p => !p.Fainted && IndexOf(p) >= 0).ToList();
+        // In party order (FacedBy is a set of references, whose order differs between processes; a server and its
+        // client must play the same events).
+        var fighters = defeated.FacedBy.Where(p => !p.Fainted && IndexOf(p) >= 0).OrderBy(IndexOf).ToList();
         var holders = _party.Where(p => !p.Fainted && p.HeldItem == HeldItems.ExpShare).ToList();
         var earners = fighters.Union(holders).ToList();
         foreach (var mon in earners)

@@ -14,6 +14,13 @@ namespace InfiniteRoutes.Client.World;
 public partial class OverworldScreen
 {
     readonly bool _online;
+
+    /// <summary>This player's own role beacon, over their head.</summary>
+    readonly BeaconArt.Emblem MyBeacon = new(2.5f);
+
+    /// <summary>The beacon id over this player and over each player in view; for smoke tests.</summary>
+    public string MyBeaconId => MyBeacon.Id;
+    public IEnumerable<(string Name, string Beacon)> RemoteBeacons => _remotes.Values.Select(r => (r.PlayerName, r.Beacon.Id));
     readonly Dictionary<int, RemotePlayer> _remotes = [];
     int _seq;
     /// <summary>The seq of a warp sent to the server and not answered yet.</summary>
@@ -100,6 +107,16 @@ public partial class OverworldScreen
                     _pendingWarp = null;
                     ArriveFromServer(warped.Location);
                     break;
+                case BeaconChanged beacon:
+                    if (_remotes.TryGetValue(beacon.Player, out var wearer))
+                        wearer.Beacon.Set(beacon.Beacon);
+                    else if (beacon.Player == OnlineSession.Game?.Welcome.PlayerId)
+                        MyBeacon.Set(beacon.Beacon);
+                    break;
+                case BuddyChanged buddy:
+                    if (_remotes.TryGetValue(buddy.Player, out var who))
+                        who.Buddy.SetPokemon(buddy.Species, buddy.Shiny, buddy.Female);
+                    break;
                 case PlayersAppeared appeared:
                     foreach (var p in appeared.Players)
                         AddRemote(p);
@@ -127,6 +144,18 @@ public partial class OverworldScreen
                 case SpectateStatus spectate:
                     SetSpectating(spectate);
                     break;
+                case SocialReply or SocialBadges or DmReceived or MarketPage or TradeList or FriendsList or MailList or DmThreads or DmConversation:
+                    ShowSocial(message);
+                    break;
+                case BattleStart start:
+                    QueueOnlineBattle(start);
+                    break;
+                case BattleTurn turn:
+                    _onlineBattle?.Answer(turn);
+                    break;
+                case BattleOver over:
+                    BattleResult(over);
+                    break;
                 case AdminPlayerDetail or AdminRoles or AdminAudit:
                     ShowAdminData(message);
                     break;
@@ -135,6 +164,11 @@ public partial class OverworldScreen
                     break;
                 case StateSnapshot snapshot:
                     SetOnlineState(snapshot.Json);
+                    UpdateQuestHud();
+                    RefreshQuestMarks();
+                    break;
+                case NpcResult npcResult:
+                    OnNpcResult(npcResult);
                     break;
                 case Notice notice:
                     if (notice.Channel > 0)
@@ -145,6 +179,7 @@ public partial class OverworldScreen
                     Toast(notice.Text);
                     break;
             }
+        OpenPendingBattle();
         // A refused step puts the player back where the server has them.
         if (_correction is { } c && !_moving)
         {
@@ -158,6 +193,7 @@ public partial class OverworldScreen
                 StreamChunks();
                 _height = GroundHeight(_tile, _height);
                 _player.Position = TileCenter(_tile, _height);
+                PlaceBuddy();
                 UpdateHud();
             }
         }
@@ -195,7 +231,7 @@ public partial class OverworldScreen
         UpdateHud();
         // Doors and stairs: step off them onto the floor (that step goes to the server like any other).
         var dest = zone.Warps.FirstOrDefault(w => w.Contains(at.X, at.Y));
-        Arrive(_tile, (Facing)Math.Clamp(at.Facing, 0, 3), autoStep: newMap && dest?.Kind is WarpKind.Door or WarpKind.Stairs);
+        Arrive(_tile, (Facing)Math.Clamp(at.Facing, 0, 3), autoStep: newMap && (dest?.Kind is WarpKind.Door or WarpKind.Stairs || dest?.Kind == WarpKind.Edge && IsBlocked(_tile)));
         CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, FadeSeconds).SetDelay(0.05);
     }
 
@@ -204,10 +240,13 @@ public partial class OverworldScreen
         if (_remotes.Remove(p.Id, out var old))
             old.QueueFree();
         var sheet = _assets.OverworldSpritePath(p.Appearance == 1 ? "heroine" : "hero");
-        var remote = new RemotePlayer(p.Id, p.Name, BuildSprite(sheet));
+        var remote = new RemotePlayer(p.Id, p.Name, BuildSprite(sheet), new BuddyFollower(_assets));
         _world.AddChild(remote);
+        _world.AddChild(remote.Buddy);
         var tile = new Vector2I(p.Location.X, p.Location.Y);
         remote.Place(tile, (Facing)Math.Clamp(p.Location.Facing, 0, 3), GroundHeight(tile, _height));
+        remote.Buddy.SetPokemon(p.Buddy, p.BuddyShiny, p.BuddyFemale);
+        remote.Beacon.Set(p.Beacon);
         _remotes[p.Id] = remote;
     }
 
@@ -223,11 +262,18 @@ public partial class OverworldScreen
         public string PlayerName { get; }
         public Vector2I Tile { get; private set; }
 
-        public RemotePlayer() : this(0, "", new Sprite3D()) { }
+        /// <summary>The Pokémon following them (hidden when there's none).</summary>
+        public BuddyFollower Buddy { get; }
 
-        public RemotePlayer(int id, string name, Sprite3D sprite)
+        /// <summary>Their role's beacon over their name.</summary>
+        public BeaconArt.Emblem Beacon { get; } = new();
+
+        public RemotePlayer() : this(0, "", new Sprite3D(), new BuddyFollower()) { }
+
+        public RemotePlayer(int id, string name, Sprite3D sprite, BuddyFollower buddy)
         {
             Id = id;
+            Buddy = buddy;
             PlayerName = name;
             _sprite = sprite;
             AddChild(sprite);
@@ -236,6 +282,13 @@ public partial class OverworldScreen
                 Text = name, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, FontSize = 40, PixelSize = 0.01f,
                 Position = new Vector3(0, 2.4f, 0), OutlineSize = 10, NoDepthTest = true, Modulate = new Color(1, 1, 0.85f),
             });
+            AddChild(Beacon);
+        }
+
+        public override void _ExitTree()
+        {
+            if (IsInstanceValid(Buddy))
+                Buddy.QueueFree();
         }
 
         public void Place(Vector2I tile, Facing facing, float height)
@@ -244,6 +297,7 @@ public partial class OverworldScreen
             _facing = facing;
             Position = TileCenter(tile, height);
             Show(0, false);
+            Buddy.Place(tile - FacingToDir(facing), facing, height);
         }
 
         void Show(int step, bool run) => _sprite.Frame = (int)_facing * CharacterSheet.Columns + CharacterSheet.Column(run, step);
@@ -258,15 +312,18 @@ public partial class OverworldScreen
                 return;
             }
             var distance = Math.Abs(tile.X - Tile.X) + Math.Abs(tile.Y - Tile.Y);
+            var from = Tile;
             Tile = tile;
             _tween?.Kill();
             if (distance > 2)
             {
                 Position = TileCenter(tile, height);
                 Show(0, false);
+                Buddy.Place(tile - FacingToDir(facing), facing, height);
                 return;
             }
             var seconds = (run ? RunSeconds : WalkSeconds) * distance;
+            Buddy.StepTo(from, facing, Position.Y, seconds);
             _tween = CreateTween();
             _tween.TweenProperty(this, "position", TileCenter(tile, height), seconds);
             Show(1 + _steps++ % 2, run);

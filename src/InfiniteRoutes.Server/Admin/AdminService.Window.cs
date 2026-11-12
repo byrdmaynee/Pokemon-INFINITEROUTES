@@ -54,7 +54,7 @@ public sealed partial class AdminService
             "revert" => Permissions.Revert,
             "audit" => Permissions.AuditRead,
             "roles" => null,
-            "role-create" or "role-delete" or "role-perm" or "role-rank" => null,
+            "role-create" or "role-delete" or "role-perm" or "role-rank" or "role-beacon" => null,
             _ => "unknown",
         };
         if (permission == "unknown")
@@ -150,6 +150,11 @@ public sealed partial class AdminService
                     $"{(on ? "+" : "-")}{permissionName}", $"{a.Target} {(on ? "can now" : "can no longer")}: {permissionName}.");
                 return;
             }
+            case "role-beacon":
+                var beacon = Arg(a, "beacon");
+                await RoleResult(p, await roles.SetBeacon(a.Target, beacon), "role-beacon", a.Target, Core.Player.Beacons.NameOf(beacon),
+                    $"{a.Target} now shows {(beacon.Length > 0 ? "the " + Core.Player.Beacons.NameOf(beacon).ToLowerInvariant() : "no beacon")}.");
+                return;
             case "role-rank":
             {
                 var rank = int.TryParse(Arg(a, "rank"), out var r) ? r : -1;
@@ -171,7 +176,7 @@ public sealed partial class AdminService
     {
         var counts = await roles.Counts();
         p.Link.Send(new AdminRoles(
-            [.. roles.All().Select(r => new RoleRow(r.Name, r.Rank, r.Builtin, r.All, counts.GetValueOrDefault(r.Name.ToLowerInvariant())))],
+            [.. roles.All().Select(r => new RoleRow(r.Name, r.Rank, r.Builtin, r.All, counts.GetValueOrDefault(r.Name.ToLowerInvariant()), r.Beacon))],
             [.. Permissions.Catalog.Select(c => new PermissionRow(c.Key, c.Description))]));
     }
 

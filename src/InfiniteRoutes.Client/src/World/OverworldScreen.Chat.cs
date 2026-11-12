@@ -22,7 +22,11 @@ public partial class OverworldScreen
     PanelContainer? _chatPanel;
     RichTextLabel? _chatLog;
     LineEdit? _chatInput;
-    PanelContainer? _onlineMenu;
+    PlayerMenu? _onlineMenu;
+    SocialBadges _badges = new(0, 0, 0, 0);
+
+    /// <summary>The player menu while it's open; for smoke tests.</summary>
+    public PlayerMenu? PlayerMenuOpen => _onlineMenu is not null && IsInstanceValid(_onlineMenu) ? _onlineMenu : null;
     PanelContainer? _elevatePrompt;
     string? _replyTo;
     AdminStatus? _admin;
@@ -212,7 +216,7 @@ public partial class OverworldScreen
     /// <summary>The HUD line for Admin Mode, when it's on.</summary>
     string AdminHud => (_admin is { Elevated: true } a
         ? $"\n⚑ ADMIN MODE ({a.Role}){(a.Invisible ? " · invisible" : "")}{(a.Noclip ? " · noclip" : "")} · F9 panel"
-        : "") + SpectateHud;
+        : "") + SpectateHud + SocialHud;
 
     bool AdminNoclip => _admin is { Elevated: true, Noclip: true };
 
@@ -257,58 +261,99 @@ public partial class OverworldScreen
             return;
         }
         // An open menu shows the new state at once.
-        if (_onlineMenu is not null)
-        {
-            ToggleOnlineMenu();
-            ToggleOnlineMenu();
-        }
+        PlayerMenuOpen?.StateChanged();
     }
 
-    /// <summary>X online: opens or closes the party, Bag and trainer card from the server's copy of the game.</summary>
+    /// <summary>
+    /// X online: opens or closes the player menu (the game the server holds, the market, friends, mail, messages).
+    /// </summary>
     void ToggleOnlineMenu()
     {
         if (_onlineMenu is not null)
         {
-            _onlineMenu.QueueFree();
+            if (IsInstanceValid(_onlineMenu))
+                _onlineMenu.QueueFree();
             _onlineMenu = null;
             return;
         }
-        var state = _onlineState;
-        var data = OfflineSession.Data;
-        var content = Ui.Ui.VBox(8, Ui.Ui.Text($"{OnlineSession.Character?.Name} — {OnlineSession.Game?.Welcome.ServerName}", 22, Ui.Ui.Accent));
-        if (state is null)
-            content.AddChild(Ui.Ui.Text("This server doesn't keep a game for you (it has no battle data).", 16, Ui.Ui.Muted));
-        else
+        var menu = new PlayerMenu(m => OnlineSession.Game?.Send(m), () => _onlineState,
+            zone => _zones.TryGetValue(zone, out var z) && z.Location.Length > 0 ? z.Location : $"zone {zone}", OnlineSession.Character?.Name ?? "")
         {
-            content.AddChild(Ui.Ui.Text("Party", 17, Ui.Ui.Muted));
-            for (var i = 0; i < state.Party.Count; i++)
-            {
-                var p = state.Party[i];
-                var name = p.Nickname ?? (data?.HasSpecies(p.Species) == true ? data.Species(p.Species).Name : $"#{p.Species}");
-                var index = i;
-                var row = Ui.Ui.HBox(12, Ui.Ui.Text($"{name}  Lv{p.Level}   HP {p.Hp}{(p.Status != Core.Data.Ailment.None ? "  " + p.Status : "")}", 16));
-                if (i > 0)
-                    row.AddChild(Ui.Ui.Button("Make lead", () => OnlineSession.Game?.Send(new SetLead(index))));
-                content.AddChild(row);
-            }
-            content.AddChild(Ui.Ui.Text("Bag", 17, Ui.Ui.Muted));
-            var items = string.Join(" · ", state.Bag.Select(b => $"{data?.ItemName(b.Item) ?? "#" + b.Item} ×{b.Count}"));
-            var bag = Ui.Ui.Text(items.Length > 0 ? items : "Empty", 15, wrap: true);
-            bag.CustomMinimumSize = new Vector2(560, 0);
-            content.AddChild(bag);
-            content.AddChild(Ui.Ui.Text("Trainer card", 17, Ui.Ui.Muted));
-            content.AddChild(Ui.Ui.Text($"Money ₽{state.Progress.Money:N0} · badges {state.Progress.Badges.Count} · caught {state.Progress.Caught} · PC {state.Box.Count} Pokémon", 15));
+            Game = () => OnlineGame,
+        };
+        menu.TreeExited += () =>
+        {
+            if (_onlineMenu == menu)
+                _onlineMenu = null;
+        };
+        AddChild(menu);
+        menu.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
+        menu.GrowHorizontal = menu.GrowVertical = GrowDirection.Both;
+        menu.SetBadges(_badges);
+        _onlineMenu = menu;
+    }
+
+    /// <summary>What the server sent for the player menu: to the menu if it's open, else a line or a toast.</summary>
+    void ShowSocial(Message message)
+    {
+        var menu = PlayerMenuOpen;
+        switch (message)
+        {
+            case SocialBadges badges:
+                _badges = badges;
+                UpdateHud();
+                menu?.SetBadges(badges);
+                break;
+            case SocialReply reply:
+                if (menu is not null)
+                    menu.ShowReply(reply);
+                else if (reply.Text.Length > 0)
+                    Toast(reply.Text);
+                break;
+            case DmReceived dm:
+                if (menu is not null)
+                    menu.AddDm(dm);
+                if ((menu is null || menu.CurrentTab != PlayerMenu.MessagesTab)
+                    && !string.Equals(dm.Message.From, OnlineSession.Character?.Name, StringComparison.OrdinalIgnoreCase))
+                    AddSystem($"✉ {dm.Message.From}: {dm.Message.Text}   (X → Messages)");
+                break;
+            case MarketPage page:
+                menu?.SetMarket(page);
+                break;
+            case TradeList trades:
+                menu?.SetTrades(trades);
+                break;
+            case FriendsList friends:
+                menu?.SetFriends(friends);
+                break;
+            case MailList mail:
+                menu?.SetMail(mail);
+                break;
+            case DmThreads threads:
+                menu?.SetThreads(threads);
+                break;
+            case DmConversation conversation:
+                menu?.SetConversation(conversation);
+                break;
         }
-        var note = Ui.Ui.Text("Battles and items aren't online yet. The server holds this game; your offline game is separate.", 13, Ui.Ui.Muted, wrap: true);
-        note.CustomMinimumSize = new Vector2(560, 0);   // a wrapping label needs a width, or it grows tall
-        content.AddChild(note);
-        content.AddChild(Ui.Ui.Button("Close (X)", ToggleOnlineMenu));
-        var panel = new PanelContainer();
-        panel.AddChild(Ui.Ui.Margin(content, 18));
-        AddChild(panel);
-        panel.SetAnchorsAndOffsetsPreset(LayoutPreset.Center);
-        panel.GrowHorizontal = panel.GrowVertical = GrowDirection.Both;
-        _onlineMenu = panel;
+    }
+
+    /// <summary>What's waiting (mail, messages, friend requests, trade offers), for the HUD.</summary>
+    string SocialHud
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (_badges.Mail > 0)
+                parts.Add($"✉ {_badges.Mail} mail");
+            if (_badges.Messages > 0)
+                parts.Add($"💬 {_badges.Messages}");
+            if (_badges.Requests > 0)
+                parts.Add($"👋 {_badges.Requests}");
+            if (_badges.Trades > 0)
+                parts.Add($"⇄ {_badges.Trades} offer{(_badges.Trades == 1 ? "" : "s")}");
+            return parts.Count > 0 ? $"\n{string.Join("  ", parts)}  (X)" : "";
+        }
     }
 
     /// <summary>Opens or closes the online menu; for smoke tests.</summary>
@@ -321,7 +366,7 @@ public partial class OverworldScreen
             return false;
         if (_chatInput.HasFocus() || _elevatePrompt is not null)
             return false;
-        if (AdminClick(e))
+        if (PlayerClick(e))
             return true;
         if (e is InputEventKey { Pressed: true, Echo: false } key)
         {

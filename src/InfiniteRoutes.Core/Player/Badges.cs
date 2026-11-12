@@ -27,6 +27,19 @@ public static class Badges
     public static BadgeInfo? EarnedBy(TrainerInfo trainer) =>
         trainer.ClassName == "Leader" ? Unova.FirstOrDefault(b => b.Leaders.Contains(trainer.Name)) : null;
 
+    /// <summary>
+    /// Why a gym leader won't battle yet: gyms are taken in order, so a leader waits for the badges before theirs. Null
+    /// when they will (or the trainer isn't a leader, or the badge is already earned).
+    /// </summary>
+    public static string? Gate(PlayerProgress progress, TrainerInfo trainer)
+    {
+        if (EarnedBy(trainer) is not { } badge || progress.Badges.ContainsKey(badge.Index))
+            return null;
+        return Unova.FirstOrDefault(b => b.Index < badge.Index && !progress.Badges.ContainsKey(b.Index)) is { } missing
+            ? $"{trainer.Title}: You'll need the {missing.Name} from the {missing.City} Gym before I battle you. Come back once you've earned it!"
+            : null;
+    }
+
     /// <summary>The first trainer in <paramref name="trainers"/> who awards <paramref name="badge"/>.</summary>
     public static TrainerInfo? LeaderFor(BadgeInfo badge, IEnumerable<TrainerInfo> trainers) =>
         trainers.FirstOrDefault(t => EarnedBy(t) == badge);

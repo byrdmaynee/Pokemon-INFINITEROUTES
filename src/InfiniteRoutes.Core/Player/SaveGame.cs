@@ -13,7 +13,7 @@ public sealed record MailSave(int Id, string From, string Subject, string Body, 
 public sealed record ListingSave(int Id, string Seller, ListingKind Kind, int Item, int Count, PokemonSave? Pokemon, int Price, DateTime Listed, DateTime Expires);
 
 public sealed record ProgressSave(Dictionary<int, DateTime> Badges, List<int> DefeatedTrainers, int Money, int Caught, int WildWins,
-    int CenterVisits, DateTime Started, TimeSpan PlayTime);
+    int CenterVisits, DateTime Started, TimeSpan PlayTime, List<string>? Gifts = null, Dictionary<int, int>? CaughtSpecies = null);
 
 /// <summary>
 /// An offline save: a JSON snapshot of a <see cref="GameState"/>. Pokémon are stored by species and move ids, so a save
@@ -22,7 +22,7 @@ public sealed record ProgressSave(Dictionary<int, DateTime> Badges, List<int> De
 public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLocation? Location, List<PokemonSave> Party,
     List<PokemonSave> Box, List<ItemSave> Bag, ProgressSave Progress, QuestLogSave Quests, List<MailSave> Mail,
     List<Friend> Friends, List<string> Ignored, List<ListingSave> Market, List<string>? BoxNames = null, int RepelSteps = 0,
-    PlayerLocation? LastOutdoor = null)
+    PlayerLocation? LastOutdoor = null, int Buddy = -1)
 {
     public const int CurrentVersion = 1;
 
@@ -40,14 +40,15 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
             state.Party.Select(m => m.ToSave()).ToList(),
             state.Box.Select(m => m.ToSave()).ToList(),
             state.Bag.Items.Select(i => new ItemSave(i.Item, i.Count)).ToList(),
-            new ProgressSave(new(p.Badges), [.. p.DefeatedTrainers], p.Money, p.Caught, p.WildWins, p.CenterVisits, p.Started, p.PlayTime),
+            new ProgressSave(new(p.Badges), [.. p.DefeatedTrainers], p.Money, p.Caught, p.WildWins, p.CenterVisits, p.Started, p.PlayTime,
+                [.. p.Gifts.Order()], new(p.CaughtSpecies)),
             state.Quests.ToSave(),
             state.Mail.Messages.Select(m => new MailSave(m.Id, m.From, m.Subject, m.Body, m.Sent, m.Read, m.Claimed,
                 m.Attachments.Select(a => new AttachmentSave(a.Money, a.Item, a.Count, a.Pokemon?.ToSave())).ToList())).ToList(),
             [.. state.Friends.Friends],
             [.. state.Friends.Ignored],
             state.Market.Listings.Select(l => new ListingSave(l.Id, l.Seller, l.Kind, l.Item, l.Count, l.Pokemon?.ToSave(), l.Price, l.Listed, l.Expires)).ToList(),
-            [.. state.BoxNames], state.RepelSteps, state.LastOutdoor);
+            [.. state.BoxNames], state.RepelSteps, state.LastOutdoor, state.Buddy is { } b ? state.Party.IndexOf(b) : -1);
     }
 
     /// <summary>Rebuilds the game. <paramref name="quests"/> is a fresh log over the current quest catalog.</summary>
@@ -68,6 +69,9 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
         foreach (var (badge, when) in p.Badges)
             state.Progress.Badges[badge] = when;
         state.Progress.DefeatedTrainers.UnionWith(p.DefeatedTrainers);
+        state.Progress.Gifts.UnionWith(p.Gifts ?? []);
+        foreach (var (species, count) in p.CaughtSpecies ?? [])
+            state.Progress.CaughtSpecies[species] = count;
         state.Party.AddRange(Party.Select(s => Pokemon.FromSave(data, s)).OfType<Pokemon>().Take(GameState.PartySize));
         state.Box.AddRange(Box.Select(s => Pokemon.FromSave(data, s)).OfType<Pokemon>());
         foreach (var item in Bag)
@@ -75,6 +79,9 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
         for (var i = 0; i < Math.Min(BoxNames?.Count ?? 0, GameState.BoxCount); i++)
             state.RenameBox(i, BoxNames![i]);
         state.Progress.PartyCount = state.Party.Count;
+        state.Progress.TopLevel = state.Party.Select(m => m.Level).DefaultIfEmpty().Max();
+        if (Buddy >= 0 && Buddy < state.Party.Count)
+            state.Buddy = state.Party[Buddy];
         quests.Load(Quests);
         state.Mail.Load(Mail.Select(m => new MailMessage
         {
@@ -93,6 +100,10 @@ public sealed record SaveGame(int Version, string Game, DateTime Saved, PlayerLo
     }
 
     public string ToJson() => JsonSerializer.Serialize(this, Json);
+
+    /// <summary>The Pokémon following the player in this save (see <see cref="GameState.ActiveBuddy"/>), or null.</summary>
+    public PokemonSave? ActiveBuddy =>
+        Buddy >= 0 && Buddy < Party.Count && Party[Buddy].Hp > 0 && Progress.Caught >= GameState.BuddyCatches ? Party[Buddy] : null;
 
     public static SaveGame? FromJson(string json) => JsonSerializer.Deserialize<SaveGame>(json, Json);
 

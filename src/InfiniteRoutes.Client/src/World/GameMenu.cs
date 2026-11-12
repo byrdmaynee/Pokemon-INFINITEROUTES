@@ -3,6 +3,7 @@ using InfiniteRoutes.Core.Battle;
 using InfiniteRoutes.Core.Data;
 using InfiniteRoutes.Core.Player;
 using InfiniteRoutes.Extractor.Extraction;
+using InfiniteRoutes.Client.Ui;
 using U = InfiniteRoutes.Client.Ui.Ui;
 
 namespace InfiniteRoutes.Client.World;
@@ -206,10 +207,8 @@ public partial class GameMenu : Control
         {
             var mon = party[i];
             var index = i;
-            var status = mon.Fainted ? "FNT" : mon.Status == Ailment.None ? "" : mon.Status.ToString();
             var moves = string.Join(", ", mon.Moves.Select(m => $"{m.Move.Name} {m.Pp}/{m.MaxPp}"));
             var stats = $"Atk {mon.StatValue(Stat.Attack)} · Def {mon.StatValue(Stat.Defense)} · SpA {mon.StatValue(Stat.SpAttack)} · SpD {mon.StatValue(Stat.SpDefense)} · Spe {mon.StatValue(Stat.Speed)} · {mon.Nature} · {mon.AbilityName}";
-            var held = mon.HeldItem != 0 ? $"   Holding: {OfflineSession.Data.ItemName(mon.HeldItem)}" : "";
             if (index == _renaming)
             {
                 var field = new LineEdit { Text = mon.Name, MaxLength = Pokemon.MaxNicknameLength, CustomMinimumSize = new Vector2(220, 0), SelectAllOnFocus = true };
@@ -227,17 +226,26 @@ public partial class GameMenu : Control
                 field.CallDeferred(Control.MethodName.GrabFocus);
                 continue;
             }
-            var button = Row($"{mon.Name}{GenderMark(mon)}  Lv{mon.Level}   HP {mon.Hp}/{mon.MaxHp}  {status}{held}\n{moves}\n{stats}", () => PickPokemon(index), Icon(mon));
-            button.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            var card = MonUi.Card(_assets, mon, $"{moves}\n{stats}", mon.HeldItem != 0 ? OfflineSession.Data.ItemName(mon.HeldItem) : null,
+                lead: index == 0, buddy: OfflineSession.State.Buddy == mon);
+            var button = MonUi.Clickable(card, () => PickPokemon(index));
             var row = U.HBox(6, button);
             if (mon.HeldItem != 0 && _useItem == 0 && _giveItem == 0)
                 row.AddChild(U.Button("Take", () => TakeItem(index), 15));
             if (_useItem == 0 && _giveItem == 0)
+            {
                 row.AddChild(U.Button("Name", () =>
                 {
                     _renaming = index;
                     Rebuild(null);
                 }, 15));
+                var buddy = OfflineSession.State.Buddy == mon;
+                var b = U.Button(buddy ? "Put away" : "Buddy", () => Rebuild(OfflineSession.State.SetBuddy(buddy ? -1 : index).Message), 15);
+                b.Disabled = !buddy && (!OfflineSession.State.CanHaveBuddy || mon.Fainted);
+                b.TooltipText = OfflineSession.State.CanHaveBuddy ? "Active Buddy: this Pokémon follows you around"
+                    : $"Catch {GameState.BuddyCatches} Pokémon to unlock Active Buddy ({OfflineSession.Progress.Caught}/{GameState.BuddyCatches})";
+                row.AddChild(b);
+            }
             list.AddChild(row);
         }
         if (OfflineSession.Box.Count > 0)
@@ -555,7 +563,7 @@ public partial class GameMenu : Control
                     _giveItem = medicine ? 0 : id;
                     _tab = Tab.Party;
                     Rebuild(null);
-                });
+                }, MonUi.ItemTexture(_assets, item));
                 button.Disabled = ball;
                 column.AddChild(button);
             }

@@ -20,6 +20,28 @@ public partial class NpcActor : Node3D
     public Vector2I Tile { get; private set; }
     public Vector2I Home { get; }
     public bool Moving { get; private set; }
+    /// <summary>The zone whose events place this NPC (gifts and quest givers are keyed by zone and NPC id).</summary>
+    public int Zone { get; init; }
+
+    Label3D? _questMark;
+
+    /// <summary>Shows or hides the yellow "!" of an NPC who has a quest for the player.</summary>
+    public void SetQuestMark(bool on)
+    {
+        if (on && _questMark is null)
+        {
+            _questMark = new Label3D
+            {
+                Text = "!", FontSize = 96, PixelSize = 0.011f, Modulate = new Color(1, 0.85f, 0.15f), OutlineSize = 18,
+                Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, Position = new Vector3(0, 2.6f, 0),
+            };
+            AddChild(_questMark);
+        }
+        if (_questMark is not null)
+            _questMark.Visible = on;
+    }
+
+    public bool QuestMarked => _questMark?.Visible == true;
 
     public NpcActor(NpcInfo info, Texture2D? sheet)
     {

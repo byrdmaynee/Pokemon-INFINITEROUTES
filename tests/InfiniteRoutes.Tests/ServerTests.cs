@@ -38,16 +38,39 @@ sealed class FakeWorld : IWorldData
 
     static readonly WarpInfo Door = new(10, 10, 1, 1, 2, 0, null, WarpKind.Door);
     static readonly WarpInfo Mat = new(3, 7, 1, 1, 1, 0, Facing.Down, WarpKind.Mat);
+    /// <summary>A town gate: an edge warp on the wall at (5, 3), walked into like a door.</summary>
+    static readonly WarpInfo Gate = new(5, 3, 1, 1, 2, 0, Facing.Right, WarpKind.Edge);
 
     public WarpInfo? WarpAt(int zone, int x, int y) => (zone, x, y) switch
     {
         (1, 10, 10) => Door,
         (2, 3, 7) => Mat,
+        (1, 5, 3) => Gate,
         _ => null,
     };
 
     public (int Zone, int X, int Y, int Facing)? Destination(WarpInfo warp) =>
         warp == Door ? (2, 3, 7, 1) : (1, 10, 11, 0);
+
+    /// <summary>A patch of tall grass at x 3–4, y 0–4, next to the start; zone 1 uses encounter table 0.</summary>
+    public bool TallGrass(int zone, int x, int y) => zone == 1 && x is 3 or 4 && y is >= 0 and <= 4;
+
+    public int EncounterTable(int zone) => zone == 1 ? 0 : -1;
+
+    /// <summary>
+    /// NPCs around the start (2, 2) of zone 1: gym leaders as trainers 0 (left) and 1 (above), a gift of two Potions
+    /// (below), the same gift far away, and a Pokémon Center nurse (up-left).
+    /// </summary>
+    public static readonly NpcInfo[] Npcs =
+    [
+        new(0, 1, 1, 2, 0, Facing.Right, 0, 0, 0, 1, 0, Talk: new(["Cilan: Let's battle!"], 0, ["You won!"])),
+        new(1, 1, 2, 1, 0, Facing.Down, 0, 0, 0, 2, 0, Talk: new(["Lenora: Let's battle!"], 1)),
+        new(2, 1, 2, 3, 0, Facing.Up, 0, 0, 0, 3, 0, Talk: new(["Take these!"], GiftItem: 17, GiftCount: 2)),
+        new(3, 1, 15, 15, 0, Facing.Up, 0, 0, 0, 3, 0, Talk: new(["Take these!"], GiftItem: 17, GiftCount: 2)),
+        new(4, 1, 1, 1, 0, Facing.Down, 0, 0, 0, 2100, 0),
+    ];
+
+    public NpcInfo? Npc(int zone, int id) => zone == 1 ? Npcs.FirstOrDefault(n => n.Id == id) : null;
 }
 
 /// <summary>The server running in-process on free ports, with its own temporary folder and SQLite database.</summary>
@@ -334,6 +357,30 @@ public class ServerTests
         await b.Send(new Warp(501, 3, 7));
         Assert.Equal(new NetLocation(1, 10, 11, 0), (await b.Expect<Warped>()).Location);
         Assert.Contains((await a.Expect<PlayersAppeared>()).Players, p => p.Id == welcomeB.PlayerId);
+    }
+
+    [Fact]
+    public async Task A_gate_on_a_wall_is_walked_into_from_the_tile_in_front()
+    {
+        await using var server = await TestServer.Start(channels: 1);
+        var (token, character) = await server.NewPlayer("Gatekeeper");
+        await using var b = await TestClient.Connect(server.GamePort);
+        await b.Send(new Hello(Protocol.Version, token, character));
+        await b.Expect<Welcome>();
+
+        // From (2, 2): too far from the gate at (5, 3) …
+        await b.Send(new Warp(1, 5, 3));
+        Assert.False((await b.Expect<StepResult>(r => r.Seq == 1)).Accepted);
+        // … then in front of it at (4, 3): through.
+        var seq = 10;
+        foreach (var (dx, dy) in new[] { (1, 0), (1, 0), (0, 1) })
+        {
+            await b.Send(new Step(++seq, dx, dy, false));
+            Assert.True((await b.Expect<StepResult>(r => r.Seq == seq)).Accepted, $"step {seq}");
+            await Task.Delay(190);
+        }
+        await b.Send(new Warp(50, 5, 3));
+        Assert.Equal(1, (await b.Expect<Warped>()).Location.Zone);
     }
 
     [Fact]

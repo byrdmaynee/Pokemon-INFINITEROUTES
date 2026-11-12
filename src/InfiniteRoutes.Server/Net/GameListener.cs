@@ -19,7 +19,7 @@ namespace InfiniteRoutes.Server.Net;
 /// bounded outgoing queue; a client that floods messages or can't keep up is disconnected.
 /// </summary>
 public sealed class GameListener(ServerConfig config, X509Certificate2 certificate, AccountService accounts,
-    IDbContextFactory<IrDb> dbs, WorldService world, Admin.AdminService admin, ILogger<GameListener> log,
+    IDbContextFactory<IrDb> dbs, WorldService world, Admin.AdminService admin, Social.SocialService social, ILogger<GameListener> log,
     Game.GameRules? rules = null) : BackgroundService
 {
     const int HelloSeconds = 10;
@@ -90,10 +90,13 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
                 player = joined;
                 connection.Send(new Welcome(player.Id, player.Name, player.Channel, config.Channels, player.Location, config.Name));
                 world.SendState(player);
+                if (player.Beacon.Length > 0)
+                    connection.Send(new BeaconChanged(player.Id, player.Beacon));
                 if (world.RoleOf(player).IsStaff)
                     connection.Send(world.StatusOf(player));
                 log.LogInformation("{Name} joined channel {Channel} from {Endpoint}", player.Name, player.Channel, endpoint);
             }
+            await social.Joined(player);
 
             var writer = connection.WriteLoop();
             var window = DateTime.UtcNow;
@@ -112,6 +115,8 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
                 }
                 if (message is Elevate or AdminCommand or AdminAction)
                     await admin.Handle(player, message);
+                else if (message is SocialAction action)
+                    await social.Handle(player, action);
                 else
                     world.Handle(player, message);
             }
@@ -128,6 +133,14 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
             {
                 world.Leave(player);
                 log.LogInformation("{Name} left", player.Name);
+                try
+                {
+                    await social.Left(player);
+                }
+                catch (Exception e) when (e is Microsoft.EntityFrameworkCore.DbUpdateException or InvalidOperationException or ObjectDisposedException)
+                {
+                    log.LogDebug("Telling {Name}'s friends they left failed: {Message}", player.Name, e.Message);
+                }
             }
         }
     }

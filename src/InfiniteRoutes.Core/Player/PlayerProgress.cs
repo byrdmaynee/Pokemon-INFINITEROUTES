@@ -9,6 +9,12 @@ public sealed class PlayerProgress
     /// <summary>Badge index → when it was earned.</summary>
     public SortedDictionary<int, DateTime> Badges { get; } = new();
     public HashSet<int> DefeatedTrainers { get; } = new();
+    /// <summary>NPCs whose gift has been collected, by <see cref="NpcDeal.Key"/> ("zone:npc").</summary>
+    public HashSet<string> Gifts { get; } = new();
+    /// <summary>Species id → how many of it have been caught.</summary>
+    public Dictionary<int, int> CaughtSpecies { get; } = new();
+    /// <summary>The highest level in the party right now; set with <see cref="PartyCount"/>.</summary>
+    public int TopLevel { get; set; }
     public int Money { get; set; } = 3000;
     public int Caught { get; set; }
     public int WildWins { get; set; }

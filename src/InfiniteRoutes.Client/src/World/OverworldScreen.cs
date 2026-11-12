@@ -13,7 +13,8 @@ namespace InfiniteRoutes.Client.World;
 /// </summary>
 public partial class OverworldScreen : Control
 {
-    const int ChunkTiles = 32;
+    /// <summary>Tiles per map cell: 32, more on a few map types (Skyarrow Bridge's cells are 128).</summary>
+    int ChunkTiles => _map?.ChunkTiles ?? 32;
     const int LoadRadius = 1;
     const float WalkSeconds = 0.26f;
     const float RunSeconds = 0.13f;
@@ -22,11 +23,13 @@ public partial class OverworldScreen : Control
 
     GameAssets _assets = null!;
     readonly Dictionary<int, ZoneInfo> _zones = new();
-    readonly Dictionary<int, byte[]> _tiles = new();
+    readonly Dictionary<string, byte[]> _tiles = new();
     readonly Dictionary<(int, int), WorldCell> _cellsByPos = new();
     readonly Dictionary<(int, int), Node3D> _loaded = new();
     readonly Dictionary<Vector2I, WarpInfo> _warps = new();
     readonly List<NpcInfo> _mapNpcs = new();
+    /// <summary>The zone each of <see cref="_mapNpcs"/> belongs to.</summary>
+    readonly Dictionary<NpcInfo, int> _npcZones = new(ReferenceEqualityComparer.Instance);
     readonly Dictionary<(int, int), List<NpcActor>> _npcs = new();
     readonly Dictionary<int, Texture2D?> _npcSheets = new();
     readonly Dictionary<int, IReadOnlyList<Extractor.Nitro3D.SrtAnimation>> _animations = new();
@@ -108,6 +111,7 @@ public partial class OverworldScreen : Control
         _player = new Node3D();
         _sprite = BuildSprite(assets.OverworldSpritePath(PlayerCharacter));
         _player.AddChild(_sprite);
+        _player.AddChild(MyBeacon);
         _world.AddChild(_player);
         _camera = new Camera3D { Fov = 32, Current = true };
         _world.AddChild(_camera);
@@ -261,14 +265,18 @@ public partial class OverworldScreen : Control
         _warps.Clear();
         var perCell = map.Cells.Any(c => c.Zone >= 0);
         _mapNpcs.Clear();
+        _npcZones.Clear();
         foreach (var zone in _zones.Values.Where(z => perCell ? z.Map == map.Key : z.Id == _zone))
         {
             foreach (var w in zone.Warps.Where(w => _zones.ContainsKey(w.TargetZone)))
             for (var y = w.Y; y < w.Y + Math.Max(1, w.Height); y++)
             for (var x = w.X; x < w.X + Math.Max(1, w.Width); x++)
                 _warps.TryAdd(new Vector2I(x, y), w);
-            // Without story progress yet, show only NPCs no event flag can hide.
-            _mapNpcs.AddRange(zone.Npcs.Where(n => n.Flag == 0));
+            foreach (var npc in ShownNpcs(zone))
+            {
+                _mapNpcs.Add(npc);
+                _npcZones[npc] = zone.Id;
+            }
         }
 
         _environment.BackgroundColor = map.Key == Gen5WorldExtractor.OverworldKey ? new Color(0.55f, 0.75f, 0.95f) : Colors.Black;
@@ -299,6 +307,7 @@ public partial class OverworldScreen : Control
         _player.Position = TileCenter(tile, _height);
         UpdateCamera(snap: true);
         _moving = false;
+        PlaceBuddy();
         if (autoStep && !IsBlocked(tile + _dir))
             Move(tile + _dir, run: false);
     }
@@ -349,6 +358,7 @@ public partial class OverworldScreen : Control
                 ShowFrame(0);
             }
         }
+        UpdateBuddy();
         UpdateCamera(snap: false, (float)delta);
         if ((_sinceSave += delta) >= AutosaveSeconds && !_moving && _battle is null)
             SaveGame();
@@ -473,7 +483,8 @@ public partial class OverworldScreen : Control
                 TakeWarp(here);
             return true;
         }
-        if (_warps.TryGetValue(target, out var warp) && warp.Kind is not (WarpKind.Mat or WarpKind.Edge))
+        // Doors and stairs are walked into; so is an edge warp on a solid tile (town gates: the way through the wall).
+        if (_warps.TryGetValue(target, out var warp) && (warp.Kind is not (WarpKind.Mat or WarpKind.Edge) || warp.Kind == WarpKind.Edge && IsBlocked(target)))
         {
             if (!AskWarp(warp, target))
                 TakeWarp(warp);
@@ -492,6 +503,7 @@ public partial class OverworldScreen : Control
     void Move(Vector2I target, bool run)
     {
         _moving = true;
+        _buddy?.StepTo(_tile, DirToFacing(target - _tile), _height, run ? RunSeconds : WalkSeconds);
         SendStep(_tile, target, run);
         _tile = target;
         StreamChunks();
@@ -523,7 +535,7 @@ public partial class OverworldScreen : Control
     /// <summary>An undefeated trainer whose line of sight (straight ahead, up to its sight range, until something blocks it) reaches the player.</summary>
     NpcActor? SpottedBy()
     {
-        if (!_battles || !TrainerBattles || OfflineSession.Lead is null)
+        if (!TrainerBattles || NpcGame?.Lead is null || (_online && OfflineSession.Data is null))
             return null;
         foreach (var npc in Npcs)
         {
@@ -541,11 +553,6 @@ public partial class OverworldScreen : Control
         }
         return null;
     }
-
-    /// <summary>The trainer an NPC battles as, if it has one with Pokémon and hasn't been beaten yet.</summary>
-    static Core.Data.TrainerInfo? TrainerFor(NpcActor npc) =>
-        npc.Info.TrainerId is var id and >= 0 && id < OfflineSession.Trainers.Count && !OfflineSession.DefeatedTrainers.Contains(id)
-        && OfflineSession.Trainers[id] is { Pokemon.Count: > 0 } trainer ? trainer : null;
 
     /// <summary>A trainer saw the player: "!" over its head, it walks up until it's next to the player, then the battle starts.</summary>
     async void Challenge(NpcActor npc)
@@ -582,9 +589,15 @@ public partial class OverworldScreen : Control
         if (!IsInstanceValid(this))
             return;
         if (TrainerFor(npc) is { } trainer)
-            await Say(Core.Data.TrainerInfo.Pages(trainer.Intro));
-        if (IsInstanceValid(this))
-            StartTrainerBattle(npc);
+        {
+            var intro = Pages(npc.Info.Talk?.Lines);
+            await Say(intro.Count > 0 ? intro : Core.Data.TrainerInfo.Pages(trainer.Intro));
+        }
+        if (!IsInstanceValid(this))
+            return;
+        await Act(npc, spotted: true);
+        if (IsInstanceValid(this) && _battle is null)
+            _moving = false;
     }
 
     /// <summary>Shows <paramref name="pages"/> one after another in the dialogue box, each until the player closes it.</summary>
@@ -602,20 +615,12 @@ public partial class OverworldScreen : Control
         }
     }
 
-    /// <summary>The player talked to a trainer who hasn't battled them yet: their opening line, then the battle.</summary>
-    async void TalkThenBattle(NpcActor npc, Core.Data.TrainerInfo trainer)
-    {
-        _moving = true;
-        await Say(Core.Data.TrainerInfo.Pages(trainer.Intro));
-        if (IsInstanceValid(this))
-            StartTrainerBattle(npc);
-    }
-
     /// <summary>Starts the battle with <paramref name="npc"/>'s trainer team. Public so smoke tests can force one.</summary>
     public void StartTrainerBattle(NpcActor npc)
     {
         if (TrainerFor(npc) is not { } trainer)
             return;
+        _battleNpc = npc;
         StartTrainerBattle(trainer);
     }
 
@@ -715,7 +720,7 @@ public partial class OverworldScreen : Control
         return ($"batt_bg{set}", $"batt_stage{stage}");
     }
 
-    async void OpenBattle(Core.Battle.SingleBattle battle)
+    async void OpenBattle(Core.Battle.SingleBattle battle, IBattleLink? link = null)
     {
         if (_battle is not null)
             return;
@@ -734,6 +739,8 @@ public partial class OverworldScreen : Control
             return;
 
         _battle = new BattleScreen(battle, _assets, BattleScenery(battle));
+        if (link is not null)
+            _battle.Online(link);
         _battle.Finished += EndBattle;
         AddChild(_battle);
         MoveChild(_fade, -1);
@@ -747,12 +754,23 @@ public partial class OverworldScreen : Control
         await ToSignal(fadeOut, Tween.SignalName.Finished);
         if (!IsInstanceValid(this))
             return;
+        if (_online)
+        {
+            // The server records the battle (and sends the player home if they lost).
+            _battle?.QueueFree();
+            _battle = null;
+            _moving = false;
+            EndOnlineBattle();
+            CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, 0.3).SetDelay(0.05);
+            return;
+        }
         var lines = _battle?.Battle is { } finished ? OfflineSession.RecordBattle(finished) : [];
         _battle?.QueueFree();
         _battle = null;
 
         if (lines.Count > 0)
             ShowMessage(string.Join("\n", lines));
+        AfterTrainerBattle((Core.Battle.BattleOutcome)outcome);
         CheckQuests();
         if ((Core.Battle.BattleOutcome)outcome == Core.Battle.BattleOutcome.Lost)
         {
@@ -829,7 +847,7 @@ public partial class OverworldScreen : Control
         _tile = new Vector2I(dest.X + (Math.Max(1, dest.Width) - 1) / 2, dest.Y + (Math.Max(1, dest.Height) - 1) / 2);
         StreamChunks();
         UpdateHud();
-        Arrive(_tile, dest.Facing, autoStep: dest.Kind is WarpKind.Door or WarpKind.Stairs);
+        Arrive(_tile, dest.Facing, autoStep: dest.Kind is WarpKind.Door or WarpKind.Stairs || dest.Kind == WarpKind.Edge && IsBlocked(_tile));
         CreateTween().TweenProperty(_fade, "modulate", Colors.Transparent, FadeSeconds).SetDelay(0.05);
         SaveGame();
     }
@@ -913,17 +931,10 @@ public partial class OverworldScreen : Control
         npc.Facing = DirToFacing(-_dir);
         npc.Pause(2);
         ShowFrame(0);
-        if (_battles && TrainerFor(npc) is { } challenger)
+        if (npc.Info.Script == NurseScript && _online)
         {
-            TalkThenBattle(npc, challenger);
-            return true;
-        }
-        if (_battles && npc.Info.TrainerId >= 0 && npc.Info.TrainerId < OfflineSession.Trainers.Count)
-        {
-            // Beaten: their after-battle line from the ROM.
-            var beaten = OfflineSession.Trainers[npc.Info.TrainerId];
-            var pages = Core.Data.TrainerInfo.Pages(beaten.After);
-            _ = Say(pages.Count > 0 ? pages : [$"{beaten.Title}: …"]);
+            // The server heals the party and answers with the nurse's words.
+            InfiniteRoutes.Client.Online.OnlineSession.Game?.Send(new Core.Net.NpcAction(npc.Zone, npc.Info.Id));
             return true;
         }
         if (npc.Info.Script == NurseScript && _battles)
@@ -935,7 +946,7 @@ public partial class OverworldScreen : Control
         }
         if (_battles && npc.Info.Sprite == ClerkSprite && ZoneNpcs(_zone).Any(n => n.Script == NurseScript))
             return OpenMart();
-        ShowMessage($"…\n[NPC {npc.Info.Id} · script {npc.Info.Script} · sprite {npc.Info.Sprite}: dialogue arrives with the script engine]");
+        TalkTo(npc);
         return true;
     }
 
@@ -1041,12 +1052,13 @@ public partial class OverworldScreen : Control
 
     void UpdateQuestHud()
     {
-        _questHud.Visible = _battles;
-        if (!_battles)
+        var game = NpcGame;
+        _questHud.Visible = game is not null;
+        if (game is null)
             return;
-        var p = OfflineSession.Progress;
+        var p = game.Progress;
         var lines = new List<string>();
-        if (OfflineSession.Quests.Tracked is { } quest)
+        if (game.Quests.Tracked is { } quest)
         {
             lines.Add($"◆ {quest.Info.Title}");
             for (var i = 0; i < quest.Info.Objectives.Count; i++)
@@ -1058,7 +1070,7 @@ public partial class OverworldScreen : Control
         }
         else
             lines.Add("No active quests");
-        lines.Add($"Badges {p.Badges.Count}/8   ·   ₽{p.Money:N0}" + (OfflineSession.Mail.Unread > 0 ? $"   ·   ✉ {OfflineSession.Mail.Unread} new" : ""));
+        lines.Add($"Badges {p.Badges.Count}/8   ·   ₽{p.Money:N0}" + (!_online && OfflineSession.Mail.Unread > 0 ? $"   ·   ✉ {OfflineSession.Mail.Unread} new" : ""));
         _questHud.Text = string.Join("\n", lines);
     }
 
@@ -1100,13 +1112,16 @@ public partial class OverworldScreen : Control
                 var path = _assets.NpcSpritePath(info.Sprite);
                 _npcSheets[info.Sprite] = sheet = File.Exists(path) && Image.LoadFromFile(path) is { } image ? ImageTexture.CreateFromImage(image) : null;
             }
-            var npc = new NpcActor(info, sheet) { Position = TileCenter(new Vector2I(info.X, info.Y), info.Height) };
+            var npc = new NpcActor(info, sheet) { Position = TileCenter(new Vector2I(info.X, info.Y), info.Height), Zone = _npcZones.GetValueOrDefault(info, _zone) };
             _world.AddChild(npc);
             list.Add(npc);
         }
         _npcs[cell] = list;
         if (list.Count > 0)
+        {
             PlaceNpcs(list);
+            RefreshQuestMarks();
+        }
     }
 
     /// <summary>Drops NPCs onto the ground once their chunk's collision is in the physics space.</summary>
@@ -1139,7 +1154,7 @@ public partial class OverworldScreen : Control
 
     string ZoneLocation => _zones.TryGetValue(_zone, out var z) ? z.Location : "";
 
-    static (int, int) CellOf(Vector2I t) => (Mathf.FloorToInt(t.X / (float)ChunkTiles), Mathf.FloorToInt(t.Y / (float)ChunkTiles));
+    (int, int) CellOf(Vector2I t) => (Mathf.FloorToInt(t.X / (float)ChunkTiles), Mathf.FloorToInt(t.Y / (float)ChunkTiles));
 
     bool IsBlocked(Vector2I t) => (TileFlags(t) & 1) != 0;
 
@@ -1149,11 +1164,13 @@ public partial class OverworldScreen : Control
         var (cx, cy) = CellOf(t);
         if (!_cellsByPos.TryGetValue((cx, cy), out var cell))
             return 1;
-        if (!_tiles.TryGetValue(cell.Chunk, out var tiles))
-            _tiles[cell.Chunk] = tiles = _assets.ChunkTiles(cell.Chunk);
+        var key = GameAssets.TilesKey(cell);
+        if (!_tiles.TryGetValue(key, out var tiles))
+            _tiles[key] = tiles = _assets.CellTiles(cell);
         var lx = t.X - cx * ChunkTiles;
         var ly = t.Y - cy * ChunkTiles;
-        return tiles[ly * ChunkTiles + lx];
+        var i = ly * ChunkTiles + lx;
+        return i >= 0 && i < tiles.Length ? tiles[i] : (byte)1;
     }
 
     static Vector3 TileCenter(Vector2I t, float y) => new(t.X + 0.5f, y, t.Y + 0.5f);
@@ -1187,6 +1204,13 @@ public partial class OverworldScreen : Control
 
     Node3D? LoadChunk(WorldCell cell)
     {
+        // A rail map's collision-only cell: nothing to draw, but it can hold NPCs.
+        if (cell.Chunk < 0)
+        {
+            var empty = new Node3D();
+            _world.AddChild(empty);
+            return empty;
+        }
         var doc = new GltfDocument();
         var state = new GltfState();
         if (doc.AppendFromFile(_assets.ChunkModelPath(cell, _season), state) != Error.Ok)

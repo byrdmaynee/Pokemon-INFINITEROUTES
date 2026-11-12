@@ -10,7 +10,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace InfiniteRoutes.Server;
 
-public sealed record Credentials(string Name, string Password);
+/// <param name="Remember">"Remember me": a session of <see cref="Config.ServerConfig.RememberDays"/> instead of the usual hours.</param>
+public sealed record Credentials(string Name, string Password, bool Remember = false);
 public sealed record NewCharacter(string Name, int Appearance);
 public sealed record CharacterView(long Id, string Name, int Appearance, int Zone, int X, int Y);
 public sealed record TotpCode(string Code);
@@ -48,8 +49,9 @@ public static class ServerHost
         builder.Services.AddSingleton<Admin.RoleService>();
         builder.Services.AddSingleton(s => new WorldService(world, config,
             saves => s.GetRequiredService<AccountService>().SavePlayers(saves), rules is null ? null : rules.Json,
-            s.GetRequiredService<Admin.RoleService>()));
+            s.GetRequiredService<Admin.RoleService>(), rules));
         builder.Services.AddSingleton<Admin.AdminService>();
+        builder.Services.AddSingleton<Social.SocialService>();
         builder.Services.AddSingleton<GameListener>();
         builder.Services.AddHostedService(s => s.GetRequiredService<GameListener>());
         builder.Services.AddHostedService<WorldTicker>();
@@ -91,7 +93,7 @@ public static class ServerHost
             await accounts.Register(c.Name, c.Password) is { } error ? Results.BadRequest(new { error }) : Results.Ok(new { ok = true }))
             .RequireRateLimiting("auth");
         api.MapPost("/login", async (Credentials c, AccountService accounts) =>
-            await accounts.LoginOrWhy(c.Name, c.Password) is var (login, why) && login is not null
+            await accounts.LoginOrWhy(c.Name, c.Password, c.Remember) is var (login, why) && login is not null
                 ? Results.Ok(new { token = login.Token, expires = login.Expires, account = login.Account })
                 : Results.Json(new { error = why ?? "Wrong account name or password." }, statusCode: why is null ? StatusCodes.Status401Unauthorized : StatusCodes.Status403Forbidden))
             .RequireRateLimiting("auth");

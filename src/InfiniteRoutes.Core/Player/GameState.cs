@@ -84,6 +84,142 @@ public sealed class GameState(QuestLog quests)
     /// <summary>Null until the player has been placed in the world (a new game starts at home).</summary>
     public PlayerLocation? Location { get; set; }
 
+    /// <summary>The first Pokémon that can still fight, or null when all have fainted.</summary>
+    public Pokemon? Lead => Party.FirstOrDefault(p => !p.Fainted);
+
+    /// <summary>Catches it takes before a party Pokémon can follow the player as their Active Buddy.</summary>
+    public const int BuddyCatches = 3;
+
+    /// <summary>The party Pokémon chosen as Active Buddy (it stays chosen while it's in the party).</summary>
+    public Pokemon? Buddy { get; set; }
+
+    public bool CanHaveBuddy => Progress.Caught >= BuddyCatches;
+
+    /// <summary>The Pokémon following the player now: the buddy, while it's in the party and hasn't fainted.</summary>
+    public Pokemon? ActiveBuddy => Buddy is { Fainted: false } b && Party.Contains(b) && CanHaveBuddy ? b : null;
+
+    /// <summary>Makes party member <paramref name="index"/> the Active Buddy, or (-1) puts the buddy away.</summary>
+    public (bool Ok, string Message) SetBuddy(int index)
+    {
+        if (index < 0)
+        {
+            var had = Buddy;
+            Buddy = null;
+            return (true, had is null ? "No Pokémon was following you." : $"{had.Name} went back into its Poké Ball.");
+        }
+        if (!CanHaveBuddy)
+            return (false, $"Catch {BuddyCatches} Pokémon to unlock Active Buddy ({Math.Min(Progress.Caught, BuddyCatches)}/{BuddyCatches}).");
+        if (index >= Party.Count)
+            return (false, "There's no Pokémon there.");
+        var mon = Party[index];
+        if (mon.Fainted)
+            return (false, $"{mon.Name} has fainted and can't follow you.");
+        Buddy = mon;
+        return (true, $"{mon.Name} is now your Active Buddy!");
+    }
+
+    /// <summary>Adds a caught Pokémon to the party, or the PC when the party is full. Returns where it went.</summary>
+    public string Keep(Pokemon mon)
+    {
+        if (Party.Count < PartySize)
+        {
+            Party.Add(mon);
+            return $"{mon.Name} was added to your party.";
+        }
+        Box.Add(mon);
+        return $"{mon.Name} was sent to the PC.";
+    }
+
+    /// <summary>
+    /// Finishes every quest whose objectives are met (and starts the ones they lead to). Returns them so their rewards
+    /// can be handed out: by mail offline, straight into the game online (<see cref="GrantReward"/>).
+    /// </summary>
+    public List<QuestInfo> UpdateQuests(DateTime now)
+    {
+        Progress.PartyCount = Party.Count;
+        Progress.TopLevel = Party.Select(m => m.Level).DefaultIfEmpty().Max();
+        return Quests.Update(Progress, now);
+    }
+
+    /// <summary>Puts a quest's reward in the wallet and Bag. Returns what was received, for a message.</summary>
+    public string GrantReward(QuestInfo quest, BattleData data)
+    {
+        var got = new List<string>();
+        if (quest.Reward.Money > 0)
+        {
+            Progress.Money += quest.Reward.Money;
+            got.Add($"₽{quest.Reward.Money:N0}");
+        }
+        foreach (var (item, count) in quest.Reward.ItemList)
+        {
+            Bag.Add(item, count);
+            got.Add($"{data.ItemName(item)} ×{count}");
+        }
+        return string.Join(", ", got);
+    }
+
+    /// <summary>
+    /// The player talked to an NPC (or a trainer spotted them). In order: an unbeaten trainer battles (gym leaders only
+    /// once the badges before theirs are earned), a gift not yet collected is handed over, a quest giver hands out
+    /// their quest. Online the server decides this; offline the client does.
+    /// </summary>
+    public NpcOutcome Deal(NpcDeal deal, IReadOnlyList<Data.TrainerInfo> trainers, BattleData data, DateTime now)
+    {
+        if (deal.Trainer >= 0 && deal.Trainer < trainers.Count && trainers[deal.Trainer] is { Pokemon.Count: > 0 } trainer
+            && !Progress.DefeatedTrainers.Contains(trainer.Id))
+        {
+            if (Badges.Gate(Progress, trainer) is { } refusal)
+                return new(NpcDealKind.Refused, refusal);
+            return Lead is null
+                ? new(NpcDealKind.Refused, "Your Pokémon are in no shape to battle. Heal them at a Pokémon Center first.")
+                : new(NpcDealKind.Battle, "", trainer);
+        }
+        if (deal.GiftItem > 0 && !Progress.Gifts.Contains(deal.Key))
+        {
+            Progress.Gifts.Add(deal.Key);
+            var count = Math.Max(1, deal.GiftCount);
+            Bag.Add(deal.GiftItem, count);
+            return new(NpcDealKind.Gift, $"You received {data.ItemName(deal.GiftItem)}{(count > 1 ? $" ×{count}" : "")}!");
+        }
+        if (Quests.Offer(deal.Key, Progress, now) is { } quest && Quests.Start(quest.Id, Progress, now))
+            return new(NpcDealKind.Quest, $"New quest: {quest.Title}\n{quest.Description}", Quest: quest);
+        return new(NpcDealKind.None);
+    }
+
+    public void HealParty()
+    {
+        foreach (var mon in Party)
+            mon.HealFully();
+    }
+
+    /// <summary>
+    /// Records a finished battle: prize money, trainers beaten and badges, wild wins, catches. Returns lines to show
+    /// the player. (Online the server does this; offline the client does.)
+    /// </summary>
+    public List<string> RecordBattle(SingleBattle battle, DateTime now)
+    {
+        var lines = new List<string>();
+        switch (battle.Outcome)
+        {
+            case BattleOutcome.Won when battle.Trainer is { } trainer:
+                Progress.Money += battle.PrizeMoney;
+                if (Progress.Defeated(trainer, now) is { } badge)
+                    lines.Add($"You received the {badge.Name} from Leader {trainer.Name}!");
+                break;
+            case BattleOutcome.Won:
+                Progress.WildWins++;
+                Progress.Money += battle.PrizeMoney;   // Pay Day coins
+                break;
+            case BattleOutcome.Caught:
+                Progress.Caught++;
+                var species = (battle.Caught ?? battle.Foe.Mon).Species.Id;
+                Progress.CaughtSpecies[species] = Progress.CaughtSpecies.GetValueOrDefault(species) + 1;
+                lines.Add(Keep(battle.Caught ?? battle.Foe.Mon));
+                break;
+        }
+        return lines;
+    }
+
     /// <summary>
     /// Moves a party Pokémon into the PC, healed as the PC does. The party must keep at least one Pokémon that can
     /// still fight.

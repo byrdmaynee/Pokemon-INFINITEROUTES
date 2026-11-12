@@ -132,6 +132,26 @@ public partial class OverworldScreen
     }
 
     /// <summary>The actions this staff member may take on a player, as (label, action).</summary>
+    /// <summary>What anyone can do with another player.</summary>
+    List<(string Label, Action Action)> SocialActions(string name) =>
+    [
+        ("Whisper", () => OpenChatInput($"/w {name} ")),
+        ("Send a message", () => WithPlayerMenu(m => m.OpenConversation(name))),
+        ("Send mail", () => WithPlayerMenu(m => m.WriteTo(name))),
+        ("Offer a trade", () => WithPlayerMenu(m => m.TradeWith(name))),
+        ("Add friend", () => OnlineSession.Game?.Send(new SocialAction("friend-add", new Dictionary<string, string> { ["name"] = name }))),
+        ("Block", () => OnlineSession.Game?.Send(new SocialAction("block", new Dictionary<string, string> { ["name"] = name }))),
+    ];
+
+    /// <summary>Opens the player menu (if it isn't) and does something in it.</summary>
+    void WithPlayerMenu(Action<PlayerMenu> act)
+    {
+        if (PlayerMenuOpen is null)
+            ToggleOnlineMenu();
+        if (PlayerMenuOpen is { } menu)
+            act(menu);
+    }
+
     List<(string Label, Action Action)> Actions(string name)
     {
         var list = new List<(string, Action)>();
@@ -196,10 +216,13 @@ public partial class OverworldScreen
 
     // ---- Right-click a player ------------------------------------------------------------------------------------------
 
-    /// <summary>Right-click in Admin Mode: the nearest other player under the cursor gets an action menu.</summary>
-    bool AdminClick(InputEvent e)
+    /// <summary>
+    /// Clicking another player (either button): the nearest one under the cursor gets a menu — whisper, message, mail,
+    /// trade, friend, block — and, in Admin Mode, the staff actions.
+    /// </summary>
+    bool PlayerClick(InputEvent e)
     {
-        if (e is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right } click || _admin is not { Elevated: true })
+        if (e is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Right or MouseButton.Left } click || _onlineMenu is not null)
             return false;
         RemotePlayer? best = null;
         var bestDistance = 48f;
@@ -222,13 +245,22 @@ public partial class OverworldScreen
     public void OpenPlayerMenu(string name, Vector2 at)
     {
         _playerMenu?.QueueFree();
-        var actions = Actions(name);
+        var actions = SocialActions(name);
+        var staff = Actions(name);
         var menu = new PopupMenu();
         menu.AddItem(name);
         menu.SetItemDisabled(0, true);
         menu.AddSeparator();
         foreach (var (label, _) in actions)
             menu.AddItem(label);
+        if (staff.Count > 0)
+        {
+            menu.AddSeparator("Staff");
+            actions.Add(("", () => { }));   // the separator's slot
+            foreach (var (label, _) in staff)
+                menu.AddItem(label);
+            actions.AddRange(staff);
+        }
         menu.IdPressed += id =>
         {
             var index = (int)id - 2;

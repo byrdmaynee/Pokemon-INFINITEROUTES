@@ -69,7 +69,8 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
     public async Task<LoginResult?> Login(string name, string password) => (await LoginOrWhy(name, password)).Result;
 
     /// <summary>Like <see cref="Login"/>, with the reason when it's refused (wrong password, or banned).</summary>
-    public async Task<(LoginResult? Result, string? Error)> LoginOrWhy(string name, string password)
+    /// <param name="remember">A "remember me" login: its session lasts <see cref="ServerConfig.RememberDays"/> (when the server allows it).</param>
+    public async Task<(LoginResult? Result, string? Error)> LoginOrWhy(string name, string password, bool remember = false)
     {
         await using var db = await dbs.CreateDbContextAsync();
         var key = (name ?? "").ToLowerInvariant();
@@ -85,7 +86,7 @@ public sealed partial class AccountService(IDbContextFactory<IrDb> dbs, ServerCo
         if (BanMessage(account) is { } banned)
             return (null, banned);
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var expires = DateTime.UtcNow.AddHours(config.SessionHours);
+        var expires = remember && config.RememberDays > 0 ? DateTime.UtcNow.AddDays(config.RememberDays) : DateTime.UtcNow.AddHours(config.SessionHours);
         db.Sessions.Add(new Session { AccountId = account.Id, TokenHash = TokenHash(token), Created = DateTime.UtcNow, Expires = expires });
         await db.SaveChangesAsync();
         return (new LoginResult(token, expires, account.Name), null);

@@ -20,6 +20,11 @@ public static class DebugCapture
             World.OfflineSession.SaveDirOverride = System.IO.Path.Combine(dir, "save");
             Continue(main, dir);
         }
+        else if (args.FirstOrDefault(a => a.StartsWith("--capture-remember=", StringComparison.Ordinal)) is { } remember)
+        {
+            string Arg(string name, string fallback) => args.FirstOrDefault(a => a.StartsWith($"--{name}=", StringComparison.Ordinal)) is { } v ? v[(name.Length + 3)..] : fallback;
+            RememberLogin(main, remember["--capture-remember=".Length..], Arg("account", "Tester"), Arg("phase", "1"));
+        }
         else if (args.FirstOrDefault(a => a.StartsWith("--capture-online=", StringComparison.Ordinal)) is { } online)
         {
             string Arg(string name, string fallback) => args.FirstOrDefault(a => a.StartsWith($"--{name}=", StringComparison.Ordinal)) is { } v ? v[(name.Length + 3)..] : fallback;
@@ -55,6 +60,71 @@ public static class DebugCapture
                 Directory.Delete(save, recursive: true);
             World.OfflineSession.SaveDirOverride = save;
             Run(main, dir);
+        }
+    }
+
+    /// <summary>
+    /// "Remember me" against the local test server. Phase 1 logs in with it ticked. Phase 2 (a new game start) expects
+    /// "Continue as …", continues without a password, then logs out and checks the login is forgotten.
+    /// </summary>
+    static async void RememberLogin(Main main, string dir, string account, string phase)
+    {
+        var tree = main.GetTree();
+        async Task Wait(double seconds) => await main.ToSignal(tree.CreateTimer(seconds), SceneTreeTimer.SignalName.Timeout);
+        void Shot(string name) => main.GetViewport().GetTexture().GetImage().SavePng(System.IO.Path.Combine(dir, name + ".png"));
+        System.IO.Directory.CreateDirectory(dir);
+        for (var waited = 0.0; main.CurrentScreen is LoadingScreen && waited < 60; waited += 0.25)
+            await Wait(0.25);
+        await Wait(0.3);
+        try
+        {
+            Online.OnlineSession.LoadServers();
+            var port = OS.GetCmdlineUserArgs().FirstOrDefault(a => a.StartsWith("--api-port=", StringComparison.Ordinal)) is { } p
+                ? int.Parse(p["--api-port=".Length..]) : Core.Config.ServerEntry.DefaultApiPort;
+            var server = Online.OnlineSession.Servers.FirstOrDefault(s => s.Host == "127.0.0.1" && s.ApiPort == port) ?? new Core.Config.ServerEntry("Local test server", "127.0.0.1", port);
+            if (!Online.OnlineSession.Servers.Contains(server))
+                Online.OnlineSession.Update(server, server);
+            main.Push(() => new LoginScreen(server));
+            await Wait(0.8);
+            var login = (LoginScreen)main.CurrentScreen!;
+            GD.Print($"[capture] phase {phase}: login screen offers {login.RememberedAccount ?? "nothing"}");
+            Shot($"{phase}-login");
+            if (phase == "1")
+                login.SubmitRemembering(account, "password123");
+            else
+                login.PressContinue();
+            for (var i = 0; i < 40 && main.CurrentScreen is LoginScreen; i++)
+            {
+                await Wait(0.25);
+                if (login.TrustPending is { } trust)
+                    trust();
+            }
+            if (main.CurrentScreen is not CharacterScreen characters)
+            {
+                GD.Print($"[capture] phase {phase}: still on the login screen: {(main.CurrentScreen as LoginScreen)?.Status}");
+                return;
+            }
+            await Wait(1);
+            GD.Print($"[capture] phase {phase}: at the characters as {Online.OnlineSession.Client?.Account}");
+            Shot($"{phase}-characters");
+            if (phase == "2")
+            {
+                characters.PressLogOut();
+                for (var i = 0; i < 20 && main.CurrentScreen is not LoginScreen; i++)
+                    await Wait(0.25);
+                await Wait(0.8);
+                GD.Print($"[capture] after logging out: login screen offers {(main.CurrentScreen as LoginScreen)?.RememberedAccount ?? "nothing"}");
+                Shot("2-logged-out");
+            }
+        }
+        catch (Exception e)
+        {
+            GD.Print($"[capture] failed: {e}");
+        }
+        finally
+        {
+            GD.Print("[capture] done");
+            tree.Quit();
         }
     }
 
@@ -163,6 +233,52 @@ public static class DebugCapture
                     await Wait(0.4);
                     GD.Print($"[capture] player menu: {string.Join(" | ", world.PlayerMenuItems)}");
                 }
+                else if (line.StartsWith("a:", StringComparison.Ordinal))
+                {
+                    // An admin action: a:verb|target|key=value,key=value|reason.
+                    var parts = line[2..].Split('|');
+                    var fields = parts.Length > 2 && parts[2].Length > 0
+                        ? parts[2].Split(',').Select(kv => kv.Split('=', 2)).ToDictionary(kv => kv[0], kv => kv.Length > 1 ? kv[1] : "")
+                        : new Dictionary<string, string>();
+                    Online.OnlineSession.Game?.Send(new Core.Net.AdminAction(parts[0], parts.Length > 1 ? parts[1] : "", fields, parts.Length > 3 ? parts[3] : ""));
+                    await Wait(1);
+                    GD.Print($"[capture] {line}: sent");
+                }
+                else if (line.StartsWith("buddy:", StringComparison.Ordinal))
+                {
+                    Online.OnlineSession.Game?.Send(new Core.Net.SetBuddy(int.Parse(line["buddy:".Length..])));
+                    await Wait(1.5);
+                    GD.Print($"[capture] {line}: buddy {world.BuddySpecies}");
+                }
+                else if (line.StartsWith("m:", StringComparison.Ordinal))
+                {
+                    // The player menu: m:open, m:tab=N, m:market=N, m:press=Text, m:text=I,V, m:spin=I,V, m:dump.
+                    var (op, value) = line[2..].IndexOf('=') is var eq and >= 0 ? (line[2..(2 + eq)], line[(3 + eq)..]) : (line[2..], "");
+                    if (op == "open" && world.PlayerMenuOpen is null)
+                        world.OpenOnlineMenuForTest();
+                    if (op == "close" && world.PlayerMenuOpen is not null)
+                        world.OpenOnlineMenuForTest();
+                    await Wait(0.5);
+                    var menu = world.PlayerMenuOpen;
+                    var result = op == "close" ? $"closed; buddy {world.BuddySpecies}" : menu is null ? "the player menu is closed" : op switch
+                    {
+                        "open" => "open",
+                        "tab" => Run(() => menu.OpenTab(int.Parse(value))),
+                        "market" => Run(() => menu.TestMarket(int.Parse(value))),
+                        "press" => menu.TestPress(value),
+                        "text" => menu.TestText(int.Parse(value.Split(',')[0]), value[(value.IndexOf(',') + 1)..]),
+                        "spin" => menu.TestSpin(int.Parse(value.Split(',')[0]), double.Parse(value.Split(',')[1], System.Globalization.CultureInfo.InvariantCulture)),
+                        "dump" => $"tab {menu.CurrentTab}; shop disabled {menu.ShopDisabled}; status \"{menu.StatusText}\"\n    {menu.TestLabels()}",
+                        _ => "unknown",
+                    };
+                    await Wait(1.0);
+                    GD.Print($"[capture] {line}: {result}");
+                    static string Run(Action a)
+                    {
+                        a();
+                        return "ok";
+                    }
+                }
                 else if (line.StartsWith("w:", StringComparison.Ordinal))
                 {
                     // The admin window: w:open=Name, w:tab=N, w:reason=..., w:press=Text, w:spin=I,V, w:text=I,V, w:dump.
@@ -195,6 +311,38 @@ public static class DebugCapture
                         return "ok";
                     }
                 }
+                else if (line.StartsWith("battle:", StringComparison.Ordinal))
+                {
+                    // Plays the battle on screen to the end: battle:fight (first move) or battle:ball (Poké Balls, then the first move).
+                    var ball = line.EndsWith("ball", StringComparison.Ordinal);
+                    for (var t = 0; t < 40 && world.BattleOpen is null; t++)
+                        await Wait(0.25);
+                    var shotTaken = false;
+                    for (var t = 0; t < 1200 && world.BattleOpen is { } screen && GodotObject.IsInstanceValid(screen); t++)
+                    {
+                        await Wait(0.1);
+                        if (!GodotObject.IsInstanceValid(screen))
+                            break;
+                        if (screen.Naming)
+                            screen.SubmitNickname("Capt");
+                        if (!screen.Choosing)
+                            continue;
+                        if (!shotTaken)
+                        {
+                            Shot("battle");
+                            shotTaken = true;
+                        }
+                        var b = screen.Battle;
+                        if (b.NeedsSwitch)
+                            screen.Replace(Enumerable.Range(0, b.Party.Count).First(i => b.CanSendOut(i) && !b.IsOut(i)));
+                        else if (ball && b.Bag.Count(Core.Battle.ItemEffect.PokeBall) > 0)
+                            screen.Choose(new Core.Battle.BattleChoice.Item(Core.Battle.ItemEffect.PokeBall));
+                        else
+                            screen.Choose(new Core.Battle.BattleChoice.Fight(0));
+                    }
+                    await Wait(2);
+                    GD.Print($"[capture] battle over ({world.LastBattleOutcome}) at {world.PlayerTile}; mismatches {world.BattleMismatches}; party {string.Join(", ", world.OnlineState?.Party.Select(m => $"{m.Species} Lv{m.Level} HP{m.Hp}") ?? [])}; balls {world.OnlineState?.Bag.Where(i => i.Item == 4).Sum(i => i.Count)}; caught {world.OnlineState?.Progress.Caught}, wins {world.OnlineState?.Progress.WildWins}");
+                }
                 else if (line.StartsWith("shot:", StringComparison.Ordinal))
                     Shot(line["shot:".Length..]);
                 else if (line.StartsWith("step:", StringComparison.Ordinal) && line.Length >= 7)
@@ -209,6 +357,34 @@ public static class DebugCapture
                 }
                 else if (line.StartsWith("wait:", StringComparison.Ordinal))
                     await Wait(double.Parse(line["wait:".Length..], System.Globalization.CultureInfo.InvariantCulture));
+                else if (line.StartsWith("face:", StringComparison.Ordinal))
+                    world.FaceForTest(line[5] switch { 'U' => Vector2I.Up, 'D' => Vector2I.Down, 'L' => Vector2I.Left, _ => Vector2I.Right });
+                else if (line == "talk")
+                {
+                    // Talks to whoever the player faces and reads every page shown, closing each (server answers too).
+                    GD.Print($"[capture] talk at {world.PlayerTile}: {world.Interact()}");
+                    for (var quiet = 0; quiet < 8;)
+                    {
+                        await Wait(0.4);
+                        if (world.DialogText is { Length: > 0 } text)
+                        {
+                            GD.Print($"[capture] says: {text.Replace('\n', ' ')}");
+                            if (quiet == 0)
+                                Shot($"talk-{world.PlayerTile.X}-{world.PlayerTile.Y}");
+                            world.CloseDialog();
+                            quiet = 0;
+                        }
+                        else
+                            quiet++;
+                        if (world.BattleOpen is not null)
+                        {
+                            GD.Print("[capture] a battle started");
+                            break;
+                        }
+                    }
+                }
+                else if (line == "marks")
+                    GD.Print($"[capture] quest givers: {string.Join(", ", world.QuestGivers.Select(n => $"{n.Zone}:{n.Info.Id}@{n.Tile}"))}; hud: {world.QuestHudText.Replace("\n", " | ")}");
                 else if (line == "menu")
                 {
                     world.OpenOnlineMenuForTest();

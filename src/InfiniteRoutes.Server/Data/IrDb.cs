@@ -87,6 +87,8 @@ public sealed class RoleDef
     public int Rank { get; set; }
     public string Permissions { get; set; } = "";
     public bool Builtin { get; set; }
+    /// <summary>The emblem shown over the heads of everyone in the role (<see cref="Core.Player.Beacons"/>); "" for none.</summary>
+    public string Beacon { get; set; } = "";
 }
 
 /// <summary>
@@ -117,6 +119,12 @@ public sealed class IrDb(DbContextOptions<IrDb> options) : DbContext(options)
     public DbSet<AuditEntry> Audit => Set<AuditEntry>();
     public DbSet<RoleDef> Roles => Set<RoleDef>();
     public DbSet<StateChange> Changes => Set<StateChange>();
+    public DbSet<Listing> Listings => Set<Listing>();
+    public DbSet<TradeOffer> Trades => Set<TradeOffer>();
+    public DbSet<Friendship> Friendships => Set<Friendship>();
+    public DbSet<Block> Blocks => Set<Block>();
+    public DbSet<Letter> Letters => Set<Letter>();
+    public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -134,6 +142,21 @@ public sealed class IrDb(DbContextOptions<IrDb> options) : DbContext(options)
             e.HasIndex(r => r.NameKey).IsUnique();
         });
         b.Entity<StateChange>(e => e.ToTable("StateChanges"));
+        b.Entity<Listing>(e =>
+        {
+            e.HasIndex(l => l.Expires);
+            e.HasIndex(l => l.Seller);
+        });
+        b.Entity<TradeOffer>(e =>
+        {
+            e.ToTable("Trades");
+            e.HasIndex(t => t.To);
+            e.HasIndex(t => t.From);
+        });
+        b.Entity<Friendship>(e => e.HasIndex(f => new { f.From, f.To }).IsUnique());
+        b.Entity<Block>(e => e.HasIndex(x => new { x.CharacterId, x.BlockedId }).IsUnique());
+        b.Entity<Letter>(e => e.HasIndex(l => l.To));
+        b.Entity<DirectMessage>(e => e.HasIndex(m => new { m.To, m.From }));
         b.Entity<Session>(e =>
         {
             e.HasIndex(s => s.TokenHash).IsUnique();
@@ -160,4 +183,92 @@ public sealed class IrDb(DbContextOptions<IrDb> options) : DbContext(options)
             options.UseSqlite($"Data Source={file}");
         }
     }
+}
+
+/// <summary>A Global Market listing (BUILD_SPEC §7.7). The goods are held here until sold, taken down or expired.</summary>
+public sealed class Listing
+{
+    public long Id { get; set; }
+    public long Seller { get; set; }
+    public string SellerName { get; set; } = "";
+    public int Item { get; set; }
+    public int Count { get; set; }
+    /// <summary>The Pokémon for sale as <c>PokemonSave</c> JSON (null for items).</summary>
+    public string? Pokemon { get; set; }
+    /// <summary>What it's searched by: the item or species name (and nickname).</summary>
+    public string Name { get; set; } = "";
+    public int Price { get; set; }
+    public DateTime Listed { get; set; }
+    public DateTime Expires { get; set; }
+}
+
+/// <summary>A trade offer from one player to another; the giver's side is held here until it's settled.</summary>
+public sealed class TradeOffer
+{
+    public long Id { get; set; }
+    public long From { get; set; }
+    public string FromName { get; set; } = "";
+    public long To { get; set; }
+    public string ToName { get; set; } = "";
+    public int GiveMoney { get; set; }
+    public int GiveItem { get; set; }
+    public int GiveCount { get; set; }
+    public string? GivePokemon { get; set; }
+    public int AskMoney { get; set; }
+    public int AskItem { get; set; }
+    public int AskCount { get; set; }
+    /// <summary>-1 no Pokémon, 0 any, else that species.</summary>
+    public int AskSpecies { get; set; } = -1;
+    public string Note { get; set; } = "";
+    public DateTime Created { get; set; }
+    public DateTime Expires { get; set; }
+}
+
+/// <summary>A friendship between two characters: a request from <see cref="From"/> until <see cref="Accepted"/>.</summary>
+public sealed class Friendship
+{
+    public long Id { get; set; }
+    public long From { get; set; }
+    public long To { get; set; }
+    public bool Accepted { get; set; }
+    public DateTime Created { get; set; }
+}
+
+/// <summary>A character someone has blocked: no messages, mail, whispers, friend requests or trade offers from them.</summary>
+public sealed class Block
+{
+    public long Id { get; set; }
+    public long CharacterId { get; set; }
+    public long BlockedId { get; set; }
+    public string BlockedName { get; set; } = "";
+}
+
+/// <summary>In-game mail: from a player or the game (market, trades), with at most one of each attachment.</summary>
+public sealed class Letter
+{
+    public long Id { get; set; }
+    public long To { get; set; }
+    /// <summary>The sending character, or 0 for the game itself.</summary>
+    public long FromId { get; set; }
+    public string From { get; set; } = "";
+    public string Subject { get; set; } = "";
+    public string Body { get; set; } = "";
+    public DateTime Sent { get; set; }
+    public bool Read { get; set; }
+    public int Money { get; set; }
+    public int Item { get; set; }
+    public int Count { get; set; }
+    public string? Pokemon { get; set; }
+    public bool Claimed { get; set; }
+}
+
+/// <summary>A direct message between two characters, kept so it can be read later.</summary>
+public sealed class DirectMessage
+{
+    public long Id { get; set; }
+    public long From { get; set; }
+    public long To { get; set; }
+    public string Text { get; set; } = "";
+    public DateTime Sent { get; set; }
+    public bool Read { get; set; }
 }

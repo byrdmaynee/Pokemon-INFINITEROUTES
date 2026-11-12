@@ -7,7 +7,7 @@ public enum Role { Player, Helper, Moderator, GameMaster, Admin, Owner }
 /// A role as the server uses it: a name, a rank (a higher rank outranks a lower one; Player is 0, Owner 100) and the
 /// permissions it has. Owners have every permission whatever is stored.
 /// </summary>
-public sealed record RoleInfo(string Name, int Rank, bool Builtin, IReadOnlySet<string> Granted)
+public sealed record RoleInfo(string Name, int Rank, bool Builtin, IReadOnlySet<string> Granted, string Beacon = "")
 {
     public const int OwnerRank = 100;
 

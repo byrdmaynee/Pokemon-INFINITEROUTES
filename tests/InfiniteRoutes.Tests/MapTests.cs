@@ -61,6 +61,56 @@ public class MapTests
     }
 
     [Fact]
+    public void A_bridge_on_the_upper_layer_crosses_the_river_below()
+    {
+        // A "GC" chunk: two collision layers. The ground has a river (0x56) with solid banks; the upper layer has a
+        // bridge deck (0x80) over it at x = 5. Walls on both layers stay walls.
+        static byte[] Layer(Action<byte[]> edit)
+        {
+            var layer = new byte[4 + 32 * 32 * 8];
+            BinaryPrimitives.WriteUInt16LittleEndian(layer, 32);
+            BinaryPrimitives.WriteUInt16LittleEndian(layer.AsSpan(2), 32);
+            for (var i = 0; i < 32 * 32; i++)
+                BinaryPrimitives.WriteUInt16LittleEndian(layer.AsSpan(4 + i * 8 + 6), 0x81);
+            edit(layer);
+            return layer;
+        }
+        var ground = Layer(c =>
+        {
+            SetFlags(c, 5, 9, 0x80);
+            SetFlags(c, 5, 10, 0xc3);
+            SetFlags(c, 5, 11, 0x56);
+            SetFlags(c, 4, 11, 0x56);
+            SetFlags(c, 5, 12, 0xc3);
+            SetFlags(c, 5, 13, 0x80);
+        });
+        var upper = Layer(c =>
+        {
+            foreach (var y in new[] { 9, 10, 11, 12, 13 })
+                SetFlags(c, 5, y, 0x80);
+        });
+        var model = new byte[16];
+        "BMD0"u8.CopyTo(model);
+        var buildings = new byte[4];
+        var header = new byte[4 + 5 * 4];
+        "GC"u8.CopyTo(header);
+        BinaryPrimitives.WriteUInt16LittleEndian(header.AsSpan(2), 4);
+        var o = header.Length;
+        foreach (var (i, part) in new[] { model, ground, upper, buildings }.Index())
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(4 + i * 4), (uint)o);
+            o += part.Length;
+        }
+        BinaryPrimitives.WriteUInt32LittleEndian(header.AsSpan(20), (uint)o);
+        var map = Gen5Map.Parse([.. header, .. model, .. ground, .. upper, .. buildings]);
+
+        foreach (var y in new[] { 9, 10, 11, 12, 13 })
+            Assert.False(map.IsBlocked(5, y), $"bridge tile {y}");
+        Assert.True(map.IsWater(4, 11));   // the river beside the bridge is still water
+        Assert.True(map.IsBlocked(6, 11));
+    }
+
+    [Fact]
     public void Tile_flags_classify_solid_grass_and_water()
     {
         var map = Gen5Map.Parse(BuildChunk(c =>

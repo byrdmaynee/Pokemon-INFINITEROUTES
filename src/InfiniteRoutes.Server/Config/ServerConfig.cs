@@ -42,6 +42,8 @@ public sealed record ServerConfig
 
     public int CharacterSlots { get; init; } = 1;
     public int SessionHours { get; init; } = 24;
+    /// <summary>How long a "remember me" login lasts (0: the server doesn't allow them, and they get <see cref="SessionHours"/>).</summary>
+    public int RememberDays { get; init; } = 30;
     /// <summary>Seconds between writes of moved players' positions (map changes and logouts write at once).</summary>
     public int SaveIntervalSeconds { get; init; } = 45;
     /// <summary>Minutes without any input before the server disconnects a player.</summary>
@@ -138,6 +140,7 @@ public sealed record ServerConfig
             SaveIntervalSeconds = Int(world, "world", "save_interval_seconds", d.SaveIntervalSeconds, 5, 600),
             IdleMinutes = Int(world, "world", "idle_minutes", d.IdleMinutes, 1, 1440),
             SessionHours = Int(server, "server", "session_hours", d.SessionHours, 1, 24 * 30),
+            RememberDays = Int(server, "server", "remember_days", d.RememberDays, 0, 365),
             ElevationMinutes = Int(admin, "admin", "elevation_timeout_minutes", d.ElevationMinutes, 1, 24 * 60),
             BootstrapOwner = Str(admin, "admin", "bootstrap_owner", d.BootstrapOwner),
             ChatLines = Int(chat, "chat", "lines", d.ChatLines, 1, 100),
@@ -197,6 +200,7 @@ public sealed record ServerConfig
         public_address = "127.0.0.1"     # what clients are told to connect to (LAN IP now, VPS IP/domain later)
         max_players    = 200
         session_hours  = 24
+        remember_days  = 30              # how long "remember me" keeps a player logged in (0 = not allowed)
 
         [tls]
         mode      = "self-signed"        # self-signed | files

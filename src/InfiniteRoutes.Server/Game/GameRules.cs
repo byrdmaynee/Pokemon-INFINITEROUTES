@@ -10,12 +10,16 @@ namespace InfiniteRoutes.Server.Game;
 /// characters' game states: a new game for a new character, and loading and saving the rest as SaveGame JSON —
 /// the same format as the offline save.
 /// </summary>
-public sealed class GameRules(BattleData data, IReadOnlyList<TrainerInfo> trainers, string game)
+public sealed class GameRules(BattleData data, IReadOnlyList<TrainerInfo> trainers, string game, IReadOnlyList<EncounterTable>? encounters = null)
 {
+    /// <summary>The wild encounter tables, indexed by a zone's encounter id.</summary>
+    public IReadOnlyList<EncounterTable> Encounters { get; } = encounters ?? [];
+
     readonly Random _rng = new();
     readonly object _gate = new();
 
     public BattleData Data => data;
+    public IReadOnlyList<TrainerInfo> Trainers => trainers;
 
     /// <summary>Loads the game data from the data pack; null when the pack has no battle data (extracted before 0.6.0).</summary>
     public static GameRules? From(GameAssets assets)
@@ -24,7 +28,7 @@ public sealed class GameRules(BattleData data, IReadOnlyList<TrainerInfo> traine
         if (moves.Count == 0)
             return null;
         return new GameRules(new BattleData(assets.LoadSpecies(), moves, assets.LoadLearnsets(), assets.LoadText("items"), assets.LoadItemPrices()),
-            assets.LoadTrainers(), assets.Stamp.GameId);
+            assets.LoadTrainers(), assets.Stamp.GameId, assets.LoadEncounters());
     }
 
     QuestLog Quests() => new(StarterQuests.Unova(trainers));

@@ -9,13 +9,16 @@ using static InfiniteRoutes.Extractor.Nitro3D.NitroDict;
 namespace InfiniteRoutes.Extractor.Extraction;
 
 /// <summary>
-/// One matrix cell of an exported map, in tile units (1 tile = 1 unit, 32 per chunk). Zone is -1 when the map has
-/// no per-cell zones. <see cref="Seasons"/> is 4 when the cell has a model per season (area + season), else 1.
+/// One matrix cell of an exported map, in tile units (1 tile = 1 unit, <see cref="WorldIndex.ChunkTiles"/> per cell).
+/// Zone is -1 when the map has no per-cell zones. <see cref="Seasons"/> is 4 when the cell has a model per season
+/// (area + season), else 1.
 /// </summary>
 /// <see cref="Animation"/> is the map texture animation (<c>anims/{n}.json</c>) for its materials, or -1;
 /// <see cref="Pattern"/> its frame-swap texture animation (<c>anims/pat{n}.json</c>), or -1.
+/// <see cref="Tiles"/> names the cell's own collision (<c>chunks/{Tiles}.tiles</c>) when it doesn't use its chunk's —
+/// rail maps, whose chunks have none, get a grid drawn from their rails.
 public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1, int Animation = -1,
-    int Pattern = -1)
+    int Pattern = -1, string? Tiles = null)
 {
     /// <summary>The area whose model to show in <paramref name="season"/> (0 spring … 3 winter).</summary>
     public int AreaFor(int season) => season > 0 && season < Seasons ? Area + season : Area;
@@ -23,7 +26,8 @@ public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Locatio
 
 public enum Season { Spring, Summer, Autumn, Winter }
 
-/// <summary>An exported map (one map matrix): the overworld, or an interior, cave, etc.</summary>
+/// <summary>An exported map (one map matrix): the overworld, or an interior, cave, etc. <see cref="ChunkTiles"/> is the
+/// cell size in tiles (32; larger for a few map types such as Skyarrow Bridge's).</summary>
 public sealed record WorldIndex(string Key, int Width, int Height, int ChunkTiles, IReadOnlyList<WorldCell> Cells);
 
 public enum WarpKind { Other, Mat, Stairs, Door, Edge }
@@ -40,12 +44,12 @@ public sealed record WarpInfo(int X, int Y, int Width, int Height, int TargetZon
 /// 3 wanders within <see cref="RangeX"/>/<see cref="RangeY"/> of home, others scripted).
 /// </summary>
 public sealed record NpcInfo(int Id, int Sprite, int X, int Y, float Height, Facing Facing, int Movement,
-    int RangeX, int RangeY, int Script, int Flag, int Sight = 0)
+    int RangeX, int RangeY, int Script, int Flag, int Sight = 0, NpcTalk? Talk = null)
 {
     /// <summary>The trainer this NPC battles as (its script is <see cref="Gen5Layout.TrainerScriptBase"/> + id), or -1.</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public int TrainerId => Script >= Gen5Layout.TrainerScriptBase && Script < Gen5Layout.TrainerScriptBase + 1000
-        ? Script - Gen5Layout.TrainerScriptBase : -1;
+        ? Script - Gen5Layout.TrainerScriptBase : Talk?.Trainer ?? -1;
 }
 
 /// <summary>An interactable tile (furniture event: signs, machines) and the script it runs.</summary>
@@ -79,10 +83,17 @@ public static class Gen5WorldExtractor
         var ctx = new Context(fs, outDir);
         var zoneCount = ctx.Zones.Length / Gen5Layout.ZoneHeaderSize;
         var events = Narc.Parse(fs.ReadFile(Gen5Layout.ZoneEvents));
+        var scripts = Narc.Parse(fs.ReadFile(Gen5Scripts.Archive));
+        var story = Narc.Parse(fs.ReadFile(Gen5Layout.StoryText));
 
         string Location(int zone) =>
             zone >= 0 && zone < zoneCount && ctx.Zones[zone * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.LocationName] is var n && n < locationNames.Count
                 ? locationNames[n] : "";
+
+        // Cell size per map type, and the rails of the zones walked on rails.
+        int MapType(int zone) => ctx.Zones[zone * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.MapType];
+        var blockTiles = Gen5Rails.BlockTiles(fs.ReadOverlays(), Enumerable.Range(0, zoneCount).Max(MapType) + 1);
+        var rails = ReadRails(fs, zoneCount);
 
         // Each zone's map: matrices with per-cell zones (the overworld, some dungeons) are shared by every zone
         // on them; the rest (interiors) take their textures from the zone's area, so key by matrix + area.
@@ -102,7 +113,8 @@ public static class Gen5WorldExtractor
             ct.ThrowIfCancellationRequested();
             progress?.Report(new($"Maps ({n}/{todo.Count})", from + span * n / todo.Count));
             var (matrix, area) = todo[n];
-            var index = ExportMap(ctx, matrix, area, locationNames, ct);
+            var type = MapType(zoneMaps.First(z => z.Value == (matrix, area)).Key);
+            var index = ExportMap(ctx, matrix, area, blockTiles[type], locationNames, ct);
             if (index.Cells.Count > 0)
                 maps.Add(index);
         }
@@ -117,17 +129,33 @@ public static class Gen5WorldExtractor
             var eventsFile = ctx.ZoneField(z, Gen5Layout.Zone.Events);
             var file = eventsFile < events.Count ? events.Read(eventsFile) : [];
             var encounters = ctx.ZoneField(z, Gen5Layout.Zone.Encounters);
-            zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file), ReadNpcs(file),
+            var zoneRails = rails.GetValueOrDefault(z);
+            var npcs = ReadNpcs(file, zoneRails);
+            int scriptFile = ctx.ZoneField(z, Gen5Layout.Zone.Scripts), textFile = ctx.ZoneField(z, Gen5Layout.Zone.Text);
+            if (scriptFile < scripts.Count && textFile < story.Count && npcs.Any(n => n.TrainerId < 0))
+            {
+                var script = scripts.Read(scriptFile);
+                var offsets = Gen5Scripts.Offsets(script);
+                var text = Text.Gen5Text.Decode(story.Read(textFile));
+                npcs = npcs.Select(n => n.TrainerId >= 0 ? n : n with { Talk = Gen5Scripts.Talk(script, offsets, n.Script, text) }).ToList();
+            }
+            zones.Add(new ZoneInfo(z, key, Location(z), ctx.ZoneField(z, Gen5Layout.Zone.Parent), ReadWarps(file, zoneRails), npcs,
                 encounters == 0xFFFF ? -1 : encounters, ReadFurniture(file), ctx.Zones[z * Gen5Layout.ZoneHeaderSize + Gen5Layout.Zone.BattleScenery]));
         }
 
+        for (var i = 0; i < maps.Count; i++)
+        {
+            var key = maps[i].Key;
+            maps[i] = RailCollision(ctx, maps[i], zones.Where(z => z.Map == key && rails.ContainsKey(z.Id))
+                .Select(z => (rails[z.Id], RailWarps(events, ctx, z.Id))).ToList());
+        }
         foreach (var map in maps)
             File.WriteAllText(Path.Combine(outDir, map.Key + ".json"), JsonSerializer.Serialize(map, Json.Indented));
         File.WriteAllText(Path.Combine(outDir, "zones.json"), JsonSerializer.Serialize(zones, Json.Indented));
         return new WorldData(maps, zones);
     }
 
-    static List<WarpInfo> ReadWarps(byte[] file)
+    static List<WarpInfo> ReadWarps(byte[] file, Gen5Rails? rails)
     {
         List<Gen5Warp> warps;
         try
@@ -139,9 +167,175 @@ public static class Gen5WorldExtractor
             return [];
         }
         // Keep list positions: other zones refer to warps by index.
-        return warps.Select(w => new WarpInfo(w.TileX, w.TileY, w.Width, w.Depth, w.OnGrid ? w.TargetZone : -1, w.TargetWarp,
-            w.Direction switch { 1 => Facing.Up, 2 => Facing.Down, 3 => Facing.Left, 4 => Facing.Right, _ => null },
-            w.Transition switch { 1 => WarpKind.Mat, 2 => WarpKind.Stairs, 3 => WarpKind.Door, 4 => WarpKind.Edge, _ => WarpKind.Other })).ToList();
+        return warps.Select(w => !w.OnGrid && rails is not null && RailWarp(w, rails) is { } onRail ? onRail
+            : new WarpInfo(w.TileX, w.TileY, w.Width, w.Depth, w.OnGrid ? w.TargetZone : -1, w.TargetWarp,
+                w.Direction switch { 1 => Facing.Up, 2 => Facing.Down, 3 => Facing.Left, 4 => Facing.Right, _ => null },
+                w.Transition switch { 1 => WarpKind.Mat, 2 => WarpKind.Stairs, 3 => WarpKind.Door, 4 => WarpKind.Edge, _ => WarpKind.Other })).ToList();
+    }
+
+    /// <summary>
+    /// Zone → its rails, for zones walked on rails (see <see cref="Gen5Rails.ZoneRails"/>). Empty if the tables
+    /// can't be found.
+    /// </summary>
+    static Dictionary<int, Gen5Rails> ReadRails(NitroFs fs, int zoneCount)
+    {
+        var result = new Dictionary<int, Gen5Rails>();
+        if (!fs.Exists(Gen5Layout.Rails) || !fs.Exists(Gen5Layout.RailTable))
+            return result;
+        var files = Narc.Parse(fs.ReadFile(Gen5Layout.Rails));
+        var table = Narc.Parse(fs.ReadFile(Gen5Layout.RailTable));
+        var entries = Enumerable.Range(0, table.Count).Select(table.Read).ToList();
+        foreach (var (zone, file) in Gen5Rails.ZoneRails(fs.ReadArm9(), zoneCount, entries))
+        {
+            if (file >= files.Count)
+                continue;
+            try
+            {
+                result[zone] = Gen5Rails.Parse(files.Read(file));
+            }
+            catch (InvalidDataException)
+            {
+            }
+        }
+        return result;
+    }
+
+    /// <summary>The zone's rail-placed warps as the ROM stores them (for <see cref="RailCollision"/>).</summary>
+    static List<Gen5Warp> RailWarps(Narc events, Context ctx, int zone)
+    {
+        var eventsFile = ctx.ZoneField(zone, Gen5Layout.Zone.Events);
+        try
+        {
+            return eventsFile < events.Count ? Gen5Events.ParseWarps(events.Read(eventsFile)).Where(w => !w.OnGrid).ToList() : [];
+        }
+        catch (InvalidDataException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>A rail warp's sideways offset: the stored u16 is signed.</summary>
+    static int Side(Gen5Warp w) => (short)w.Z;
+
+    /// <summary>A door beside the rail (a building's entrance), rather than a crossing of it (an exit at a line's end).</summary>
+    static bool IsRailDoor(Gen5Warp w) => Math.Abs(Side(w)) >= 2 && w.Depth <= 1;
+
+    /// <summary>
+    /// A rail warp (X = line, Height = distance along it, Z = sideways offset; Width runs along the line, Depth
+    /// across) as the tiles it covers. Doors beside the rail are walked into; crossings are stood on (edges).
+    /// </summary>
+    static WarpInfo? RailWarp(Gen5Warp w, Gen5Rails rails)
+    {
+        var line = w.X;
+        if (line >= rails.Lines.Count)
+            return null;
+        var tiles = new List<(int X, int Y)>();
+        for (var i = 0; i < Math.Max(1, w.Width); i++)
+        for (var j = 0; j < Math.Max(1, w.Depth); j++)
+        {
+            var p = rails.Position(line, w.Height + i, Side(w) + j);
+            tiles.Add(((int)MathF.Floor(p.X), (int)MathF.Floor(p.Y)));
+        }
+        int x0 = tiles.Min(t => t.X), y0 = tiles.Min(t => t.Y);
+        var middle = w.Height + (Math.Max(1, w.Width) - 1) / 2f;
+        var door = IsRailDoor(w);
+        // Arriving: through a door, face away from it (towards the rail); at a crossing, face into the line.
+        var way = door ? rails.Normal(line, middle) * -Math.Sign(Side(w))
+            : rails.Tangent(line, middle) * (middle < rails.Length(line) / 2 ? 1 : -1);
+        var facing = MathF.Abs(way.X) > MathF.Abs(way.Y) ? way.X > 0 ? Facing.Right : Facing.Left
+            : way.Y > 0 ? Facing.Down : Facing.Up;
+        return new WarpInfo(x0, y0, tiles.Max(t => t.X) - x0 + 1, tiles.Max(t => t.Y) - y0 + 1, w.TargetZone, w.TargetWarp, facing,
+            door ? WarpKind.Door : WarpKind.Edge);
+    }
+
+    /// <summary>
+    /// Collision for the rails of the zones on a map. The rails' widths are walkable, narrowed on a side lined with
+    /// doors to stop just short of them; doors are solid (walked into) and crossings open. Cells whose chunks have no
+    /// collision (rail-only maps) get a grid drawn from the rails alone. On maps that are part grid, part rail
+    /// (Castelia's plaza, Village Bridge, Icirrus, the League) the rails run over the grid's solid tiles from the
+    /// junction tiles where they start, so the rails open those (and water a rail bridges). Rails can also run past the matrix (the
+    /// models overhang their cells — Castelia's ring road does), so the map gains model-less cells (chunk -1) there
+    /// that only carry collision.
+    /// </summary>
+    static WorldIndex RailCollision(Context ctx, WorldIndex map, List<(Gen5Rails Rails, List<Gen5Warp> Warps)> zones)
+    {
+        if (zones.Count == 0)
+            return map;
+        var n = map.ChunkTiles;
+        int cx0 = 0, cy0 = 0, cx1 = map.Width - 1, cy1 = map.Height - 1;
+        foreach (var (rails, _) in zones)
+        {
+            var (bx0, by0, bx1, by1) = rails.Bounds();
+            (cx0, cy0) = (Math.Min(cx0, (int)MathF.Floor(bx0 / n)), Math.Min(cy0, (int)MathF.Floor(by0 / n)));
+            (cx1, cy1) = (Math.Max(cx1, (int)MathF.Floor(bx1 / n)), Math.Max(cy1, (int)MathF.Floor(by1 / n)));
+        }
+        int ox = cx0 * n, oy = cy0 * n, width = (cx1 - cx0 + 1) * n, height = (cy1 - cy0 + 1) * n;
+        var walkable = new bool[width * height];
+        var doors = new List<WarpInfo>();
+        var crossings = new List<WarpInfo>();
+        foreach (var (rails, warps) in zones)
+        {
+            (float, float) Limit(int line)
+            {
+                var sides = warps.Where(w => w.X == line && IsRailDoor(w)).Select(Side).ToList();
+                // The farthest door on a side is the building line; nearer ones are kiosks and alleys within the street.
+                return (sides.Where(s => s > 0).Select(s => s - 1f).DefaultIfEmpty(float.MaxValue).Max(),
+                    sides.Where(s => s < 0).Select(s => -s - 1f).DefaultIfEmpty(float.MaxValue).Max());
+            }
+            var mask = rails.Rasterize(ox, oy, width, height, Limit);
+            for (var i = 0; i < mask.Length; i++)
+                walkable[i] |= mask[i];
+            foreach (var w in warps)
+                if (RailWarp(w, rails) is { } info)
+                    (info.Kind == WarpKind.Door ? doors : crossings).Add(info);
+        }
+        void Set(WarpInfo w, bool open)
+        {
+            for (var y = w.Y - oy; y < w.Y - oy + w.Height; y++)
+            for (var x = w.X - ox; x < w.X - ox + w.Width; x++)
+                if (x >= 0 && y >= 0 && x < width && y < height)
+                    walkable[y * width + x] = open;
+        }
+        crossings.ForEach(w => Set(w, true));
+        doors.ForEach(w => Set(w, false));
+
+        WorldCell? Draw(WorldCell c)
+        {
+            var grid = c.Chunk >= 0 && !ctx.NoCollision.Contains(c.Chunk) ? ctx.ReadChunkTiles(c.Chunk) : null;
+            if (grid is not null && grid.Length != n * n)
+                return c;
+            var tiles = new byte[n * n];
+            var changed = grid is null;
+            for (var y = 0; y < n; y++)
+            for (var x = 0; x < n; x++)
+            {
+                var open = walkable[((c.Y - cy0) * n + y) * width + (c.X - cx0) * n + x];
+                var i = y * n + x;
+                if (grid is null)
+                    tiles[i] = open ? (byte)0 : (byte)1;
+                else
+                {
+                    // Bit 0 blocked, bit 2 water (see Gen5Map.TileFlags): a rail is a path, over water too (Village Bridge's deck).
+                    tiles[i] = open ? (byte)(grid[i] & ~5) : grid[i];
+                    changed |= tiles[i] != grid[i];
+                }
+            }
+            if (c.Chunk < 0 && tiles.All(t => t != 0))
+                return null;
+            if (!changed)
+                return c;
+            var name = $"rail-{map.Key}-{c.X}-{c.Y}";
+            ctx.WriteTiles(name, tiles);
+            return c with { Tiles = name };
+        }
+        var cells = map.Cells.Select(c => Draw(c) ?? c).ToList();
+        var have = cells.Select(c => (c.X, c.Y)).ToHashSet();
+        var template = map.Cells[0];
+        for (var cy = cy0; cy <= cy1; cy++)
+        for (var cx = cx0; cx <= cx1; cx++)
+            if (!have.Contains((cx, cy)) && Draw(template with { X = cx, Y = cy, Chunk = -1, Zone = -1, Location = "" }) is { } extra)
+                cells.Add(extra);
+        return map with { Cells = cells };
     }
 
     static List<FurnitureInfo> ReadFurniture(byte[] file)
@@ -156,14 +350,23 @@ public static class Gen5WorldExtractor
         }
     }
 
-    static List<NpcInfo> ReadNpcs(byte[] file)
+    static List<NpcInfo> ReadNpcs(byte[] file, Gen5Rails? rails)
     {
         try
         {
-            // Rail-placed NPCs (coordinate type 1) need rail support first.
-            return Gen5Events.ParseNpcs(file).Where(n => n.OnGrid).Select(n => new NpcInfo(n.Id, n.Sprite, n.X, n.Y, n.HeightTiles,
-                n.Direction switch { 0 => Facing.Up, 2 => Facing.Left, 3 => Facing.Right, _ => Facing.Down },
-                n.Movement, n.RangeX, n.RangeY, n.Script, n.Flag, n.Sight)).ToList();
+            // Rail-placed NPCs (coordinate type 1): X = line, Y = distance along it, the low half of Height = sideways offset.
+            return Gen5Events.ParseNpcs(file).Where(n => n.OnGrid || rails is not null && n.X < rails.Lines.Count).Select(n =>
+            {
+                var (x, y, height) = (n.X, n.Y, n.HeightTiles);
+                if (!n.OnGrid)
+                {
+                    var p = rails!.Position(n.X, n.Y, (short)(n.Height & 0xFFFF));
+                    (x, y, height) = ((int)MathF.Floor(p.X), (int)MathF.Floor(p.Y), rails.HeightAt(n.X, n.Y));
+                }
+                return new NpcInfo(n.Id, n.Sprite, x, y, height,
+                    n.Direction switch { 0 => Facing.Up, 2 => Facing.Left, 3 => Facing.Right, _ => Facing.Down },
+                    n.Movement, n.RangeX, n.RangeY, n.Script, n.Flag, n.Sight);
+            }).ToList();
         }
         catch (InvalidDataException)
         {
@@ -236,7 +439,7 @@ public static class Gen5WorldExtractor
     }
 
     /// <param name="fixedArea">Area for every cell, or -1 to take it from each cell's zone.</param>
-    static WorldIndex ExportMap(Context ctx, int matrixIndex, int fixedArea, IReadOnlyList<string> locationNames, CancellationToken ct)
+    static WorldIndex ExportMap(Context ctx, int matrixIndex, int fixedArea, int chunkTiles, IReadOnlyList<string> locationNames, CancellationToken ct)
     {
         var matrix = ctx.Matrices.Read(matrixIndex);
         var hasZones = U32(matrix, 0) != 0;
@@ -273,7 +476,7 @@ public static class Gen5WorldExtractor
                 location >= 0 && location < locationNames.Count ? locationNames[location] : "", area, seasons, ctx.AnimationFor(area),
                 ctx.PatternFor(area)));
         }
-        return new WorldIndex(MapKey(matrixIndex, fixedArea), width, height, Gen5Map.Tiles, cells);
+        return new WorldIndex(MapKey(matrixIndex, fixedArea), width, height, chunkTiles, cells);
     }
 
     public static string ChunkFileName(int chunk, int area) => $"{chunk:D3}-a{area:D3}";
@@ -319,6 +522,8 @@ public static class Gen5WorldExtractor
         readonly Dictionary<(bool, int), Dictionary<int, NitroModel>> _packCache = new();
         readonly Dictionary<(int, int), bool> _exported = new();
         readonly HashSet<int> _tilesWritten = new();
+        /// <summary>Chunks without a collision grid (rail maps' "NG" chunks).</summary>
+        public readonly HashSet<int> NoCollision = new();
         readonly Narc _srtAnimations;
         readonly Dictionary<int, bool> _animationsWritten = new();
         readonly Narc _patternAnimations;
@@ -399,6 +604,12 @@ public static class Gen5WorldExtractor
             return offset > 0 && area - offset >= 0 && IsSeasonal(area - offset) ? area - offset : area;
         }
 
+        /// <summary>A chunk's collision as written by <see cref="ExportChunk"/>.</summary>
+        public byte[] ReadChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(_chunkDir, $"{chunk:D3}.tiles"));
+
+        /// <summary>Writes a collision grid of its own (<c>chunks/{name}.tiles</c>).</summary>
+        public void WriteTiles(string name, byte[] tiles) => File.WriteAllBytes(Path.Combine(_chunkDir, name + ".tiles"), tiles);
+
         /// <summary>Writes the chunk's glTF (for this area's textures) and collision; false if it can't be decoded.</summary>
         public bool ExportChunk(int chunkIndex, int area)
         {
@@ -477,11 +688,13 @@ public static class Gen5WorldExtractor
 
             if (_tilesWritten.Add(chunkIndex))
             {
-                var tiles = new byte[Gen5Map.Tiles * Gen5Map.Tiles];
+                if (map.Collision is null)
+                    NoCollision.Add(chunkIndex);
+                var tiles = new byte[map.Size * map.Size];
                 if (map.Collision is not null)
-                    for (var ty = 0; ty < Gen5Map.Tiles; ty++)
-                    for (var tx = 0; tx < Gen5Map.Tiles; tx++)
-                        tiles[ty * Gen5Map.Tiles + tx] = map.TileFlags(tx, ty);
+                    for (var ty = 0; ty < map.Size; ty++)
+                    for (var tx = 0; tx < map.Size; tx++)
+                        tiles[ty * map.Size + tx] = map.TileFlags(tx, ty);
                 File.WriteAllBytes(Path.Combine(_chunkDir, $"{chunkIndex:D3}.tiles"), tiles);
             }
         }

@@ -41,6 +41,7 @@ public sealed partial class AdminService(WorldService world, AccountService acco
         new("roles", null, "roles", "the roles and their permissions"),
         new("audit", Permissions.AuditRead, "audit [count]", "the latest audit log entries"),
         new("revert", Permissions.Revert, "revert <change> [force]", "undo a player change from the audit log"),
+        new("wild", Permissions.PokemonEdit, "wild <species> <level>", "battle a wild Pokémon yourself (testing encounters)"),
         new("exit", null, "exit", "leave Admin Mode"),
     ];
 
@@ -262,6 +263,23 @@ public sealed partial class AdminService(WorldService world, AccountService acco
                 await Audit(p, "kick", t.Name, reason);   // logged before it happens
                 world.Kick(t, $"You were disconnected by staff: {reason}");
                 Reply(true, $"Kicked {t.Name}.");
+                return;
+            }
+            case "wild":
+            {
+                if (rules is null || args.Length != 2 || !int.TryParse(args[0], out var species) || !int.TryParse(args[1], out var level)
+                    || !rules.Data.HasSpecies(species) || level is < 1 or > 100)
+                {
+                    Reply(false, $"Usage: {command.Usage} (a species number and a level 1-100)");
+                    return;
+                }
+                if (!world.StartWildBattle(p, Core.Battle.Pokemon.Create(rules.Data, species, level, new Random())))
+                {
+                    Reply(false, "You can't battle now (no Pokémon that can fight, or already in a battle).");
+                    return;
+                }
+                await Audit(p, "wild", p.Name, $"{rules.Data.Species(species).Name} Lv{level}");
+                Reply(true, $"A wild {rules.Data.Species(species).Name} appeared.");
                 return;
             }
             case "announce":

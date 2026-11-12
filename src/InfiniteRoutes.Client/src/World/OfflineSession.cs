@@ -200,27 +200,7 @@ public static class OfflineSession
     }
 
     /// <summary>Records a finished battle: prize money, trainers and badges, catches. Returns lines to show the player.</summary>
-    public static List<string> RecordBattle(SingleBattle battle)
-    {
-        var lines = new List<string>();
-        switch (battle.Outcome)
-        {
-            case BattleOutcome.Won when battle.Trainer is { } trainer:
-                Money += battle.PrizeMoney;
-                if (Progress.Defeated(trainer, DateTime.Now) is { } badge)
-                    lines.Add($"You received the {badge.Name} from Leader {trainer.Name}!");
-                break;
-            case BattleOutcome.Won:
-                Progress.WildWins++;
-                Money += battle.PrizeMoney;   // Pay Day coins
-                break;
-            case BattleOutcome.Caught:
-                Progress.Caught++;
-                lines.Add(Keep(battle.Caught ?? battle.Foe.Mon));
-                break;
-        }
-        return lines;
-    }
+    public static List<string> RecordBattle(SingleBattle battle) => State.RecordBattle(battle, DateTime.Now);
 
     public static void RecordCenterVisit()
     {

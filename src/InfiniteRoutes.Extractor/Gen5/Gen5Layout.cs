@@ -30,6 +30,10 @@ public static class Gen5Layout
     public const int TrainerScriptBase = 3000;
 
     public const string MapChunks = "a/0/0/8";
+    /// <summary>Rail files (<see cref="Gen5Rails"/>), magic "RL".</summary>
+    public const string Rails = "a/0/7/9";
+    /// <summary>Per rail-using zone group: u16 rail file in <see cref="Rails"/>, u16 attribute file (0xFFFF none).</summary>
+    public const string RailTable = "a/1/0/9";
     public const string MapMatrices = "a/0/0/9";
     /// <summary>NARC whose first member holds every zone header, <see cref="ZoneHeaderSize"/> bytes each.</summary>
     public const string ZoneHeaders = "a/0/1/2";
@@ -85,6 +89,10 @@ public static class Gen5Layout
     {
         public const int Area = 0x02;
         public const int Matrix = 0x04;
+        /// <summary>u16: the zone's field scripts in <see cref="Gen5Scripts.Archive"/>.</summary>
+        public const int Scripts = 0x06;
+        /// <summary>u16: the zone's messages in <see cref="StoryText"/>.</summary>
+        public const int Text = 0x0A;
         /// <summary>u16 index into <see cref="Encounters"/>; 0xFFFF for no wild Pokémon.</summary>
         public const int Encounters = 0x14;
         public const int Events = 0x16;
@@ -92,6 +100,8 @@ public static class Gen5Layout
         public const int LocationName = 0x1A;
         /// <summary>u8: the battle scenery set (backdrop and platforms) wild battles here use.</summary>
         public const int BattleScenery = 0x01;
+        /// <summary>u8: the map type; it sets the matrix cell size (<see cref="Gen5Rails.BlockTiles"/>).</summary>
+        public const int MapType = 0x00;
     }
 
     /// <summary>Message file indices inside <see cref="SystemText"/>.</summary>

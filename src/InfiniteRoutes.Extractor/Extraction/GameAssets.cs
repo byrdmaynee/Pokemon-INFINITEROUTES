@@ -107,6 +107,14 @@ public sealed class GameAssets
 
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 
+    /// <summary>A map cell's collision: its own grid when it has one (rail maps), else its chunk's.</summary>
+    public byte[] CellTiles(WorldCell cell) => cell.Tiles is { } name
+        ? File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", name + ".tiles"))
+        : ChunkTiles(cell.Chunk);
+
+    /// <summary>Cache key for <see cref="CellTiles"/>.</summary>
+    public static string TilesKey(WorldCell cell) => cell.Tiles ?? cell.Chunk.ToString();
+
     /// <summary>A <see cref="CharacterSheet"/> PNG; <paramref name="name"/> is "hero" or "heroine".</summary>
     public string OverworldSpritePath(string name) => Path.Combine(Directory, "sprites", "overworld", name + ".png");
 
@@ -114,6 +122,12 @@ public sealed class GameAssets
     public string NpcSpritePath(int sprite) => Path.Combine(Directory, "sprites", "overworld", "npc", $"{sprite}.png");
 
     /// <param name="view">front, back, front-shiny or back-shiny.</param>
+    /// <summary>A Pokémon's 32×32 party icon (<see cref="Gen5Icons"/>).</summary>
+    public string PartyIconPath(int speciesId) => Path.Combine(Directory, "sprites", "icons", $"{speciesId:D3}.png");
+
+    /// <summary>An item's 32×32 Bag icon (<see cref="Gen5Icons"/>).</summary>
+    public string ItemIconPath(int item) => Path.Combine(Directory, "sprites", "items", $"{item}.png");
+
     public string BattleSpritePath(int speciesId, string view) =>
         Path.Combine(Directory, "sprites", "battle", view, $"{speciesId:D3}.png");
 }

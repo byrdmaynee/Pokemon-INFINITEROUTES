@@ -33,6 +33,7 @@ public sealed partial class RoleService(IDbContextFactory<IrDb> dbs)
                 {
                     Name = role.ToString(), NameKey = role.ToString().ToLowerInvariant(), Rank = Permissions.BuiltinRank(role),
                     Permissions = string.Join(',', Permissions.Defaults(role)), Builtin = true,
+                    Beacon = Core.Player.Beacons.Default(role.ToString()),
                 };
                 db.Roles.Add(row);
                 rows.Add(row);
@@ -43,7 +44,8 @@ public sealed partial class RoleService(IDbContextFactory<IrDb> dbs)
     }
 
     static RoleInfo ToInfo(RoleDef r) =>
-        new(r.Name, r.Rank, r.Builtin, r.Permissions.Split(',', StringSplitOptions.RemoveEmptyEntries).Where(Permissions.Known).ToHashSet());
+        new(r.Name, r.Rank, r.Builtin, r.Permissions.Split(',', StringSplitOptions.RemoveEmptyEntries).Where(Permissions.Known).ToHashSet(),
+            Core.Player.Beacons.Known(r.Beacon) && !(Core.Player.Beacons.OwnerOnly(r.Beacon) && r.Rank < RoleInfo.OwnerRank) ? r.Beacon : "");
 
     /// <summary>The role called <paramref name="name"/>; Player for an unknown or missing one.</summary>
     public RoleInfo Get(string? name)
@@ -122,6 +124,19 @@ public sealed partial class RoleService(IDbContextFactory<IrDb> dbs)
             set.Remove(permission);
         await Write(db => db.Roles.Where(r => r.NameKey == role.Name.ToLowerInvariant())
             .ExecuteUpdate(u => u.SetProperty(r => r.Permissions, string.Join(',', set.Order()))));
+        return null;
+    }
+
+    /// <summary>Picks the beacon shown over everyone in a role ("" for none); the crown is the Owners'. Null when it worked.</summary>
+    public async Task<string?> SetBeacon(string name, string beacon)
+    {
+        if (Find(name) is not { } role)
+            return $"There's no role {name}.";
+        if (!Core.Player.Beacons.Known(beacon))
+            return $"There's no beacon {beacon}.";
+        if (Core.Player.Beacons.OwnerOnly(beacon) && !role.IsOwner)
+            return "The crown is for Owners only.";
+        await Write(db => db.Roles.Where(r => r.NameKey == role.Name.ToLowerInvariant()).ExecuteUpdate(u => u.SetProperty(r => r.Beacon, beacon)));
         return null;
     }
 

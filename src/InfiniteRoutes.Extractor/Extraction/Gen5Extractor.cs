@@ -106,6 +106,7 @@ public static class Gen5Extractor
             foreach (var sub in new[] { "front", "back", "front-shiny", "back-shiny" })
                 Directory.CreateDirectory(Path.Combine(spriteDir, sub));
 
+            var battlePalettes = new Dictionary<int, uint[]>();
             for (var id = 1; id <= Gen5Layout.NationalDexCount; id++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -115,6 +116,7 @@ public static class Gen5Extractor
                 var b = id * Gen5Layout.Sprite.FilesPerSpecies;
                 var normal = Nclr.Parse(Lz.DecompressIfNeeded(sprites.Read(b + Gen5Layout.Sprite.Palette)));
                 var shiny = Nclr.Parse(Lz.DecompressIfNeeded(sprites.Read(b + Gen5Layout.Sprite.ShinyPalette)));
+                battlePalettes[id] = normal.Colors;
                 var front = Ncgr.Parse(Lz.DecompressIfNeeded(sprites.Read(b + Gen5Layout.Sprite.Front)));
                 var back = Ncgr.Parse(Lz.DecompressIfNeeded(sprites.Read(b + Gen5Layout.Sprite.Back)));
 
@@ -124,6 +126,10 @@ public static class Gen5Extractor
                 Png.Save(front.RenderGen5Battler(shiny), Path.Combine(spriteDir, "front-shiny", file));
                 Png.Save(back.RenderGen5Battler(shiny), Path.Combine(spriteDir, "back-shiny", file));
             }
+
+            // Menu icons: each Pokémon's party icon and every item's icon.
+            Gen5Icons.ExportPartyIcons(fs, Gen5Layout.NationalDexCount, battlePalettes.GetValueOrDefault, Path.Combine(temp, "sprites", "icons"));
+            Gen5Icons.ExportItemIcons(fs, Path.Combine(temp, "sprites", "items"));
 
             // Trainer class sprites, one 80×80 PNG per class.
             var trainerSprites = Narc.Parse(fs.ReadFile(Gen5Layout.TrainerSprites));

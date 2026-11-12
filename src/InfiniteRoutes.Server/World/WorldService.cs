@@ -47,6 +47,12 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
     /// <summary>The player this staff member is watching (they follow them, invisible), or null.</summary>
     public WorldPlayer? Spectating { get; internal set; }
 
+    /// <summary>Characters this player has blocked (their whispers don't arrive).</summary>
+    internal HashSet<long> Blocked { get; set; } = [];
+
+    /// <summary>The battle the player is in, if any (they can't walk meanwhile).</summary>
+    public ActiveBattle? Battle { get; internal set; }
+
     /// <summary>Moved or turned since the last update to the players who see them.</summary>
     internal bool Moved;
     internal bool Ran;
@@ -64,7 +70,14 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
     internal readonly Queue<DateTime> ChatTimes = new();
 
     public NetLocation Location => new(Zone, X, Y, Facing);
-    public NetPlayer AsNet => new(Id, Name, Appearance, Location);
+    public NetPlayer AsNet => new(Id, Name, Appearance, Location, BuddySpecies, BuddyShiny, BuddyFemale, Beacon);
+
+    /// <summary>The beacon over this player's head: their role's.</summary>
+    public string Beacon { get; internal set; } = "";
+
+    /// <summary>The species following the player (0 none), as others are shown it.</summary>
+    internal int BuddySpecies;
+    internal bool BuddyShiny, BuddyFemale;
 }
 
 /// <summary>
@@ -80,8 +93,8 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
 /// <see cref="ServerConfig.SaveIntervalSeconds"/> after the last write. Everything is written on shutdown. All methods
 /// are thread-safe.
 /// </remarks>
-public sealed class WorldService(IWorldData world, ServerConfig config, Func<IReadOnlyList<PlayerSave>, Task> save,
-    Func<GameState, string>? stateJson, RoleService roles)
+public sealed partial class WorldService(IWorldData world, ServerConfig config, Func<IReadOnlyList<PlayerSave>, Task> save,
+    Func<GameState, string>? stateJson, RoleService roles, Game.GameRules? rules = null)
 {
     /// <summary>The player's role as it is now.</summary>
     public RoleInfo RoleOf(WorldPlayer p) => roles.Get(p.RoleName);
@@ -161,6 +174,7 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
                 map = world.MapOf(character.Zone) ?? "";
             }
             player = new WorldPlayer(_nextId++, character, account, state, link, channel.Channel, map) { Dirty = true };
+            player.Beacon = roles.Get(account.Role).Beacon;
             _players[player.Id] = player;
         }
         previous?.Link.Close("You logged in somewhere else.");
@@ -176,8 +190,11 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
 
     void RemoveLocked(WorldPlayer player)
     {
-        if (!_players.Remove(player.Id))
+        if (!_players.ContainsKey(player.Id))
             return;
+        // Leaving mid-battle ends it where it stands (what happened so far counts).
+        FinishBattleLocked(player);
+        _players.Remove(player.Id);
         SaveNowLocked(player);
         foreach (var other in _players.Values)
             if (other.Seen.Remove(player.Id))
@@ -217,7 +234,13 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
             switch (message)
             {
                 case Step step:
-                    player.Link.Send(TryStep(player, step));
+                    var result = TryStep(player, step);
+                    player.Link.Send(result);
+                    if (result is StepResult { Accepted: true })
+                        AfterStepLocked(player);
+                    break;
+                case BattleInput input:
+                    BattleInputLocked(player, input);
                     break;
                 case Warp warp:
                     player.Link.Send(TryWarp(player, warp));
@@ -236,6 +259,12 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
                 case SetLead lead:
                     MakeLead(player, lead.Index);
                     break;
+                case SetBuddy buddy:
+                    ChooseBuddy(player, buddy.Index);
+                    break;
+                case NpcAction npc:
+                    NpcActionLocked(player, npc);
+                    break;
                 case Ping ping:
                     player.Link.Send(new Pong(ping.Time));
                     break;
@@ -247,7 +276,7 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
 
     Message TryStep(WorldPlayer p, Step step)
     {
-        if (p.Spectating is not null)
+        if (p.Spectating is not null || p.Battle is not null)
             return new StepResult(step.Seq, false, p.Location);
         var now = DateTime.UtcNow;
         p.StepBudget = Math.Min(MaxBudget, p.StepBudget + (now - p.LastStep).TotalSeconds);
@@ -277,11 +306,15 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
     Message TryWarp(WorldPlayer p, Warp warp)
     {
         var reject = new StepResult(warp.Seq, false, p.Location);
+        if (p.Battle is not null)
+            return reject;
         if (world.WarpAt(p.Zone, warp.X, warp.Y) is not { } w)
             return reject;
         var distance = Math.Abs(warp.X - p.X) + Math.Abs(warp.Y - p.Y);
-        // Mats and map edges are taken standing on them; doors and stairs from the tile in front.
-        if (w.Kind is WarpKind.Mat or WarpKind.Edge ? distance != 0 : distance != 1)
+        // Mats and map edges are taken standing on them; doors, stairs and edges on a solid tile (town gates) from the
+        // tile in front.
+        var standOn = w.Kind == WarpKind.Mat || w.Kind == WarpKind.Edge && !world.Blocked(p.Zone, warp.X, warp.Y);
+        if (standOn ? distance != 0 : distance != 1)
             return reject;
         if (world.Destination(w) is not { } dest || world.MapOf(dest.Zone) is not { } map)
             return reject;
@@ -362,7 +395,7 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
             case ChatKind.Whisper:
                 var to = _players.Values.FirstOrDefault(o => o.Name.Equals(say.To?.Trim(), StringComparison.OrdinalIgnoreCase));
                 // Invisible staff can't be found by whispering their name.
-                if (to is null || (to.Elevated && to.Invisible && !p.Elevated))
+                if (to is null || (to.Elevated && to.Invisible && !p.Elevated) || to.Blocked.Contains(p.CharacterId))
                 {
                     p.Link.Send(new ChatLine(ChatKind.System, "", $"{say.To} isn't online."));
                     return;
@@ -379,7 +412,7 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
 
     void MakeLead(WorldPlayer p, int index)
     {
-        if (p.State is not { } state || index <= 0 || index >= state.Party.Count)
+        if (p.State is not { } state || index <= 0 || index >= state.Party.Count || p.Battle is not null)
             return;
         var mon = state.Party[index];
         state.Party.RemoveAt(index);
@@ -388,9 +421,41 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
         SendState(p);
     }
 
+    void ChooseBuddy(WorldPlayer p, int index)
+    {
+        if (p.State is not { } state || p.Battle is not null)
+            return;
+        var (ok, message) = state.SetBuddy(index);
+        p.Link.Send(new Notice(message));
+        if (!ok)
+            return;
+        p.StateDirty = true;
+        SendState(p);
+    }
+
+    /// <summary>
+    /// After the player's game changed: if the Pokémon following them changed (chosen, put away, fainted, healed, left
+    /// the party), everyone who can see them is told.
+    /// </summary>
+    void RefreshBuddy(WorldPlayer p)
+    {
+        lock (_gate)
+        {
+            var buddy = p.State?.ActiveBuddy;
+            var (species, shiny, female) = buddy is null ? (0, false, false) : (buddy.Species.Id, buddy.Shiny, buddy.Gender == Core.Battle.Gender.Female);
+            if (species == p.BuddySpecies && shiny == p.BuddyShiny && female == p.BuddyFemale)
+                return;
+            (p.BuddySpecies, p.BuddyShiny, p.BuddyFemale) = (species, shiny, female);
+            var change = new BuddyChanged(p.Id, species, shiny, female);
+            foreach (var viewer in _players.Values.Where(v => v.Seen.Contains(p.Id)))
+                viewer.Link.Send(change);
+        }
+    }
+
     /// <summary>Sends the player their game state (after joining and after changes).</summary>
     public void SendState(WorldPlayer p)
     {
+        RefreshBuddy(p);
         if (p.State is { } state && stateJson is not null)
             p.Link.Send(new StateSnapshot(stateJson(state)));
     }
@@ -407,6 +472,14 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
             foreach (var p in _players.Values)
             {
                 var role = RoleOf(p);
+                if (role.Beacon != p.Beacon)
+                {
+                    p.Beacon = role.Beacon;
+                    var change = new BeaconChanged(p.Id, p.Beacon);
+                    p.Link.Send(change);
+                    foreach (var viewer in _players.Values.Where(v => v.Seen.Contains(p.Id)))
+                        viewer.Link.Send(change);
+                }
                 if (p.Elevated && !role.IsStaff)
                 {
                     p.Elevated = p.Invisible = p.Noclip = false;
@@ -439,6 +512,20 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
             return p.State is { } s && stateJson is not null ? stateJson(s) : null;
     }
 
+    /// <summary>The online player playing character <paramref name="characterId"/>, or null.</summary>
+    public WorldPlayer? OnlineCharacter(long characterId)
+    {
+        lock (_gate)
+            return _players.Values.FirstOrDefault(p => p.CharacterId == characterId);
+    }
+
+    /// <summary>Sets whose whispers a player doesn't receive.</summary>
+    public void SetBlocked(WorldPlayer p, IEnumerable<long> blocked)
+    {
+        lock (_gate)
+            p.Blocked = [.. blocked];
+    }
+
     /// <summary>The online player playing the character named <paramref name="name"/> (exactly), or null.</summary>
     public WorldPlayer? Playing(string name)
     {
@@ -468,6 +555,8 @@ public sealed class WorldService(IWorldData world, ServerConfig config, Func<IRe
                 return (null, null, "This server keeps no game state (no battle data).");
             if (!_players.ContainsKey(p.Id))
                 return (null, null, $"{p.Name} just left; try again.");
+            if (p.Battle is not null)
+                return (null, null, $"{p.Name} is in a battle; try again when it's over.");
             var before = stateJson(state);
             if (edit(state) is { } error)
                 return (null, null, error);

@@ -30,6 +30,15 @@ public interface IWorldData
 
     /// <summary>Where a warp leads: the zone, the tile to stand on and the facing; null when it leads nowhere.</summary>
     (int Zone, int X, int Y, int Facing)? Destination(WarpInfo warp);
+
+    /// <summary>Whether (x, y) of <paramref name="zone"/>'s map is tall grass (wild Pokémon).</summary>
+    bool TallGrass(int zone, int x, int y) => false;
+
+    /// <summary>The zone's wild encounter table (an index into the data pack's), or -1 for none.</summary>
+    int EncounterTable(int zone) => -1;
+
+    /// <summary>NPC <paramref name="id"/> of <paramref name="zone"/> as the zone events place it, or null.</summary>
+    Extractor.Extraction.NpcInfo? Npc(int zone, int id) => null;
 }
 
 /// <summary>The world from an extraction cache (the server's data pack): zones, maps, per-chunk collision and warps.</summary>
@@ -40,7 +49,7 @@ public sealed class AssetWorldData : IWorldData
     readonly GameAssets _assets;
     readonly Dictionary<int, ZoneInfo> _zones;
     readonly ConcurrentDictionary<string, (WorldIndex Map, Dictionary<(int, int), WorldCell> Cells)?> _maps = new();
-    readonly ConcurrentDictionary<int, byte[]> _tiles = new();
+    readonly ConcurrentDictionary<string, byte[]> _tiles = new();
     readonly ConcurrentDictionary<int, Dictionary<(int, int), WarpInfo>> _warps = new();
 
     public StartPoint Start { get; }
@@ -65,17 +74,26 @@ public sealed class AssetWorldData : IWorldData
     static (int, int) Cell(WorldIndex map, int x, int y) =>
         ((int)Math.Floor(x / (double)map.ChunkTiles), (int)Math.Floor(y / (double)map.ChunkTiles));
 
-    public bool Blocked(int zone, int x, int y)
+    public bool Blocked(int zone, int x, int y) => Flags(zone, x, y) is not { } f || (f & 1) != 0;
+
+    public bool TallGrass(int zone, int x, int y) => Flags(zone, x, y) is { } f && (f & 2) != 0;
+
+    public int EncounterTable(int zone) => _zones.TryGetValue(zone, out var z) ? z.Encounters : -1;
+
+    public NpcInfo? Npc(int zone, int id) => _zones.TryGetValue(zone, out var z) ? z.Npcs.FirstOrDefault(n => n.Id == id) : null;
+
+    /// <summary>A tile's collision flags (1 blocked, 2 tall grass), or null off the map.</summary>
+    byte? Flags(int zone, int x, int y)
     {
         if (MapOf(zone) is not { } key || Map(key) is not { } m)
-            return true;
+            return null;
         var (cx, cy) = Cell(m.Map, x, y);
         if (!m.Cells.TryGetValue((cx, cy), out var cell))
-            return true;
-        var tiles = _tiles.GetOrAdd(cell.Chunk, _assets.ChunkTiles);
+            return null;
+        var tiles = _tiles.GetOrAdd(GameAssets.TilesKey(cell), _ => _assets.CellTiles(cell));
         var n = m.Map.ChunkTiles;
         var i = (y - cy * n) * n + (x - cx * n);
-        return i < 0 || i >= tiles.Length || (tiles[i] & 1) != 0;
+        return i < 0 || i >= tiles.Length ? null : tiles[i];
     }
 
     /// <summary>

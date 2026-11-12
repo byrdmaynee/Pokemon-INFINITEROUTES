@@ -111,15 +111,20 @@ public sealed class OnlineClient : IDisposable
         }
     }
 
-    public async Task<string?> Login(string name, string password)
+    /// <summary>When the session from <see cref="Login"/> ends.</summary>
+    public DateTime Expires { get; private set; }
+
+    /// <param name="remember">Ask for a long "remember me" session.</param>
+    public async Task<string?> Login(string name, string password, bool remember = false)
     {
         try
         {
-            var (body, ok) = await Send(HttpMethod.Post, "api/login", new { name, password });
+            var (body, ok) = await Send(HttpMethod.Post, "api/login", new { name, password, remember });
             if (!ok)
                 return Error(body, "Login failed.");
             Token = body.GetProperty("token").GetString();
             Account = body.GetProperty("account").GetString();
+            Expires = body.TryGetProperty("expires", out var e) && e.TryGetDateTime(out var at) ? at.ToUniversalTime() : DateTime.UtcNow.AddHours(1);
             return null;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException)
@@ -155,6 +160,37 @@ public sealed class OnlineClient : IDisposable
     }
 
     /// <summary>The account's staff role and two-factor state.</summary>
+    /// <summary>
+    /// Picks up a remembered session: null when the server still takes the token, else why not (expired or ended:
+    /// the token is dropped).
+    /// </summary>
+    public async Task<string?> Resume(string token)
+    {
+        Token = token;
+        var (info, error) = await AccountInfo();
+        if (info is null)
+        {
+            Token = null;
+            return error;
+        }
+        Account = info.Name;
+        return null;
+    }
+
+    /// <summary>Ends the session on the server (best effort) and forgets the token.</summary>
+    public async Task Logout()
+    {
+        try
+        {
+            if (Token is not null)
+                await Send(HttpMethod.Post, "api/logout");
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)
+        {
+        }
+        Token = null;
+    }
+
     public async Task<(AccountInfo? Info, string? Error)> AccountInfo()
     {
         try

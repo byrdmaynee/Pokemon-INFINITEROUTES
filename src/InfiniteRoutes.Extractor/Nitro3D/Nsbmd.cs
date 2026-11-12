@@ -88,7 +88,7 @@ public static class Nsbmd
                     {
                         if (!meshes.TryGetValue(currentMaterial, out var mesh))
                             meshes[currentMaterial] = mesh = new NitroMesh(currentMaterial);
-                        RunDisplayList(b, shapes[shape], current * scale, stack, scale, mesh);
+                        RunDisplayList(b, shapes[shape], scale * current, stack, scale, mesh);   // vertices are scaled, then placed
                     }
                     pc += 2;
                     break;
@@ -272,7 +272,7 @@ public static class Nsbmd
                 switch (cmd)
                 {
                     case 0x00: break;
-                    case 0x14: transform = stack[Param() & 31] * scale; break;  // MTX_RESTORE
+                    case 0x14: transform = scale * stack[Param() & 31]; break;  // MTX_RESTORE
                     case 0x1B: pos += 12; break;                                // MTX_SCALE
                     case 0x20: color = Bgr(Param()); break;                     // COLOR
                     case 0x21: Param(); break;                                  // NORMAL (unlit for now)

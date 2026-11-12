@@ -23,12 +23,19 @@ public enum ObjectiveKind
     HealAtCenter,
     /// <summary>Have <c>Count</c> Pokémon in the party.</summary>
     PartySize,
+    /// <summary>Catch <c>Count</c> of species <c>Target</c> after the quest starts.</summary>
+    CatchSpecies,
+    /// <summary>Have caught <c>Count</c> different species.</summary>
+    DexCount,
+    /// <summary>Have a party Pokémon at level <c>Count</c> or higher.</summary>
+    ReachLevel,
 }
 
 public sealed record QuestObjective(ObjectiveKind Kind, string Text, int Count = 1, int Target = 0)
 {
     /// <summary>Counter-based objectives only count what happens after the quest starts.</summary>
-    public bool CountsFromStart => Kind is ObjectiveKind.Catch or ObjectiveKind.DefeatTrainers or ObjectiveKind.WinWild or ObjectiveKind.HealAtCenter;
+    public bool CountsFromStart => Kind is ObjectiveKind.Catch or ObjectiveKind.DefeatTrainers or ObjectiveKind.WinWild or ObjectiveKind.HealAtCenter
+        or ObjectiveKind.CatchSpecies;
 
     /// <summary>The raw counter this objective reads, before subtracting the value at the quest's start.</summary>
     public int Counter(PlayerProgress p) => Kind switch
@@ -41,6 +48,9 @@ public sealed record QuestObjective(ObjectiveKind Kind, string Text, int Count =
         ObjectiveKind.WinWild => p.WildWins,
         ObjectiveKind.HealAtCenter => p.CenterVisits,
         ObjectiveKind.PartySize => p.PartyCount,
+        ObjectiveKind.CatchSpecies => p.CaughtSpecies.GetValueOrDefault(Target),
+        ObjectiveKind.DexCount => p.CaughtSpecies.Count,
+        ObjectiveKind.ReachLevel => p.TopLevel,
         _ => 0,
     };
 }
@@ -51,8 +61,13 @@ public sealed record QuestReward(int Money = 0, IReadOnlyList<(int Item, int Cou
 }
 
 /// <param name="Next">The quest that starts when this one is done (story chains).</param>
+/// <param name="Giver">The NPC who hands it out (<see cref="NpcDeal.Key"/>, "zone:npc"); null for quests that start by
+/// themselves.</param>
+/// <param name="MinBadges">Badges needed before the giver offers it.</param>
+/// <param name="Requires">A quest that has to be finished first.</param>
 public sealed record QuestInfo(string Id, string Title, string Description, QuestCategory Category,
-    IReadOnlyList<QuestObjective> Objectives, QuestReward Reward, string? Next = null);
+    IReadOnlyList<QuestObjective> Objectives, QuestReward Reward, string? Next = null, string? Giver = null,
+    int MinBadges = 0, string? Requires = null);
 
 /// <summary>A quest in progress: the counters at its start, so "catch 3" means three new catches.</summary>
 public sealed class ActiveQuest
@@ -109,6 +124,19 @@ public sealed class QuestLog
 
     public bool IsDone(string id) => _completed.ContainsKey(id);
 
+    public QuestInfo? Find(string id) => _catalog.GetValueOrDefault(id);
+
+    /// <summary>The quest NPC <paramref name="giver"/> would hand out on <paramref name="now"/>'s day, if any.</summary>
+    public QuestInfo? Offer(string giver, PlayerProgress progress, DateTime now) =>
+        _catalog.Values.FirstOrDefault(q => q.Giver == giver && _active.All(a => a.Info.Id != q.Id)
+            && (q.Category == QuestCategory.Daily
+                ? !(_completed.TryGetValue(q.Id, out var when) && when.Date == now.Date)
+                : !_completed.ContainsKey(q.Id))
+            && progress.Badges.Count >= q.MinBadges && (q.Requires is null || _completed.ContainsKey(q.Requires)));
+
+    /// <summary>Every NPC that hands out quests ("zone:npc").</summary>
+    public IEnumerable<string> Givers => _catalog.Values.Select(q => q.Giver).OfType<string>().Distinct();
+
     public QuestLogSave ToSave() =>
         new(_active.Select(q => q.ToSave()).ToList(), _completed.ToDictionary(c => c.Key, c => c.Value), TrackedId);
 
@@ -130,7 +158,8 @@ public sealed class QuestLog
     public bool Start(string id, PlayerProgress progress, DateTime now)
     {
         if (!_catalog.TryGetValue(id, out var info) || _active.Any(q => q.Info.Id == id)
-            || (info.Category != QuestCategory.Daily && _completed.ContainsKey(id)))
+            || (info.Category != QuestCategory.Daily && _completed.ContainsKey(id))
+            || (info.Category == QuestCategory.Daily && _completed.TryGetValue(id, out var last) && last.Date == now.Date))
             return false;
         _active.Add(new ActiveQuest(info, progress, now));
         return true;
@@ -154,7 +183,7 @@ public sealed class QuestLog
     {
         var finished = new List<QuestInfo>();
         foreach (var (id, when) in _completed.ToList())
-            if (_catalog[id].Category == QuestCategory.Daily && when.Date < now.Date && _active.All(q => q.Info.Id != id))
+            if (_catalog[id] is { Category: QuestCategory.Daily, Giver: null } && when.Date < now.Date && _active.All(q => q.Info.Id != id))
                 Start(id, progress, now);
         for (var pass = 0; pass < _catalog.Count; pass++)   // a chained quest may already be met when it starts
         {
@@ -224,6 +253,7 @@ public static class StarterQuests
                 QuestCategory.Story, [new(ObjectiveKind.EarnBadge, $"Earn the {badge.Name}", Target: badge.Index)],
                 new(Money: 1000 * (badge.Index + 1), Items: [(ItemEffect.SuperPotion,2 + badge.Index / 2)]), next));
         }
+        quests.AddRange(SideQuests.Unova());
         return quests;
     }
 

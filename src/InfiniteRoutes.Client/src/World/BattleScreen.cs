@@ -1,6 +1,7 @@
 using Godot;
 using InfiniteRoutes.Core.Battle;
 using InfiniteRoutes.Core.Data;
+using InfiniteRoutes.Core.Net;
 using InfiniteRoutes.Extractor.Extraction;
 
 namespace InfiniteRoutes.Client.World;
@@ -68,6 +69,16 @@ public partial class BattleScreen : Control
 
     // Godot needs a parameterless constructor to recreate script instances.
     public BattleScreen() : this(null!, null!) { }
+
+    /// <summary>The server this battle is played on (online), or null offline.</summary>
+    IBattleLink? _link;
+
+    /// <summary>Plays the battle on a server: each action is the server's to play first (see <see cref="IBattleLink"/>).</summary>
+    public BattleScreen Online(IBattleLink link)
+    {
+        _link = link;
+        return this;
+    }
 
     /// <summary>A battle shown over the ROM's <paramref name="scenery"/> (backdrop and platform model names).</summary>
     public BattleScreen(SingleBattle battle, GameAssets assets, (string Backdrop, string Stage)? scenery = null)
@@ -334,7 +345,7 @@ public partial class BattleScreen : Control
     public void Replace(int index)
     {
         _picker.Visible = false;
-        Play(_battle.SendOut(index));
+        Do("send-out", () => _battle.SendOut(index), a: index);
     }
 
     /// <summary>Makes the current Pokémon's choice as if picked from the menu; for smoke tests.</summary>
@@ -357,7 +368,7 @@ public partial class BattleScreen : Control
         // Charging, recharging or rampaging: the move is already decided.
         if (_battle.PlayerLocked)
         {
-            Play(_battle.Fight(0));
+            Do("locked", () => _battle.Fight(0));
             return;
         }
         AskChooser();
@@ -385,7 +396,7 @@ public partial class BattleScreen : Control
                 return;
             }
         }
-        Play(_battle.Turn(_choices));
+        PlayTurn([.. _choices]);
     }
 
     /// <summary>The chooser's action: the turn itself in a single battle, else noted until everyone has chosen.</summary>
@@ -393,13 +404,13 @@ public partial class BattleScreen : Control
     {
         if (_battle.Width == 1)
         {
-            Play(_battle.Turn([choice]));
+            PlayTurn([choice]);
             return;
         }
         _choices[_chooser] = choice;
         if (choice is BattleChoice.Run)
         {
-            Play(_battle.Turn(_choices));
+            PlayTurn([.. _choices]);
             return;
         }
         NextChooser();
@@ -554,9 +565,9 @@ public partial class BattleScreen : Control
                 return (text, true, (Action)(() => Act(new BattleChoice.Item(useItem, index))));
             if (rotating)
                 return (text, _battle.RotationTeam.Contains(mon) && _battle.CanSendOut(i) && !_battle.IsOut(i),
-                    (Action)(() => Play(_battle.Rotate(index))));
+                    (Action)(() => Do("rotate", () => _battle.Rotate(index), a: index)));
             var can = _battle.CanSendOut(i) && !_battle.IsOut(i) && !incoming.Contains(i);
-            return (text, can, forced ? () => Play(_battle.SendOut(index)) : (Action)(() => Act(new BattleChoice.Switch(index))));
+            return (text, can, forced ? () => Do("send-out", () => _battle.SendOut(index), a: index) : (Action)(() => Act(new BattleChoice.Switch(index))));
         });
         var title = useItem != 0 ? $"Use the {OfflineSession.Data.ItemName(useItem)} on which Pokémon?"
             : forced ? "Choose the next Pokémon." : rotating ? "Rotate to which Pokémon? (free, once a turn)" : "Switch to which Pokémon?";
@@ -572,6 +583,49 @@ public partial class BattleScreen : Control
         await Wait(MessageSeconds);
         if (IsInstanceValid(this) && !_battle.Over)
             AskChooser();
+    }
+
+    void PlayTurn(BattleChoice?[] choices) => Do("turn", () => _battle.Turn(choices), choices);
+
+    static NetChoice? ToNet(BattleChoice? choice) => choice switch
+    {
+        BattleChoice.Fight f => new NetChoice("fight", f.Slot, (int)f.TargetSide, f.TargetSlot),
+        BattleChoice.Switch s => new NetChoice("switch", s.PartyIndex),
+        BattleChoice.Item i => new NetChoice("item", i.ItemId, i.PartyIndex),
+        BattleChoice.Run => new NetChoice("run"),
+        _ => null,
+    };
+
+    /// <summary>
+    /// Takes an action and plays what happens. Online the server plays it first and hands over the dice it rolled, so
+    /// this replays the same turn; if it refuses, the menu comes back.
+    /// </summary>
+    async void Do(string kind, Func<IReadOnlyList<BattleEvent>> action, BattleChoice?[]? choices = null, int a = 0)
+    {
+        if (_link is not null)
+        {
+            _busy = true;
+            _commands.Visible = _moves.Visible = _picker.Visible = false;
+            var refused = await _link.Act(_battle, kind, choices?.Select(ToNet).ToList(), a);
+            if (!IsInstanceValid(this))
+                return;
+            _busy = false;
+            if (refused is not null)
+            {
+                _message.Text = refused;
+                await Wait(MessageSeconds);
+                if (!IsInstanceValid(this))
+                    return;
+                if (_battle.NeedsSwitch)
+                    ShowParty(forced: true);
+                else
+                    ShowCommands();
+                return;
+            }
+        }
+        var events = action();
+        _link?.Played(_battle);
+        Play(events);
     }
 
     /// <summary>Plays a turn's events, then shows the menu again, asks for the next Pokémon, or ends the battle.</summary>
@@ -627,7 +681,7 @@ public partial class BattleScreen : Control
                     await ThrowBall(c);
                     break;
                 case LearnMoveEvent learn:
-                    await AskToLearn(_battle.Party[learn.PartyIndex], learn.Move);
+                    await AskToLearn(_battle.Party[learn.PartyIndex], learn.Move, learn.PartyIndex);
                     break;
                 case AbilityEvent ability:
                     await ShowAbility(ability);
@@ -750,6 +804,7 @@ public partial class BattleScreen : Control
             return;
         panel.QueueFree();
         mon.Rename(name);
+        _link?.Tell("nickname", text: name ?? "");
         if (mon.Nickname is not null)
         {
             _message.Text = $"{mon.Species.Name} is now called {mon.Nickname}!";
@@ -761,7 +816,7 @@ public partial class BattleScreen : Control
     /// A Pokémon that knows four moves reached a new one: the player picks a move to forget, or keeps the four. As in the
     /// games, the choice can't be backed out of; "Don't learn" is the way out.
     /// </summary>
-    async Task AskToLearn(Pokemon mon, MoveInfo move)
+    async Task AskToLearn(Pokemon mon, MoveInfo move, int partyIndex)
     {
         _message.Text = $"{mon.Name} wants to learn the move {move.Name}.\nBut {mon.Name} can't learn more than four moves.";
         await Wait(MessageSeconds);
@@ -779,6 +834,7 @@ public partial class BattleScreen : Control
         Asking = false;
         if (!IsInstanceValid(this))
             return;
+        _link?.Tell("learn", partyIndex, move.Id, forget);
         if (forget >= 0 && mon.LearnMove(move, forget) is { } old)
         {
             _message.Text = $"1, 2, and… … Poof!\n{mon.Name} forgot {old.Name}.";
@@ -1177,4 +1233,22 @@ public partial class BattleScreen : Control
             _expFill.Size = new Vector2(expTrack.Size.X * _shownExp, expTrack.Size.Y);
         }
     }
+}
+
+/// <summary>
+/// A battle played on the server (online): the screen asks it to play each action first and replays the action with
+/// the server's dice, and tells it the player's answers that change the game (moves learned, nicknames).
+/// </summary>
+public interface IBattleLink
+{
+    /// <summary>
+    /// Sends an action; once the server has played it, reseeds <paramref name="battle"/> with its dice and returns null,
+    /// or returns why it was refused.
+    /// </summary>
+    Task<string?> Act(SingleBattle battle, string kind, IReadOnlyList<NetChoice?>? choices, int a);
+
+    /// <summary>After an action was replayed: checks the battle still stands as the server's does.</summary>
+    void Played(SingleBattle battle);
+
+    void Tell(string kind, int a = 0, int b = 0, int c = 0, string text = "");
 }
