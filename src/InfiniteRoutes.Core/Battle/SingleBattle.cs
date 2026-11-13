@@ -1418,7 +1418,7 @@ public sealed partial class SingleBattle
                     // The trainer steps back out and says their line from the ROM.
                     events.Add(new TrainerEvent(true));
                     events.AddRange(TrainerInfo.Pages(trainer.Defeat).Select(page => new MessageEvent(page)));
-                    PrizeMoney = trainer.PrizeBase * 4 * _foeParty[^1].Level;
+                    PrizeMoney = trainer.Prize >= 0 ? trainer.Prize : trainer.PrizeBase * 4 * _foeParty[^1].Level;
                     // Amulet Coin and Luck Incense double it.
                     if (_party.Any(p => p.HeldItem is HeldItems.AmuletCoin or HeldItems.LuckIncense))
                         PrizeMoney *= 2;

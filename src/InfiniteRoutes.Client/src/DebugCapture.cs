@@ -392,6 +392,27 @@ public static class DebugCapture
                             GD.Print($"[capture] editor parts: npcs {f2.Npcs?.Count}, obstacles {f2.Obstacles?.Count}, stamps {f2.Stamps?.Count}, links {f2.Links?.Count}, wild {f2.Wild?.Count}");
                             break;
                         case "source": editor.ShowSourceForTest(); break;
+                        case "people":
+                        {
+                            // A trainer two tiles in from the entrance (facing it), a gift-giver beside them, and a route gate
+                            // and a sign from other parts of Unova's maps, as objects on this route's ground.
+                            var start = Extractor.Extraction.UnchartedRoutes.Ends(editor.FileForTest)[0];
+                            // Where the player arrives: the middle of the entrance.
+                            var (px, py) = (start.X, start.Y + (start.Along - 1) / 2);
+                            editor.AddForTest(npc: new Extractor.Extraction.RouteNpc(px + 3, py, 20, Facing: 2,
+                                Text: "Hold it! You're on my route.\n\nLet's battle!", Sight: 0,
+                                Battle: new Extractor.Extraction.RouteTrainer("Ava", 4, [new(504, 3), new(506, 4)], Prize: 1200,
+                                    Defeat: "You got me!", After: "Good luck out there.")));
+                            editor.AddForTest(npc: new Extractor.Extraction.RouteNpc(px, py + 1, 40, Facing: 1, Text: "Here, take this!", GiftItem: 17, GiftCount: 3));
+                            foreach (var (area, want, at) in new[] { (22, "gate", (px + 8, py - 10)), (26, "sign", (px + 5, py - 4)) })
+                                if (editor.ObjectsOf(area).FirstOrDefault(o => o.Name.StartsWith(want, StringComparison.Ordinal)) is { } o)
+                                    editor.AddForTest(stamp: new Extractor.Extraction.RouteStamp(at.Item1, at.Item2, o.W, o.H, o.X, o.Y, area, ObjectsOnly: true));
+                            editor.SelectForTest(editor.FileForTest.Npcs!.Count - 2);
+                            editor.LookAtForTest(px + 4, py - 3, 1.4f);
+                            var f3 = editor.FileForTest;
+                            GD.Print($"[capture] editor people: {string.Join("; ", f3.Npcs!.Select(n => n.Battle is { } t ? $"trainer {t.Name} ×{t.Party.Count} ₽{t.Prize}" : n.GiftItem > 0 ? $"gift {n.GiftItem}×{n.GiftCount}" : "talk"))}; stamps {string.Join(", ", f3.Stamps?.Select(st => $"{st.W}x{st.H} from {st.Area}{(st.ObjectsOnly ? " objects" : "")}") ?? [])}");
+                            break;
+                        }
                         case "save": GD.Print($"[capture] editor save sent {editor.Save()}"); break;
                         case "walk": editor.TestWalk(); break;
                     }

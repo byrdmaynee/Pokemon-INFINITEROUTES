@@ -34,7 +34,7 @@ public partial class OverworldScreen
         var data = OfflineSession.Data;
         Pokemon? wild = null;
         GameState? state = null;
-        var trainer = start.Trainer >= 0 && start.Trainer < OfflineSession.Trainers.Count ? OfflineSession.Trainers[start.Trainer] : null;
+        var trainer = TrainerById(start.Trainer);
         try
         {
             if (data is not null && _onlineState is { } save)

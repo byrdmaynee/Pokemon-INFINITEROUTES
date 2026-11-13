@@ -32,10 +32,14 @@ public class InfiniteRouteTests
             Area = 7, Name = "Route 0", SourceZone = 300, Cells = cells, Width = size, Height = size, OriginX = 0, OriginY = 0,
             CellOf = Enumerable.Range(0, size * size).Select(t => t / size / 32 * 3 + t % size / 32).ToArray(),
             Flags = flags, Kind = kind, Ground = new float[size * size], BaseHeight = 0,
+            // A 3×2 "sign" standing at (40, 40)–(42, 41) of the sample maps.
+            ObjectTile = Enumerable.Range(0, size * size).Select(t => t % size is >= 40 and <= 42 && t / size is 40 or 41).ToArray(),
+            Objects = [new RouteObject("sign01a", 40, 40, 3, 2)],
         };
     }
 
     internal static TerrainTheme SharedTheme => Shared.Value;
+    internal static TerrainTheme NewTheme() => Theme();
     internal static IReadOnlyDictionary<int, ZoneInfo> TestZones => Zones;
 
     static readonly Dictionary<int, ZoneInfo> Zones = new() { [300] = new ZoneInfo(300, "m000", "Route 0", -1, [], [], -1) };
@@ -280,6 +284,72 @@ public class RouteFileTests
 
         // Its own wild Pokémon.
         Assert.Equal((15, 504), (route.WildRate, route.Wild!.Single().Species));
+    }
+
+    [Fact]
+    public void A_route_trainer_is_built_from_the_file_with_its_own_id_party_and_prize()
+    {
+        var kinds = Enumerable.Repeat(TileKind.Tree, 64 * 32).ToArray();
+        for (var x = 0; x < 64; x++)
+            kinds[10 * 64 + x] = kinds[11 * 64 + x] = TileKind.Path;
+        var trainer = new RouteTrainer("Ava", 4, [new RouteTrainerMon(504, 7), new RouteTrainerMon(506, 9)], Prize: 1200,
+            Defeat: "You got me!", After: "Good luck out there.");
+        var file = RouteFile.From(12, "", 7, 64, 32, kinds) with
+        {
+            Npcs =
+            [
+                new RouteNpc(3, 10, 12, Text: "Hey!\n\nLet's battle!", Sight: 4, Battle: trainer),
+                new RouteNpc(9, 10, 12, Text: "Take this.", GiftItem: 17, GiftCount: 2),
+            ],
+        };
+
+        var info = UnchartedRoutes.TrainerOf(file, 0, c => c == 4 ? "Lass" : "")!;
+        Assert.Equal(UnchartedRoutes.TrainerId(12, 0), info.Id);
+        Assert.True(UnchartedRoutes.IsRouteTrainer(info.Id));
+        Assert.Equal((12, 0), UnchartedRoutes.RouteTrainerOf(info.Id));
+        Assert.Equal(("Lass Ava", 1200), (info.Title, info.Prize));
+        Assert.Equal([(504, 7), (506, 9)], info.Pokemon.Select(p => (p.Species, p.Level)));
+        Assert.Equal(["Hey!", "Let's battle!"], TrainerInfoPages(info.Intro));
+        Assert.Null(UnchartedRoutes.TrainerOf(file, 1, _ => ""));   // the gift-giver isn't a trainer
+
+        var route = UnchartedRoutes.FromFile(file, InfiniteRouteTests.SharedTheme, InfiniteRouteTests.TestZones, [])!;
+        var npc = route.Zone.Npcs.Single(n => n.Id == 0);
+        Assert.Equal((info.Id, 4), (npc.TrainerId, npc.Sight));
+        Assert.Equal(["You got me!"], npc.Talk!.Win);
+        Assert.Equal(["Good luck out there."], npc.Talk.Later);
+        var giver = route.Zone.Npcs.Single(n => n.Id == 1);
+        Assert.Equal((-1, 17, 2), (giver.TrainerId, giver.Talk!.GiftItem, giver.Talk.GiftCount));
+    }
+
+    static IReadOnlyList<string> TrainerInfoPages(string? line) => InfiniteRoutes.Core.Data.TrainerInfo.Pages(line);
+
+    [Fact]
+    public void An_objects_only_stamp_puts_another_sets_object_on_the_routes_own_ground()
+    {
+        var look = InfiniteRouteTests.SharedTheme;
+        var other = InfiniteRouteTests.NewTheme();   // another set: the same made-up maps, so its sign is at (40, 40)
+        var kinds = Enumerable.Repeat(TileKind.Ground, 64 * 32).ToArray();
+        for (var x = 0; x < 64; x++)
+            kinds[x] = TileKind.Tree;   // keep one edge solid so there are ends
+        var file = RouteFile.From(3, "", 7, 64, 32, kinds) with
+        {
+            Stamps = [new RouteStamp(10, 10, 4, 3, 39, 39, Area: 99, ObjectsOnly: true), new RouteStamp(20, 20, 2, 2, 50, 50, Area: 99)],
+        };
+        var route = UnchartedRoutes.FromFile(file, look, InfiniteRouteTests.TestZones, [], area => area == 99 ? other : null)!;
+        int w = route.WidthTiles;
+        const int n = RouteFile.Margin;
+        int At(int x, int y) => (y + n) * w + x + n;
+
+        // The sign's tiles (sample 40–42, 40–41 → route 11–13, 11–12) are drawn on top of the route's ground and are solid.
+        Assert.Equal(new TileLayer(other, 40 * other.Width + 40, true), route.Extra![At(11, 11)]);
+        Assert.Equal(1, route.Flags[At(11, 11)]);
+        Assert.Equal(TileKind.Ground, look.Kind[route.Source[At(11, 11)]]);
+        // Tiles of the rectangle without an object are left as they were.
+        Assert.False(route.Extra.ContainsKey(At(10, 10)));
+        Assert.Equal(0, route.Flags[At(10, 10)]);
+        // A whole-piece stamp from another set replaces the tile, with that tile's collision.
+        Assert.Equal(new TileLayer(other, 50 * other.Width + 50, false), route.Extra[At(20, 20)]);
+        Assert.Equal(other.Flags[50 * other.Width + 50], route.Flags[At(20, 20)]);
     }
 
     [Fact]

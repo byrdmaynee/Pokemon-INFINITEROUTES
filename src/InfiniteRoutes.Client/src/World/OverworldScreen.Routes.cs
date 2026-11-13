@@ -41,6 +41,18 @@ static class OnlineRoutes
         assets.ForgetRoutes();
     }
 
+    static IReadOnlyDictionary<int, string>? _classNames;
+
+    /// <summary>A trainer made for a hand-made route the server has sent, by its id; null if there's none.</summary>
+    public static Core.Data.TrainerInfo? Trainer(int id)
+    {
+        if (!UnchartedRoutes.IsRouteTrainer(id))
+            return null;
+        var (node, person) = UnchartedRoutes.RouteTrainerOf(id);
+        _classNames ??= OfflineSession.Trainers.GroupBy(t => t.Class).ToDictionary(g => g.Key, g => g.First().ClassName);
+        return Saved.TryGetValue(node, out var file) ? UnchartedRoutes.TrainerOf(file, person, c => _classNames.GetValueOrDefault(c, "")) : null;
+    }
+
     static void Attach(GameAssets assets)
     {
         assets.RouteSource = node => Saved.GetValueOrDefault(node);
@@ -64,6 +76,10 @@ public partial class OverworldScreen
     public RouteEditorScreen? RouteEditor => RouteEditorOpen ? _routeEditor : null;
 
     bool MayEditRoutes => _admin?.Permissions.Contains(RouteEditPermission) == true;
+
+    /// <summary>A trainer by id: the ROM's, or one made for a hand-made route.</summary>
+    static Core.Data.TrainerInfo? TrainerById(int id) =>
+        id >= 0 && id < OfflineSession.Trainers.Count ? OfflineSession.Trainers[id] : OnlineRoutes.Trainer(id);
 
     /// <summary>F10: opens or closes the route editor.</summary>
     public void ToggleRouteEditor()

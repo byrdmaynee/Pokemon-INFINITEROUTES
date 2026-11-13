@@ -11,10 +11,12 @@ public sealed record TrainerPokemon(int Species, int Form, int Level, int Diffic
 /// A trainer from the ROM's trainer table. <see cref="BattleType"/> is 0 single, 1 double, 2 triple, 3 rotation.
 /// <see cref="PrizeBase"/> × 4 × the last Pokémon's level is the prize money. <see cref="Intro"/>, <see cref="Defeat"/>
 /// and <see cref="After"/> are its lines from the ROM (before, on losing and after a battle), with \n line breaks,
-/// \r scrolls and \f page breaks; see <see cref="Pages"/>.
+/// \r scrolls and \f page breaks; see <see cref="Pages"/>. <see cref="Prize"/>, when set (0 or more), is the prize money
+/// exactly (a hand-made route's trainer).
 /// </summary>
 public sealed record TrainerInfo(int Id, string Name, int Class, string ClassName, int BattleType, IReadOnlyList<int> Items,
-    int Ai, int PrizeBase, IReadOnlyList<TrainerPokemon> Pokemon, string? Intro = null, string? Defeat = null, string? After = null)
+    int Ai, int PrizeBase, IReadOnlyList<TrainerPokemon> Pokemon, string? Intro = null, string? Defeat = null, string? After = null,
+    int Prize = -1)
 {
     /// <summary>"Youngster Jimmy"-style display name.</summary>
     public string Title => string.IsNullOrEmpty(ClassName) ? Name : $"{ClassName} {Name}";

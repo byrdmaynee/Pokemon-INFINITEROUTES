@@ -163,16 +163,23 @@ public sealed class GameState(QuestLog quests)
     /// once the badges before theirs are earned), a gift not yet collected is handed over, a quest giver hands out
     /// their quest. Online the server decides this; offline the client does.
     /// </summary>
-    public NpcOutcome Deal(NpcDeal deal, IReadOnlyList<Data.TrainerInfo> trainers, BattleData data, DateTime now)
+    public NpcOutcome Deal(NpcDeal deal, IReadOnlyList<Data.TrainerInfo> trainers, BattleData data, DateTime now) =>
+        Deal(deal, id => id >= 0 && id < trainers.Count ? trainers[id] : null, data, now);
+
+    /// <summary>
+    /// <see cref="Deal(NpcDeal, IReadOnlyList{Data.TrainerInfo}, BattleData, DateTime)"/> with trainers found by
+    /// <paramref name="trainer"/> (the ROM's, or a hand-made route's).
+    /// </summary>
+    public NpcOutcome Deal(NpcDeal deal, Func<int, Data.TrainerInfo?> trainer, BattleData data, DateTime now)
     {
-        if (deal.Trainer >= 0 && deal.Trainer < trainers.Count && trainers[deal.Trainer] is { Pokemon.Count: > 0 } trainer
-            && !Progress.DefeatedTrainers.Contains(trainer.Id))
+        if (deal.Trainer >= 0 && trainer(deal.Trainer) is { Pokemon.Count: > 0 } foe && !Progress.DefeatedTrainers.Contains(foe.Id))
         {
-            if (Badges.Gate(Progress, trainer) is { } refusal)
+            var t = foe;
+            if (Badges.Gate(Progress, t) is { } refusal)
                 return new(NpcDealKind.Refused, refusal);
             return Lead is null
                 ? new(NpcDealKind.Refused, "Your Pokémon are in no shape to battle. Heal them at a Pokémon Center first.")
-                : new(NpcDealKind.Battle, "", trainer);
+                : new(NpcDealKind.Battle, "", t);
         }
         if (deal.GiftItem > 0 && !Progress.Gifts.Contains(deal.Key))
         {

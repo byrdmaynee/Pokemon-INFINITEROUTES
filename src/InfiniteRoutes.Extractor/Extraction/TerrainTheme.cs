@@ -18,6 +18,12 @@ public enum TileKind : byte
 }
 
 /// <summary>
+/// A placed object on a texture set's real maps — a sign, a rock, a house, a vehicle (the map's building-pack models,
+/// with their shadows) — as the tiles it stands on: a rectangle of the set's sample grid, named after its model.
+/// </summary>
+public sealed record RouteObject(string Name, int X, int Y, int W, int H);
+
+/// <summary>
 /// The look an Infinite Route is drawn in: one real route's texture set (<see cref="Area"/>) — its route cells and the
 /// unnamed border cells drawn with the same textures — laid out as they sit on the overworld, as a grid of sample
 /// tiles. For each tile: its collision, what <see cref="TileKind"/> it is, and its ground height.
@@ -44,6 +50,10 @@ public sealed class TerrainTheme
     public required float[] Ground { get; init; }
     /// <summary>The ground level most of its walkable tiles are at (to the half tile): where routes are laid.</summary>
     public required float BaseHeight { get; init; }
+    /// <summary>Per sample tile: whether a placed object (see <see cref="Objects"/>) stands over it.</summary>
+    public required bool[] ObjectTile { get; init; }
+    /// <summary>The placed objects on its maps, top to bottom.</summary>
+    public required IReadOnlyList<RouteObject> Objects { get; init; }
 
     /// <summary>The tiles a route can be drawn from (<see cref="RouteKit"/>), worked out once.</summary>
     public RouteKit Kit => _kit ??= new RouteKit(this);
@@ -68,14 +78,26 @@ public sealed class TerrainTheme
         assets.LoadOverworld()?.Cells.Where(c => c.Chunk >= 0 && c.Tiles is null && c.Location.StartsWith("Route", StringComparison.Ordinal))
             .Select(c => c.Area).Distinct().Order().ToList() ?? [];
 
-    public static TerrainTheme? Build(GameAssets assets, int area)
+    /// <summary>Every texture set of the overworld, with a name from the places drawn in it (for picking objects from).</summary>
+    public static IReadOnlyList<(int Area, string Name)> AllAreas(GameAssets assets) =>
+        assets.LoadOverworld()?.Cells.Where(c => c.Chunk >= 0 && c.Tiles is null).GroupBy(c => c.Area)
+            .Select(g => (g.Key, Name: string.Join(", ", g.Select(c => c.Location).Where(l => l.Length > 0).Distinct().Take(3)) is { Length: > 0 } names ? names : "Unova's edge"))
+            .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase).ToList() ?? [];
+
+    /// <param name="everything">
+    /// Every cell drawn with the set — towns and cities too — not just its routes and border (to copy objects and
+    /// pieces from, not to draw routes with).
+    /// </param>
+    public static TerrainTheme? Build(GameAssets assets, int area, bool everything = false)
     {
         if (assets.LoadOverworld() is not { } overworld || overworld.ChunkTiles != N)
             return null;
         var cells = overworld.Cells
-            .Where(c => c.Area == area && c.Chunk >= 0 && c.Tiles is null && (c.Location.Length == 0 || c.Location.StartsWith("Route", StringComparison.Ordinal)))
+            .Where(c => c.Area == area && c.Chunk >= 0 && c.Tiles is null
+                && (everything || c.Location.Length == 0 || c.Location.StartsWith("Route", StringComparison.Ordinal)))
             .ToList();
-        var route = cells.FirstOrDefault(c => c.Location.Length > 0);
+        var route = cells.FirstOrDefault(c => c.Location.StartsWith("Route", StringComparison.Ordinal))
+            ?? (everything ? cells.FirstOrDefault(c => c.Location.Length > 0) ?? cells.FirstOrDefault() : null);
         if (route is null)
             return null;
         int cx0 = cells.Min(c => c.X), cy0 = cells.Min(c => c.Y), cx1 = cells.Max(c => c.X), cy1 = cells.Max(c => c.Y);
@@ -85,6 +107,7 @@ public sealed class TerrainTheme
         var flags = new byte[width * height];
         var ground = new float[width * height];
         var kind = new TileKind[width * height];
+        var objectName = new string?[width * height];
         var kept = new List<WorldCell>();
         foreach (var cell in cells)
         {
@@ -108,9 +131,13 @@ public sealed class TerrainTheme
             var (_, seen) = ChunkGeometry.Surface(prims, N, 1, opaqueOnly: false);
             // Placed objects (buildings, signs, rocks: the building pack's "_lm" materials) — but not the forest
             // blocks, which are placed the same way.
-            var objects = ChunkGeometry.Covered(prims.Where(p => p.MaterialName.Contains("_lm", StringComparison.Ordinal)
-                && !IsTree(p.MaterialName) && !p.MaterialName.StartsWith("grass", StringComparison.Ordinal)), N).ToHashSet();
+            var objectPrims = prims.Where(p => IsObjectMaterial(p.MaterialName)).ToList();
+            var objects = ChunkGeometry.Covered(objectPrims, N).ToHashSet();
             int ox = (cell.X - cx0) * N, oy = (cell.Y - cy0) * N;
+            // Which model each object tile belongs to (shadows don't name one).
+            foreach (var prim in objectPrims.Where(p => !p.MaterialName.Contains("kage", StringComparison.Ordinal)))
+                foreach (var (x, y) in ChunkGeometry.Covered([prim], N))
+                    objectName[(oy + y) * width + ox + x] ??= ObjectName(prim.MaterialName);
             for (var ly = 0; ly < N; ly++)
             for (var lx = 0; lx < N; lx++)
             {
@@ -133,8 +160,43 @@ public sealed class TerrainTheme
         for (var t = 0; t < kind.Length; t++)
             if (kind[t] is TileKind.Ground or TileKind.Path or TileKind.Grass or TileKind.Tree && Math.Abs(ground[t] - baseHeight) > 0.3f)
                 kind[t] = TileKind.Other;
+        // Objects: tiles under placed models, joined where they touch (a house and its shadow are one object).
+        var isObject = new bool[width * height];
+        var found = new List<RouteObject>();
+        var visited = new bool[width * height];
+        for (var start = 0; start < kind.Length; start++)
+        {
+            if (visited[start] || objectName[start] is null)
+                continue;
+            int x0 = int.MaxValue, y0 = int.MaxValue, x1 = -1, y1 = -1;
+            var names = new Dictionary<string, int>();
+            var queue = new Queue<int>([start]);
+            visited[start] = true;
+            while (queue.TryDequeue(out var t))
+            {
+                int x = t % width, y = t / width;
+                (x0, y0, x1, y1) = (Math.Min(x0, x), Math.Min(y0, y), Math.Max(x1, x), Math.Max(y1, y));
+                names[objectName[t]!] = names.GetValueOrDefault(objectName[t]!) + 1;
+                isObject[t] = true;
+                for (var dy = -1; dy <= 1; dy++)
+                    for (var dx = -1; dx <= 1; dx++)
+                    {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx >= 0 && ny >= 0 && nx < width && ny < height && !visited[ny * width + nx] && objectName[ny * width + nx] is not null)
+                        {
+                            visited[ny * width + nx] = true;
+                            queue.Enqueue(ny * width + nx);
+                        }
+                    }
+            }
+            int w = x1 - x0 + 1, h = y1 - y0 + 1;
+            if (w <= 64 && h <= 64)
+                found.Add(new RouteObject(names.MaxBy(n => n.Value).Key, x0, y0, w, h));
+        }
         return new TerrainTheme
         {
+            ObjectTile = isObject,
+            Objects = found.OrderBy(o => o.Y).ThenBy(o => o.X).ToList(),
             Area = area,
             Name = route.Location,
             SourceZone = route.Zone,
@@ -152,6 +214,16 @@ public sealed class TerrainTheme
     }
 
     static bool IsTree(string material) => material.StartsWith("ki0", StringComparison.Ordinal);
+
+    /// <summary>
+    /// A material of a placed model (the building pack's, "…_lm1"): signs, rocks, houses, vehicles and their shadows —
+    /// not the forest blocks and ground placed the same way.
+    /// </summary>
+    public static bool IsObjectMaterial(string material) => material.Contains("_lm", StringComparison.Ordinal)
+        && !IsTree(material) && !material.StartsWith("grass", StringComparison.Ordinal);
+
+    /// <summary>A model's name from its material: "sign01a_lm1" → "sign01a".</summary>
+    static string ObjectName(string material) => material[..material.IndexOf("_lm", StringComparison.Ordinal)];
 
     static bool IsWater(string material) =>
         material.StartsWith("sea", StringComparison.Ordinal) || material.Contains("mizu", StringComparison.Ordinal)

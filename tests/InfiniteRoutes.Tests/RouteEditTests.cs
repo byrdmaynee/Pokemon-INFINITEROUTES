@@ -149,3 +149,25 @@ public class ObstacleTests
         Assert.False((await pia.Expect<StepResult>(r => r.Seq == 2)).Accepted);
     }
 }
+
+/// <summary>A trainer made for a route battles like the ROM's, with their own party and prize.</summary>
+public class RouteTrainerTests
+{
+    [Fact]
+    public async Task Talking_to_a_route_trainer_starts_a_battle_with_their_party()
+    {
+        var id = UnchartedRoutes.TrainerId(7, 0);
+        var made = new InfiniteRoutes.Core.Data.TrainerInfo(id, "Ava", 4, "Lass", 0, [], 0, 0,
+            [new InfiniteRoutes.Core.Data.TrainerPokemon(InfiniteRoutes.Core.Player.StarterKit.Species, 0, 3, 10, 0, 0, null)], Prize: 1200);
+        var person = new NpcInfo(50, 12, 3, 3, 0, Facing.Up, 0, 0, 0, 0, 0, 0, new InfiniteRoutes.Extractor.Gen5.NpcTalk(["Let's battle!"], id));
+        await using var server = await TestServer.Start(channels: 1, rules: AdminChatTests.Rules(), world: new FakeWorld { Made = made, MadePerson = person });
+        var (token, character) = await server.NewPlayer("Pia");
+        await using var pia = await TestClient.Connect(server.GamePort);
+        await pia.Send(new Hello(Protocol.Version, token, character));
+        await pia.Expect<Welcome>();
+
+        await pia.Send(new NpcAction(1, person.Id));
+        var start = await pia.Expect<BattleStart>();
+        Assert.Equal(id, start.Trainer);
+    }
+}

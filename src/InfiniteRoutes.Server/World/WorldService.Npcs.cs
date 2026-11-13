@@ -68,7 +68,8 @@ public sealed partial class WorldService
         }
 
         var deal = new NpcDeal(action.Zone, action.Npc, npc.TrainerId, npc.Talk?.GiftItem ?? 0, npc.Talk?.GiftCount ?? 0);
-        var outcome = state.Deal(deal, rules.Trainers, rules.Data, DateTime.UtcNow);
+        // The ROM's trainers, or one made for a hand-made route.
+        var outcome = state.Deal(deal, id => id >= 0 && id < rules.Trainers.Count ? rules.Trainers[id] : world.RouteTrainer(id), rules.Data, DateTime.UtcNow);
         switch (outcome.Kind)
         {
             case NpcDealKind.Battle:

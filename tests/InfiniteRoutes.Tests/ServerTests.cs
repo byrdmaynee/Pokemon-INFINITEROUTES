@@ -70,12 +70,20 @@ sealed class FakeWorld : IWorldData
         new(4, 1, 1, 1, 0, Facing.Down, 0, 0, 0, 2100, 0),
     ];
 
-    public NpcInfo? Npc(int zone, int id) => zone == 1 ? Obstacle is { } o && o.Id == id ? o : Npcs.FirstOrDefault(n => n.Id == id) : null;
+    public NpcInfo? Npc(int zone, int id) => zone == 1
+        ? Obstacle is { } o && o.Id == id ? o : MadePerson is { } m && m.Id == id ? m : Npcs.FirstOrDefault(n => n.Id == id)
+        : null;
 
     /// <summary>An HM obstacle in zone 1, if the test puts one there.</summary>
     public NpcInfo? Obstacle { get; init; }
 
     public NpcInfo? ObstacleAt(int zone, int x, int y) => zone == 1 && Obstacle is { } o && (o.X, o.Y) == (x, y) ? o : null;
+
+    /// <summary>A trainer made for a route, and the person in zone 1 who battles as them, if the test adds them.</summary>
+    public InfiniteRoutes.Core.Data.TrainerInfo? Made { get; init; }
+    public NpcInfo? MadePerson { get; init; }
+
+    public InfiniteRoutes.Core.Data.TrainerInfo? RouteTrainer(int id) => Made is { } t && t.Id == id ? t : null;
 
     /// <summary>Hand-made routes, kept in memory (the real world keeps them in a folder and checks them against the map data).</summary>
     readonly Dictionary<int, string> _routes = new();

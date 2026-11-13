@@ -12,19 +12,33 @@ public sealed record RouteLink(int X, int Y, int Zone, int Warp = 0);
 
 /// <summary>
 /// A person on a hand-made route: an overworld sprite, the way they face (0 down, 1 up, 2 left, 3 right), how they
-/// move (0 still, 2 looks around, 3 wanders), what they say (pages split by blank lines), and optionally a trainer of
-/// the ROM they battle as (who spots you from <see cref="Sight"/> tiles away) or an item they give once.
+/// move (0 still, 2 looks around, 3 wanders) and what they say (pages split by blank lines). Then one of: talk only;
+/// a trainer made for the route (<see cref="Battle"/>; they spot you from <see cref="Sight"/> tiles away, and what they
+/// say is said before the battle); or an item they give on the first chat (<see cref="GiftItem"/> ×
+/// <see cref="GiftCount"/>). (<see cref="Trainer"/>, a trainer of the ROM, is still read but the editor no longer sets it.)
 /// </summary>
 public sealed record RouteNpc(int X, int Y, int Sprite, int Facing = 0, int Movement = 0, string Text = "", int Trainer = -1,
-    int Sight = 0, int GiftItem = 0, int GiftCount = 0);
+    int Sight = 0, int GiftItem = 0, int GiftCount = 0, RouteTrainer? Battle = null);
 
 /// <summary>
-/// A piece of the theme's real maps copied onto a hand-made route as it is — its look and its collision: the
-/// <see cref="W"/>×<see cref="H"/> tiles at (<see cref="SourceX"/>, <see cref="SourceY"/>) of the theme's sample grid,
-/// placed with its top-left at (<see cref="X"/>, <see cref="Y"/>). How signs, fences, ledges, cliffs, bridges, ponds,
-/// flowers and buildings get onto a route. Later stamps cover earlier ones.
+/// A trainer made for a hand-made route: a name, a trainer class of the ROM (its title, like "Youngster", and its
+/// battle sprite), up to six Pokémon, the prize money for beating them, and what they say on losing and afterwards.
 /// </summary>
-public sealed record RouteStamp(int X, int Y, int W, int H, int SourceX, int SourceY);
+public sealed record RouteTrainer(string Name, int Class, IReadOnlyList<RouteTrainerMon> Party, int Prize = 0, string Defeat = "",
+    string After = "");
+
+/// <summary>One of a route trainer's Pokémon: a species at a level, with the moves it knows at that level.</summary>
+public sealed record RouteTrainerMon(int Species, int Level);
+
+/// <summary>
+/// A piece of Unova's real maps copied onto a hand-made route: the <see cref="W"/>×<see cref="H"/> tiles at
+/// (<see cref="SourceX"/>, <see cref="SourceY"/>) of texture set <see cref="Area"/>'s maps (all its cells, towns too;
+/// -1: the route's own look's routes, as first saved), placed with its top-left at (<see cref="X"/>, <see cref="Y"/>).
+/// As it is — look and collision — or, with <see cref="ObjectsOnly"/>, just the placed models on it (signs, rocks,
+/// houses, with their shadows) standing on the route's own ground, solid where they stand. How fences, ledges,
+/// cliffs, bridges, ponds, flowers and buildings get onto a route. Later stamps cover earlier ones.
+/// </summary>
+public sealed record RouteStamp(int X, int Y, int W, int H, int SourceX, int SourceY, int Area = -1, bool ObjectsOnly = false);
 
 /// <summary>Something in the way that an HM clears: "cut" (a small tree) or "strength" (a boulder).</summary>
 public sealed record RouteObstacle(int X, int Y, string Kind);

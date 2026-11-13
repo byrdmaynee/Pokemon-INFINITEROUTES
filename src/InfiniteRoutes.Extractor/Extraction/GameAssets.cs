@@ -41,14 +41,27 @@ public sealed class GameAssets
         var kit = _routeKit.Value;
         var saved = RouteSource is { } source ? source(node) : RoutesDirectory is { } directory ? RouteFiles.Load(directory, node) : null;
         if (saved is { } file && Theme(file.Area) is { } look
-            && UnchartedRoutes.FromFile(file, look, kit.Zones, kit.Tables) is { } made)
+            && UnchartedRoutes.FromFile(file, look, kit.Zones, kit.Tables, SourceTheme) is { } made)
             return made;
         return UnchartedRoutes.Generate(node, kit.Areas, Theme, kit.Zones, kit.Tables);
     }
 
     /// <summary>A route built straight from an editor's design, without saving it.</summary>
     public GeneratedRoute? PreviewRoute(RouteFile file) =>
-        Theme(file.Area) is { } look ? UnchartedRoutes.FromFile(file, look, _routeKit.Value.Zones, _routeKit.Value.Tables) : null;
+        Theme(file.Area) is { } look ? UnchartedRoutes.FromFile(file, look, _routeKit.Value.Zones, _routeKit.Value.Tables, SourceTheme) : null;
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<int, Lazy<TerrainTheme?>> _sources = new();
+
+    /// <summary>
+    /// All of texture set <paramref name="area"/>'s overworld cells — towns and cities too — to copy pieces and objects
+    /// from (<see cref="RouteStamp"/>); built on first use.
+    /// </summary>
+    public TerrainTheme? SourceTheme(int area) =>
+        _sources.GetOrAdd(area, a => new Lazy<TerrainTheme?>(() => TerrainTheme.Build(this, a, everything: true))).Value;
+
+    /// <summary>Every texture set of the overworld, named after its places.</summary>
+    public IReadOnlyList<(int Area, string Name)> SourceAreas => _sourceAreas ??= TerrainTheme.AllAreas(this);
+    IReadOnlyList<(int Area, string Name)>? _sourceAreas;
 
     /// <summary>Forgets the built routes, so saved changes are picked up the next time each is asked for.</summary>
     public void ForgetRoutes() => _routes.Clear();

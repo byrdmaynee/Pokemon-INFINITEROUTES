@@ -52,6 +52,9 @@ public interface IWorldData
     /// <summary>The HM obstacle (a small tree, a boulder) standing on (x, y) of <paramref name="zone"/>'s map, if any.</summary>
     NpcInfo? ObstacleAt(int zone, int x, int y) => null;
 
+    /// <summary>A trainer made for a hand-made route (<see cref="UnchartedRoutes.IsRouteTrainer"/>), if there is one with that id.</summary>
+    Core.Data.TrainerInfo? RouteTrainer(int id) => null;
+
     /// <summary>Every hand-made route, as its route file's JSON.</summary>
     IReadOnlyList<string> RouteFiles() => [];
 
@@ -96,6 +99,20 @@ public sealed class AssetWorldData : IWorldData
 
     public NpcInfo? ObstacleAt(int zone, int x, int y) => UnchartedRoutes.IsRoute(zone)
         ? _assets.Route(zone)?.Zone.Npcs.FirstOrDefault(n => n.X == x && n.Y == y && UnchartedRoutes.IsObstacle(n)) : null;
+
+    /// <summary>The trainer classes' names (Youngster, Lass…), from the ROM's trainers.</summary>
+    IReadOnlyDictionary<int, string> ClassNames => _classNames ??= _assets.LoadTrainers().GroupBy(t => t.Class)
+        .ToDictionary(g => g.Key, g => g.First().ClassName);
+    IReadOnlyDictionary<int, string>? _classNames;
+
+    public Core.Data.TrainerInfo? RouteTrainer(int id)
+    {
+        if (!UnchartedRoutes.IsRouteTrainer(id) || _assets.RoutesDirectory is not { } directory)
+            return null;
+        var (node, person) = UnchartedRoutes.RouteTrainerOf(id);
+        return Extractor.Extraction.RouteFiles.Load(directory, node) is { } file
+            ? UnchartedRoutes.TrainerOf(file, person, c => ClassNames.GetValueOrDefault(c, "")) : null;
+    }
 
     public IReadOnlyList<string> RouteFiles() => _assets.RoutesDirectory is { } directory
         ? Extractor.Extraction.RouteFiles.List(directory).Select(r => Extractor.Extraction.RouteFiles.Load(directory, r.Node))
@@ -150,10 +167,30 @@ public sealed class AssetWorldData : IWorldData
             if (npc.Text is null || npc.Text.Length > 600)
                 return "What a person says is at most 600 characters.";
         }
+        foreach (var npc in file.Npcs ?? [])
+        {
+            if (npc.Battle is not { } t)
+                continue;
+            if (t.Name is null || WorldService.Clean(t.Name) is not { Length: >= 1 and <= 12 })
+                return "A trainer's name is 1–12 characters.";
+            if (!ClassNames.ContainsKey(t.Class))
+                return $"There's no trainer class {t.Class}.";
+            if (t.Party is not { Count: >= 1 and <= 6 } || t.Party.Any(m => m.Species is < 1 or > 649 || m.Level is < 1 or > 100))
+                return "A trainer has 1–6 Pokémon, each a species 1–649 at level 1–100.";
+            if (t.Prize is < 0 or > 999_999)
+                return "A trainer's prize money is ₽0–999,999.";
+            if ((t.Defeat?.Length ?? 0) > 600 || (t.After?.Length ?? 0) > 600)
+                return "What a trainer says is at most 600 characters.";
+        }
+        foreach (var stamp in file.Stamps ?? [])
+            if (stamp.Area >= 0 && _assets.SourceTheme(stamp.Area) is null)
+                return $"A stamp comes from texture set {stamp.Area}, which this server doesn't have.";
+        string CleanText(string text) => string.Join("\n\n", (text ?? "").Replace("\r", "").Split("\n\n").Select(page => string.Join("\n", page.Split('\n').Select(WorldService.Clean))));
         file = file with
         {
             Npcs = file.Npcs?.Select(npc => npc with
             {
+                Battle = npc.Battle is { } t ? t with { Name = WorldService.Clean(t.Name), Defeat = CleanText(t.Defeat), After = CleanText(t.After), Party = t.Party.Take(6).ToList() } : null,
                 Text = string.Join("\n\n", npc.Text.Replace("\r", "").Split("\n\n").Select(page => string.Join("\n", page.Split('\n').Select(WorldService.Clean)))),
                 Facing = Math.Clamp(npc.Facing, 0, 3),
                 Movement = npc.Movement is 2 or 3 ? npc.Movement : 0,

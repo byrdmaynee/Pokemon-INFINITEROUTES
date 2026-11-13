@@ -50,8 +50,8 @@ public partial class OverworldScreen
 
     /// <summary>The trainer an NPC battles as, if it has one with Pokémon and hasn't been beaten yet.</summary>
     TrainerInfo? TrainerFor(NpcActor npc) =>
-        NpcGame is { } game && npc.Info.TrainerId is var id and >= 0 && id < OfflineSession.Trainers.Count
-        && !game.Progress.DefeatedTrainers.Contains(id) && OfflineSession.Trainers[id] is { Pokemon.Count: > 0 } trainer ? trainer : null;
+        NpcGame is { } game && npc.Info.TrainerId is var id and >= 0
+        && !game.Progress.DefeatedTrainers.Contains(id) && TrainerById(id) is { Pokemon.Count: > 0 } trainer ? trainer : null;
 
     static bool IsLeader(NpcInfo npc) =>
         npc.TrainerId is var id and >= 0 && id < OfflineSession.Trainers.Count && Badges.EarnedBy(OfflineSession.Trainers[id]) is not null;
@@ -98,9 +98,8 @@ public partial class OverworldScreen
                     await Act(npc, spotted: false);
                 return;
             }
-            if (npc.Info.TrainerId >= 0 && npc.Info.TrainerId < OfflineSession.Trainers.Count && game is not null)
+            if (TrainerById(npc.Info.TrainerId) is { } beaten && game is not null)
             {
-                var beaten = OfflineSession.Trainers[npc.Info.TrainerId];
                 var after = Pages(talk?.Later);
                 if (after.Count == 0)
                     after = TrainerInfo.Pages(beaten.After);
@@ -139,7 +138,7 @@ public partial class OverworldScreen
             return;
         var talk = npc.Info.Talk;
         var outcome = OfflineSession.State.Deal(new NpcDeal(npc.Zone, npc.Info.Id, npc.Info.TrainerId, talk?.GiftItem ?? 0, talk?.GiftCount ?? 0),
-            OfflineSession.Trainers, OfflineSession.Data, DateTime.Now);
+            TrainerById, OfflineSession.Data, DateTime.Now);
         switch (outcome.Kind)
         {
             case NpcDealKind.Battle:

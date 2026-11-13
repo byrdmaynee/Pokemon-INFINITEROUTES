@@ -81,7 +81,11 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
     TileKind _brush = TileKind.Path;
     int _brushBlocks = 1;
     string _obstacleKind = "cut";
-    (int X, int Y, int W, int H)? _clipboard;
+    /// <summary>What Place puts down: a piece of set <c>Area</c>'s maps, whole or just its objects.</summary>
+    (int Area, int X, int Y, int W, int H, bool ObjectsOnly, string Label)? _clipboard;
+    /// <summary>The texture set whose maps the Objects tab shows (and stamps are picked from).</summary>
+    int _sourceArea = -1;
+    bool _pickObjectsOnly;
     Vector2I? _pickFrom;
     int _selectedNpc = -1;
     bool _painting, _panning, _strokeSaved, _fillingFields;
@@ -91,7 +95,15 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
     SpinBox _number = null!, _cellsWide = null!, _cellsHigh = null!;
     LineEdit _nameBox = null!;
     OptionButton _themeBox = null!, _saved = null!, _sizeBox = null!;
-    Label _status = null!, _hint = null!, _stampLabel = null!, _trainerName = null!;
+    Label _status = null!, _hint = null!, _stampLabel = null!, _trainerName = null!, _giftName = null!;
+    OptionButton _sourceBox = null!, _npcKind = null!, _trainerClass = null!;
+    ItemList _objectList = null!;
+    LineEdit _objectFilter = null!, _trainerNameBox = null!;
+    TextEdit _trainerDefeat = null!, _trainerAfter = null!;
+    SpinBox _trainerPrize = null!;
+    VBoxContainer _partyRows = null!;
+    Control _trainerFields = null!, _giftFields = null!;
+    readonly List<(int Class, string Name)> _classes = [];
     // People.
     SpinBox _npcSprite = null!, _npcTrainer = null!, _npcSight = null!, _npcGift = null!, _npcGiftCount = null!;
     OptionButton _npcFacing = null!, _npcMovement = null!;
@@ -122,6 +134,9 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         _area = _themes[0].Area;
         _species = assets.LoadSpecies();
         _trainers = assets.LoadTrainers();
+        _classes.AddRange(_trainers.GroupBy(t => t.Class).Select(g => (g.Key, g.First().ClassName)).Where(c => c.ClassName.Length > 0)
+            .OrderBy(c => c.ClassName, StringComparer.OrdinalIgnoreCase));
+        _sourceArea = _area;
         _wildZones = assets.LoadZones().Where(z => z.Encounters >= 0 && z.Location.Length > 0).GroupBy(z => z.Location).Select(g => g.First())
             .OrderBy(z => z.Location, StringComparer.OrdinalIgnoreCase).ToList();
 
@@ -151,6 +166,8 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         layout.AddChild(_container);
         AddChild(layout);
         layout.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        _sourceBox.Select(Math.Max(0, _sourceBox.GetItemIndex(_sourceArea)));
+        FillObjects();
         Open(saved().Keys.Order().Select(k => (int?)k).FirstOrDefault() ?? 0);
     }
 
@@ -188,9 +205,8 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         {
             Remember();
             _area = (int)_themeBox.GetItemId((int)i);
-            _stamps.Clear();   // stamps are pieces of the old look's maps
-            _clipboard = null;
-            ClearSource();
+            // Stamps saved as pieces of the old look's own maps go; ones taken from a named set stay.
+            _stamps.RemoveAll(st => st.Area < 0);
             Redraw(everything: true);
         };
         _cellsWide = new SpinBox { MinValue = 1, MaxValue = 8, Step = 1 };
@@ -251,13 +267,59 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
             Ui.Ui.Text("Inside the white outline is the playable area. Outside it is scenery: paint it as you like, it's always solid.", 12, Ui.Ui.Muted, wrap: true));
     }
 
+    /// <summary>A model's name as a person would say it ("sign01a" → "Sign").</summary>
+    static string ObjectLabel(string name) => name switch
+    {
+        _ when name.StartsWith("sign", StringComparison.Ordinal) => "Sign",
+        _ when name.StartsWith("searock", StringComparison.Ordinal) => "Sea rock",
+        _ when name.StartsWith("rock", StringComparison.Ordinal) => "Rock",
+        _ when name.StartsWith("gate", StringComparison.Ordinal) => "Route gate",
+        _ when name.StartsWith("plant", StringComparison.Ordinal) => "Plant",
+        _ when name.Contains("house", StringComparison.Ordinal) => "House",
+        _ when name.Contains("buil", StringComparison.Ordinal) => "Building",
+        _ when name.StartsWith("kasa", StringComparison.Ordinal) => "Parasol",
+        _ when name.StartsWith("isu", StringComparison.Ordinal) => "Bench",
+        _ when name.StartsWith("jihan", StringComparison.Ordinal) => "Vending machine",
+        _ when name.Contains("kira", StringComparison.Ordinal) => "Sparkle",
+        _ => name,
+    };
+
     Control ObjectsTab()
     {
         _stampLabel = Ui.Ui.Text("Nothing picked yet.", 13, Ui.Ui.Muted, wrap: true);
+        _sourceBox = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var (area, name) in _assets.SourceAreas)
+            _sourceBox.AddItem(name, area);
+        _sourceBox.ItemSelected += i =>
+        {
+            _sourceArea = (int)_sourceBox.GetItemId((int)i);
+            ClearSource();
+            FillObjects();
+            if (_tool == Tool.PickStamp)
+                SetTool(Tool.PickStamp);
+        };
+        _objectFilter = new LineEdit { PlaceholderText = "Filter (sign, rock, gate…)", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _objectFilter.TextChanged += _ => FillObjects();
+        _objectList = new ItemList { CustomMinimumSize = new Vector2(0, 150), SizeFlagsVertical = SizeFlags.ExpandFill };
+        _objectList.ItemSelected += i =>
+        {
+            if (_assets.SourceTheme(_sourceArea) is not { } from || _objectList.GetItemMetadata((int)i).AsInt32() is var k && (k < 0 || k >= from.Objects.Count))
+                return;
+            var o = from.Objects[k];
+            _clipboard = (_sourceArea, o.X, o.Y, o.W, o.H, true, ObjectLabel(o.Name));
+            SetTool(Tool.Stamp);
+        };
+        var objectsOnly = new CheckBox { Text = "Only the objects on it (keep my ground)" };
+        objectsOnly.Toggled += on => _pickObjectsOnly = on;
         return Ui.Ui.VBox(6,
-            Ui.Ui.Text("Stamps", 15, Ui.Ui.Accent),
-            Ui.Ui.Text("Copy a piece of this look's real maps onto the route as it is — signs, fences, ledges, cliffs, bridges, ponds, flowers, buildings — with its collision.", 12, Ui.Ui.Muted, wrap: true),
-            Ui.Ui.HBox(6, Ui.Ui.Button("Pick from the real maps…", () => SetTool(Tool.PickStamp)), Ui.Ui.Button("Place", () => SetTool(Tool.Stamp))),
+            Ui.Ui.Text("Maps of", 13, Ui.Ui.Muted), _sourceBox,
+            Ui.Ui.Text("Objects on these maps", 15, Ui.Ui.Accent),
+            Ui.Ui.Text("Signs, rocks, gates, houses… found on Unova's real maps. Pick one, then click your route to place it on your own ground.", 12, Ui.Ui.Muted, wrap: true),
+            _objectFilter, _objectList,
+            Ui.Ui.Text("A piece of these maps", 15, Ui.Ui.Accent),
+            Ui.Ui.Text("Drag a rectangle over anything — fences, ledges, cliffs, bridges, ponds, flowers — and place it, look and collision.", 12, Ui.Ui.Muted, wrap: true),
+            objectsOnly,
+            Ui.Ui.HBox(6, Ui.Ui.Button("Pick from the maps…", () => SetTool(Tool.PickStamp)), Ui.Ui.Button("Place", () => SetTool(Tool.Stamp))),
             _stampLabel,
             Ui.Ui.Text("HM obstacles", 15, Ui.Ui.Accent),
             Ui.Ui.HBox(6,
@@ -265,6 +327,25 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
                 Ui.Ui.Button("Boulder (Strength)", () => { _obstacleKind = "strength"; SetTool(Tool.Obstacle); })),
             Ui.Ui.Text("A small tree needs 1 Gym Badge to cut, a boulder 3 to move. Each is cleared for the player who clears it, until they leave the route.", 12, Ui.Ui.Muted, wrap: true),
             Ui.Ui.Text("Right-click removes the stamp or obstacle under the pointer.", 12, Ui.Ui.Muted, wrap: true));
+    }
+
+    /// <summary>The object list for the chosen set's maps, filtered.</summary>
+    void FillObjects()
+    {
+        _objectList.Clear();
+        if (_assets.SourceTheme(_sourceArea) is not { } from)
+            return;
+        var filter = _objectFilter.Text.Trim();
+        for (var k = 0; k < from.Objects.Count; k++)
+        {
+            var o = from.Objects[k];
+            var label = $"{ObjectLabel(o.Name)}  ({o.W}×{o.H})";
+            if (filter.Length > 0 && !label.Contains(filter, StringComparison.OrdinalIgnoreCase) && !o.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var row = _objectList.AddItem(label);
+            _objectList.SetItemMetadata(row, k);
+            _objectList.SetItemTooltip(row, $"{o.Name} at {o.X}, {o.Y} of these maps");
+        }
     }
 
     Control PeopleTab()
@@ -278,25 +359,52 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         _npcMovement.AddItem("Stands still", 0);
         _npcMovement.AddItem("Looks around", 2);
         _npcMovement.AddItem("Wanders", 3);
-        _npcText = new TextEdit { CustomMinimumSize = new Vector2(0, 90), WrapMode = TextEdit.LineWrappingMode.Boundary, PlaceholderText = "What they say. A blank line starts a new page." };
-        _npcTrainer = new SpinBox { MinValue = -1, MaxValue = 9999, Step = 1 };
+        _npcKind = new OptionButton();
+        _npcKind.AddItem("Talks only", 0);
+        _npcKind.AddItem("Battles (a trainer)", 1);
+        _npcKind.AddItem("Gives an item (first chat)", 2);
+        _npcText = new TextEdit { CustomMinimumSize = new Vector2(0, 80), WrapMode = TextEdit.LineWrappingMode.Boundary, PlaceholderText = "What they say (a trainer: before the battle). A blank line starts a new page." };
         _npcSight = new SpinBox { MinValue = 0, MaxValue = 8, Step = 1 };
-        _npcGift = new SpinBox { MinValue = 0, MaxValue = 999, Step = 1 };
-        _npcGiftCount = new SpinBox { MinValue = 0, MaxValue = 99, Step = 1 };
+        _npcGift = new SpinBox { MinValue = 1, MaxValue = 999, Step = 1 };
+        _npcGiftCount = new SpinBox { MinValue = 1, MaxValue = 99, Step = 1 };
+        _giftName = Ui.Ui.Text("", 12, Ui.Ui.Muted, wrap: true);
         _trainerName = Ui.Ui.Text("", 12, Ui.Ui.Muted, wrap: true);
+        _trainerNameBox = new LineEdit { MaxLength = 12, PlaceholderText = "Name", SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        _trainerClass = new OptionButton { SizeFlagsHorizontal = SizeFlags.ExpandFill };
+        foreach (var (id, name) in _classes)
+            _trainerClass.AddItem(name, id);
+        _trainerPrize = new SpinBox { MinValue = 0, MaxValue = 999_999, Step = 10, Prefix = "₽", CustomMinimumSize = new Vector2(120, 0) };
+        _trainerDefeat = new TextEdit { CustomMinimumSize = new Vector2(0, 54), WrapMode = TextEdit.LineWrappingMode.Boundary, PlaceholderText = "On losing the battle" };
+        _trainerAfter = new TextEdit { CustomMinimumSize = new Vector2(0, 54), WrapMode = TextEdit.LineWrappingMode.Boundary, PlaceholderText = "When talked to afterwards" };
+        _partyRows = new VBoxContainer();
+
         _npcSprite.ValueChanged += _ => NpcEdited();
         _npcFacing.ItemSelected += _ => NpcEdited();
         _npcMovement.ItemSelected += _ => NpcEdited();
+        _npcKind.ItemSelected += _ => NpcEdited();
         _npcText.TextChanged += NpcEdited;
-        foreach (var box in new[] { _npcTrainer, _npcSight, _npcGift, _npcGiftCount })
+        _trainerNameBox.TextChanged += _ => NpcEdited();
+        _trainerClass.ItemSelected += _ => NpcEdited();
+        _trainerDefeat.TextChanged += NpcEdited;
+        _trainerAfter.TextChanged += NpcEdited;
+        foreach (var box in new[] { _npcSight, _npcGift, _npcGiftCount, _trainerPrize })
             box.ValueChanged += _ => NpcEdited();
+
+        _trainerFields = Ui.Ui.VBox(5,
+            Ui.Ui.HBox(6, Ui.Ui.Text("Trainer", 13, Ui.Ui.Muted), _trainerClass, _trainerNameBox),
+            _trainerName,
+            Ui.Ui.HBox(6, Ui.Ui.Text("Sees", 13, Ui.Ui.Muted), _npcSight, Ui.Ui.Text("tiles · prize", 13, Ui.Ui.Muted), _trainerPrize),
+            Ui.Ui.Text("Their Pokémon (up to 6)", 13, Ui.Ui.Muted), _partyRows,
+            _trainerDefeat, _trainerAfter);
+        _giftFields = Ui.Ui.VBox(5,
+            Ui.Ui.HBox(6, Ui.Ui.Text("Item", 13, Ui.Ui.Muted), _npcGift, Ui.Ui.Text("×", 13, Ui.Ui.Muted), _npcGiftCount),
+            _giftName,
+            Ui.Ui.Text("Given once per player, the first time they talk.", 12, Ui.Ui.Muted, wrap: true));
         _npcFields = Ui.Ui.VBox(6,
             Ui.Ui.HBox(6, Ui.Ui.Text("Sprite", 13, Ui.Ui.Muted), _npcSprite, _npcPreview),
             Ui.Ui.HBox(6, Ui.Ui.Text("Faces", 13, Ui.Ui.Muted), _npcFacing, _npcMovement),
-            _npcText,
-            Ui.Ui.HBox(6, Ui.Ui.Text("Trainer", 13, Ui.Ui.Muted), _npcTrainer, Ui.Ui.Text("sees", 13, Ui.Ui.Muted), _npcSight, Ui.Ui.Text("tiles", 13, Ui.Ui.Muted)),
-            _trainerName,
-            Ui.Ui.HBox(6, Ui.Ui.Text("Gives item", 13, Ui.Ui.Muted), _npcGift, Ui.Ui.Text("×", 13, Ui.Ui.Muted), _npcGiftCount),
+            Ui.Ui.HBox(6, Ui.Ui.Text("Kind", 13, Ui.Ui.Muted), _npcKind),
+            _npcText, _trainerFields, _giftFields,
             Ui.Ui.Button("Remove this person", () =>
             {
                 if (_selectedNpc < 0 || _selectedNpc >= _npcs.Count)
@@ -307,7 +415,7 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
                 DrawThings();
             }));
         return Ui.Ui.VBox(6,
-            Ui.Ui.Text("Click a walkable tile to put a person there; click a person to change them. Trainer −1 is no battle; a number is one of the ROM's trainers.", 12, Ui.Ui.Muted, wrap: true),
+            Ui.Ui.Text("Click a walkable tile to put a person there; click a person to change them; right-click removes.", 12, Ui.Ui.Muted, wrap: true),
             _npcFields);
     }
 
@@ -738,12 +846,14 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         FillEnds(ends);
     }
 
+    TerrainTheme Source => _assets.SourceTheme(_sourceArea) ?? Theme;
+
     void UpdateCamera()
     {
         Vector3 target;
         if (_tool == Tool.PickStamp)
         {
-            var theme = Theme;
+            var theme = Source;
             _sourceFocus = new Vector2(Mathf.Clamp(_sourceFocus.X, 0, theme.Width), Mathf.Clamp(_sourceFocus.Y, 0, theme.Height));
             target = new Vector3(SourceX + _sourceFocus.X, BaseHeight, _sourceFocus.Y);
         }
@@ -771,7 +881,7 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         if (_sourceLoaded)
             return;
         _sourceLoaded = true;
-        var theme = Theme;
+        var theme = Source;
         foreach (var cell in theme.Cells)
         {
             var doc = new GltfDocument();
@@ -798,14 +908,16 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         _hint.Text = tool switch
         {
             Tool.Paint => "Left drag: paint · Right drag: forest · 1–5: brush",
-            Tool.PickStamp => "The look's real maps. Drag a rectangle over what you want to copy; it then goes back to your route to place it. Esc: cancel.",
+            Tool.PickStamp => "Unova's real maps (Objects tab: \"Maps of\"). Drag a rectangle over what you want to copy; it then goes back to your route to place it. Esc: cancel.",
             Tool.Stamp => _clipboard is null ? "Pick a piece of the real maps first." : "Click to place the stamp · Right-click a stamp to remove it",
             Tool.Person => "Click a tile to add a person, or a person to select · Right-click removes",
             Tool.Obstacle => $"Click to place a {(_obstacleKind == "cut" ? "small tree" : "boulder")} · Right-click removes",
             Tool.Entrance => "Click the opening on the edge that should be the entrance.",
             _ => "",
         } + "\nMiddle drag or WASD: move · Wheel: zoom · Ctrl+Z: undo · Ctrl+S: save · Esc: back to the game";
-        _stampLabel.Text = _clipboard is { } c ? $"Picked a {c.W}×{c.H} piece." : "Nothing picked yet.";
+        _stampLabel.Text = _clipboard is { } c
+            ? c.Label is "piece" or "objects" ? $"Picked a {c.W}×{c.H} {(c.ObjectsOnly ? "piece (its objects only)" : "piece")}." : $"Picked: {c.Label} ({c.W}×{c.H})."
+            : "Nothing picked yet.";
         if (_camera is not null && _kinds.Length > 0)
             UpdateCamera();
     }
@@ -906,7 +1018,7 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
                 break;
             case Tool.Stamp when _clipboard is { } c:
                 Remember();
-                _stamps.Add(new RouteStamp(tile.X, tile.Y, c.W, c.H, c.X, c.Y));
+                _stamps.Add(new RouteStamp(tile.X, tile.Y, c.W, c.H, c.X, c.Y, c.Area, c.ObjectsOnly));
                 MarkStale(tile.X, tile.Y, c.W, c.H);
                 Redraw();
                 break;
@@ -975,10 +1087,10 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
     /// <summary>A rectangle of the real maps was dragged out: it becomes the stamp to place.</summary>
     void FinishPick(Vector2I from, Vector2I to)
     {
-        var theme = Theme;
+        var theme = Source;
         int x = Math.Clamp(Math.Min(from.X, to.X), 0, theme.Width - 1), y = Math.Clamp(Math.Min(from.Y, to.Y), 0, theme.Height - 1);
         int w = Math.Min(Math.Min(64, theme.Width - x), Math.Abs(to.X - from.X) + 1), h = Math.Min(Math.Min(64, theme.Height - y), Math.Abs(to.Y - from.Y) + 1);
-        _clipboard = (x, y, w, h);
+        _clipboard = (_sourceArea, x, y, w, h, _pickObjectsOnly, _pickObjectsOnly ? "objects" : "piece");
         SetTool(Tool.Stamp);
     }
 
@@ -1067,13 +1179,20 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         _npcSprite.Value = npc.Sprite;
         _npcFacing.Select(Math.Clamp(npc.Facing, 0, 3));
         _npcMovement.Select(Math.Max(0, _npcMovement.GetItemIndex(npc.Movement)));
+        _npcKind.Select(npc.Battle is not null ? 1 : npc.GiftItem > 0 ? 2 : 0);
         _npcText.Text = npc.Text;
-        _npcTrainer.Value = npc.Trainer;
         _npcSight.Value = npc.Sight;
-        _npcGift.Value = npc.GiftItem;
-        _npcGiftCount.Value = npc.GiftCount;
+        _npcGift.Value = Math.Max(1, npc.GiftItem);
+        _npcGiftCount.Value = Math.Max(1, npc.GiftCount);
+        var battle = npc.Battle;
+        _trainerNameBox.Text = battle?.Name ?? "";
+        _trainerClass.Select(Math.Max(0, _trainerClass.GetItemIndex(battle?.Class ?? (_classes.Count > 0 ? _classes[0].Class : 0))));
+        _trainerPrize.Value = battle?.Prize ?? 0;
+        _trainerDefeat.Text = battle?.Defeat ?? "";
+        _trainerAfter.Text = battle?.After ?? "";
         _fillingFields = false;
         ShowNpcExtras(npc);
+        FillParty();
     }
 
     void ShowNpcExtras(RouteNpc npc)
@@ -1085,8 +1204,11 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         }
         else
             _npcPreview.Texture = null;
-        _trainerName.Text = npc.Trainer < 0 ? "No battle."
-            : _trainers.FirstOrDefault(t => t.Id == npc.Trainer) is { } t ? $"{t.ClassName} {t.Name}" : "The ROM has no trainer with that number.";
+        var kind = npc.Battle is not null ? 1 : npc.GiftItem > 0 ? 2 : 0;
+        _trainerFields.Visible = kind == 1;
+        _giftFields.Visible = kind == 2;
+        _trainerName.Text = npc.Battle is { } b ? $"Shown as \"{_trainerClass.GetItemText(_trainerClass.Selected)} {b.Name}\"." : "";
+        _giftName.Text = npc.GiftItem > 0 ? OfflineSession.Data?.ItemName(npc.GiftItem) ?? $"Item {npc.GiftItem}" : "";
     }
 
     /// <summary>A field of the selected person changed.</summary>
@@ -1095,19 +1217,80 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         if (_fillingFields || _selectedNpc < 0 || _selectedNpc >= _npcs.Count)
             return;
         var old = _npcs[_selectedNpc];
+        var kind = (int)_npcKind.GetItemId(_npcKind.Selected);
+        var battle = kind == 1
+            ? (old.Battle ?? new RouteTrainer("", 0, [new RouteTrainerMon(504, 5)])) with
+            {
+                Name = _trainerNameBox.Text.Trim(), Class = _classes.Count > 0 ? (int)_trainerClass.GetItemId(_trainerClass.Selected) : 0,
+                Prize = (int)_trainerPrize.Value, Defeat = _trainerDefeat.Text, After = _trainerAfter.Text,
+            }
+            : null;
         var npc = old with
         {
             Sprite = (int)_npcSprite.Value, Facing = _npcFacing.Selected, Movement = (int)_npcMovement.GetItemId(_npcMovement.Selected),
-            Text = _npcText.Text, Trainer = (int)_npcTrainer.Value, Sight = (int)_npcSight.Value,
-            GiftItem = (int)_npcGift.Value, GiftCount = (int)_npcGiftCount.Value,
+            Text = _npcText.Text, Sight = kind == 1 ? (int)_npcSight.Value : 0, Trainer = -1,
+            GiftItem = kind == 2 ? (int)_npcGift.Value : 0, GiftCount = kind == 2 ? (int)_npcGiftCount.Value : 0, Battle = battle,
         };
         if (npc == old)
             return;
         _npcs[_selectedNpc] = npc;
         _dirty = true;
         ShowNpcExtras(npc);
+        if ((old.Battle is null) != (battle is null))
+            FillParty();
         if (npc.Sprite != old.Sprite)
             DrawThings();
+    }
+
+    /// <summary>The selected trainer's Pokémon, a row each.</summary>
+    void FillParty()
+    {
+        Ui.Ui.ClearChildren(_partyRows);
+        if (_selectedNpc < 0 || _selectedNpc >= _npcs.Count || _npcs[_selectedNpc].Battle is not { } battle)
+            return;
+        void SetParty(List<RouteTrainerMon> party)
+        {
+            var npc = _npcs[_selectedNpc];
+            _npcs[_selectedNpc] = npc with { Battle = npc.Battle! with { Party = party } };
+            _dirty = true;
+        }
+        for (var i = 0; i < battle.Party.Count; i++)
+        {
+            var index = i;
+            var mon = battle.Party[i];
+            var name = Ui.Ui.Text(SpeciesName(mon.Species), 12, Ui.Ui.Muted);
+            var species = new SpinBox { MinValue = 1, MaxValue = 649, Step = 1, Value = mon.Species, CustomMinimumSize = new Vector2(70, 0) };
+            var level = new SpinBox { MinValue = 1, MaxValue = 100, Step = 1, Value = mon.Level, CustomMinimumSize = new Vector2(64, 0) };
+            void Changed()
+            {
+                var party = _npcs[_selectedNpc].Battle!.Party.ToList();
+                party[index] = new RouteTrainerMon((int)species.Value, (int)level.Value);
+                SetParty(party);
+                name.Text = SpeciesName((int)species.Value);
+            }
+            species.ValueChanged += _ => Changed();
+            level.ValueChanged += _ => Changed();
+            _partyRows.AddChild(Ui.Ui.HBox(4, Ui.Ui.Text("#", 12, Ui.Ui.Muted), species, name, Ui.Ui.Spacer(), Ui.Ui.Text("Lv", 12, Ui.Ui.Muted), level,
+                Ui.Ui.Button("✕", () =>
+                {
+                    var party = _npcs[_selectedNpc].Battle!.Party.ToList();
+                    if (party.Count <= 1)
+                        return;
+                    Remember();
+                    party.RemoveAt(index);
+                    SetParty(party);
+                    FillParty();
+                }, 12)));
+        }
+        if (battle.Party.Count < 6)
+            _partyRows.AddChild(Ui.Ui.Button("Add a Pokémon", () =>
+            {
+                Remember();
+                var party = _npcs[_selectedNpc].Battle!.Party.ToList();
+                party.Add(party[^1]);
+                SetParty(party);
+                FillParty();
+            }));
     }
 
     // ---------------------------------------------------------------- wild Pokémon
@@ -1260,6 +1443,20 @@ public partial class RouteEditorScreen(Func<IReadOnlyDictionary<int, RouteFile>>
         UpdateCamera();
     }
 
-    /// <summary>Shows the look's real maps (the stamp picker); for smoke tests.</summary>
-    public void ShowSourceForTest() => SetTool(Tool.PickStamp);
+    /// <summary>Shows a set's real maps (the stamp picker); for smoke tests.</summary>
+    public void ShowSourceForTest(int area = -1)
+    {
+        if (area >= 0)
+        {
+            _sourceArea = area;
+            ClearSource();
+        }
+        SetTool(Tool.PickStamp);
+    }
+
+    /// <summary>The objects found on a set's maps; for smoke tests.</summary>
+    public IReadOnlyList<RouteObject> ObjectsOf(int area) => _assets.SourceTheme(area)?.Objects ?? [];
+
+    /// <summary>Selects person <paramref name="index"/> (the panel shows them); for smoke tests.</summary>
+    public void SelectForTest(int index) => SelectNpc(index);
 }

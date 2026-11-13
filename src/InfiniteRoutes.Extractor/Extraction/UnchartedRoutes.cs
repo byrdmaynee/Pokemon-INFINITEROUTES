@@ -10,8 +10,11 @@ namespace InfiniteRoutes.Extractor.Extraction;
 /// </summary>
 /// <see cref="Wild"/> (with <see cref="WildRate"/> percent per step in tall grass) are a hand-made route's own wild
 /// Pokémon, when it has them.
+/// <see cref="Extra"/>: tiles (by index) drawn from another set's maps — instead of <see cref="Source"/>, or (for an
+/// objects-only stamp) on top of it.
 public sealed record GeneratedRoute(int Node, int Depth, WorldIndex Map, ZoneInfo Zone, int EntranceX, int EntranceY,
-    TerrainTheme Theme, int WidthTiles, int[] Source, byte[] Flags, IReadOnlyList<RouteWild>? Wild = null, int WildRate = 0)
+    TerrainTheme Theme, int WidthTiles, int[] Source, byte[] Flags, IReadOnlyList<RouteWild>? Wild = null, int WildRate = 0,
+    IReadOnlyDictionary<int, TileLayer>? Extra = null)
 {
     /// <summary>The collision of map cell (<paramref name="cx"/>, <paramref name="cy"/>), 32×32.</summary>
     public byte[] CellTiles(int cx, int cy)
@@ -27,6 +30,9 @@ public sealed record GeneratedRoute(int Node, int Depth, WorldIndex Map, ZoneInf
         return tiles;
     }
 }
+
+/// <summary>A tile drawn from <see cref="Theme"/>'s sample tile <see cref="Source"/>: all of it, or only its placed objects.</summary>
+public sealed record TileLayer(TerrainTheme Theme, int Source, bool ObjectsOnly);
 
 /// <summary>
 /// Infinite Routes (BUILD_SPEC §7.11): routes whose terrain is generated, drawn with one real route's own textures,
@@ -63,6 +69,35 @@ public static class UnchartedRoutes
     public const int CutSprite = 108, StrengthSprite = 206;
 
     public static bool IsObstacle(NpcInfo npc) => npc.Script is CutScript or StrengthScript;
+
+    /// <summary>
+    /// Trainers made for hand-made routes have ids from here: route n's person i is
+    /// <see cref="TrainerIdBase"/> + n × 64 + i (beating one is remembered by that id, like the ROM's).
+    /// </summary>
+    public const int TrainerIdBase = 2_000_000, TrainersPerRoute = 64;
+
+    public static int TrainerId(int node, int person) => TrainerIdBase + node * TrainersPerRoute + person;
+
+    public static bool IsRouteTrainer(int id) => id >= TrainerIdBase;
+
+    public static (int Node, int Person) RouteTrainerOf(int id) => ((id - TrainerIdBase) / TrainersPerRoute, (id - TrainerIdBase) % TrainersPerRoute);
+
+    /// <summary>
+    /// The trainer person <paramref name="person"/> of <paramref name="file"/> battles as, built the same way by the
+    /// server and every client; null if they aren't one. <paramref name="className"/> names a trainer class.
+    /// </summary>
+    public static Core.Data.TrainerInfo? TrainerOf(RouteFile file, int person, Func<int, string> className)
+    {
+        if (file.Npcs is not { } npcs || person < 0 || person >= npcs.Count || npcs[person].Battle is not { Party.Count: > 0 } battle)
+            return null;
+        var npc = npcs[person];
+        // Stronger the higher their level, as the ROM's own trainers are (IVs up to 31 at level 100).
+        var party = battle.Party.Take(6).Select(m => new Core.Data.TrainerPokemon(m.Species, 0, Math.Clamp(m.Level, 1, 100),
+            Math.Clamp(m.Level * 255 / 100, 0, 255), 0, 0, null)).ToList();
+        return new Core.Data.TrainerInfo(TrainerId(file.Node, person), battle.Name, battle.Class, className(battle.Class), 0, [], 0, 0, party,
+            Intro: npc.Text.Replace("\n\n", "\f"), Defeat: battle.Defeat.Replace("\n\n", "\f"), After: battle.After.Replace("\n\n", "\f"),
+            Prize: Math.Max(0, battle.Prize));
+    }
 
     /// <summary>The Gym Badges an obstacle's HM needs, and what clearing it and being stopped by it say.</summary>
     public static (int Badges, string Cleared, string Blocked) ObstacleRule(int script) => script == CutScript
@@ -168,8 +203,9 @@ public static class UnchartedRoutes
     /// are the exits (three at most), in the order north, east, south, west. Null if it has no ends at all, or
     /// <paramref name="look"/> can't draw routes.
     /// </summary>
+    /// <param name="sources">Texture sets' whole maps by area, for stamps copied from them.</param>
     public static GeneratedRoute? FromFile(RouteFile file, TerrainTheme look, IReadOnlyDictionary<int, ZoneInfo> zones,
-        IReadOnlyList<EncounterTable> tables)
+        IReadOnlyList<EncounterTable> tables, Func<int, TerrainTheme?>? sources = null)
     {
         if (file.Width <= 0 || file.Height <= 0 || file.Width % N != 0 || file.Height % N != 0 || !look.Usable)
             return null;
@@ -198,13 +234,22 @@ public static class UnchartedRoutes
             return TileKind.Tree;
         }
 
-        // Stamps: real tiles copied as they are (later ones on top).
-        Dictionary<(int, int), int>? stamped = null;
+        // Stamps: real tiles copied (later ones on top) — whole, or just the objects on them.
+        Dictionary<(int, int), (TerrainTheme Theme, int Source, bool ObjectsOnly)>? stamped = null;
         foreach (var stamp in file.Stamps ?? [])
+        {
+            var from = stamp.Area < 0 ? look : sources?.Invoke(stamp.Area);
+            if (from is null)
+                continue;
             for (var dy = 0; dy < stamp.H; dy++)
                 for (var dx = 0; dx < stamp.W; dx++)
-                    if (look.Has(stamp.SourceX + dx, stamp.SourceY + dy))
-                        (stamped ??= new())[(stamp.X + dx + N, stamp.Y + dy + N)] = (stamp.SourceY + dy) * look.Width + stamp.SourceX + dx;
+                {
+                    int sx = stamp.SourceX + dx, sy = stamp.SourceY + dy;
+                    if (!from.Has(sx, sy) || stamp.ObjectsOnly && !from.ObjectTile[sy * from.Width + sx])
+                        continue;
+                    (stamped ??= new())[(stamp.X + dx + N, stamp.Y + dy + N)] = (from, sy * from.Width + sx, stamp.ObjectsOnly);
+                }
+        }
 
         // Where each end leads, if the file says.
         var links = ends.Select(e => (file.Links ?? []).FirstOrDefault(l =>
@@ -216,9 +261,15 @@ public static class UnchartedRoutes
         {
             var pages = npc.Text.Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             var wander = npc.Movement == 3 ? 2 : 0;
+            // A trainer made for the route has its own id; what they say after the battle is theirs too.
+            var trainer = npc.Battle is { Party.Count: > 0 } ? TrainerId(file.Node, i) : npc.Trainer;
+            var later = npc.Battle is { After.Length: > 0 } b
+                ? b.After.Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
+            var win = npc.Battle is { Defeat.Length: > 0 } d
+                ? d.Defeat.Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
             npcs.Add(new NpcInfo(i, npc.Sprite, npc.X + N, npc.Y + N, look.BaseHeight, (Facing)Math.Clamp(npc.Facing, 0, 3), npc.Movement,
-                wander, wander, 0, 0, npc.Trainer >= 0 ? Math.Max(0, npc.Sight) : 0,
-                new NpcTalk(pages, npc.Trainer, GiftItem: npc.GiftItem, GiftCount: npc.GiftCount)));
+                wander, wander, 0, 0, trainer >= 0 ? Math.Max(0, npc.Sight) : 0,
+                new NpcTalk(pages, trainer, Win: win, Later: later, GiftItem: trainer >= 0 ? 0 : npc.GiftItem, GiftCount: trainer >= 0 ? 0 : npc.GiftCount)));
         }
         foreach (var (o, i) in (file.Obstacles ?? []).Select((o, i) => (o, i)))
         {
@@ -285,19 +336,36 @@ public static class UnchartedRoutes
     static GeneratedRoute Assemble(int node, string name, TerrainTheme look, Func<int, int, TileKind> at, int w, int h,
         (int X, int Y, int W, int H) inner, List<(int X, int Y, int Along, bool Vertical, Facing Inward)> ends,
         IReadOnlyDictionary<int, ZoneInfo> zones, IReadOnlyList<EncounterTable> tables,
-        Dictionary<(int, int), int>? stamped = null, IReadOnlyList<RouteLink?>? links = null, IReadOnlyList<NpcInfo>? npcs = null,
+        Dictionary<(int, int), (TerrainTheme Theme, int Source, bool ObjectsOnly)>? stamped = null, IReadOnlyList<RouteLink?>? links = null,
+        IReadOnlyList<NpcInfo>? npcs = null,
         int? encounterTable = null, IReadOnlyList<RouteWild>? wild = null, int wildRate = 0)
     {
         var salt = (uint)Seed(node);
         var source = new int[w * h];
         var flags = new byte[w * h];
+        Dictionary<int, TileLayer>? extra = null;
         for (var y = 0; y < h; y++)
             for (var x = 0; x < w; x++)
             {
                 if (stamped is not null && stamped.TryGetValue((x, y), out var copied))
                 {
-                    source[y * w + x] = copied;
-                    flags[y * w + x] = Inside(inner, x, y) ? look.Flags[copied] : (byte)1;
+                    var inside = Inside(inner, x, y);
+                    if (copied.ObjectsOnly)
+                    {
+                        // The object stands on the route's own ground, and is solid where it stands.
+                        source[y * w + x] = look.Kit.Pick(x, y, at, salt, out _);
+                        (extra ??= new())[y * w + x] = new TileLayer(copied.Theme, copied.Source, true);
+                        flags[y * w + x] = !inside ? (byte)1 : (copied.Theme.Flags[copied.Source] & 5) != 0 ? (byte)1 : Ground(at(x, y));
+                        continue;
+                    }
+                    if (copied.Theme == look)
+                        source[y * w + x] = copied.Source;
+                    else
+                    {
+                        source[y * w + x] = look.Kit.Pick(x, y, at, salt, out _);
+                        (extra ??= new())[y * w + x] = new TileLayer(copied.Theme, copied.Source, false);
+                    }
+                    flags[y * w + x] = inside ? copied.Theme.Flags[copied.Source] : (byte)1;
                     continue;
                 }
                 source[y * w + x] = look.Kit.Pick(x, y, at, salt, out _);
@@ -335,8 +403,17 @@ public static class UnchartedRoutes
         var map = new WorldIndex(key, cellsW, cellsH, N, cells);
         var entrance = warps[0];
         return new GeneratedRoute(node, Depth(node), map, zone, entrance.X + (Math.Max(1, entrance.Width) - 1) / 2,
-            entrance.Y + (Math.Max(1, entrance.Height) - 1) / 2, look, w, source, flags, wild, wildRate);
+            entrance.Y + (Math.Max(1, entrance.Height) - 1) / 2, look, w, source, flags, wild, wildRate, extra);
     }
+
+    /// <summary>The collision a tile of the design has.</summary>
+    static byte Ground(TileKind kind) => kind switch
+    {
+        TileKind.Ground or TileKind.Path => 0,
+        TileKind.Grass => 2,
+        TileKind.Water => 5,
+        _ => 1,
+    };
 
     static bool Inside((int X, int Y, int W, int H) r, int x, int y) => x >= r.X && y >= r.Y && x < r.X + r.W && y < r.Y + r.H;
 
