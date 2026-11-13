@@ -13,7 +13,51 @@ public sealed class GameAssets
     {
         Directory = directory;
         Stamp = stamp;
+        _routeKit = new(() => (TerrainTheme.Areas(this), LoadZones().ToDictionary(z => z.Id), LoadEncounters()));
     }
+
+    readonly System.Collections.Concurrent.ConcurrentDictionary<int, GeneratedRoute?> _routes = new();
+    readonly Lazy<(IReadOnlyList<int> Areas, Dictionary<int, ZoneInfo> Zones, IReadOnlyList<EncounterTable> Tables)> _routeKit;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<int, Lazy<TerrainTheme?>> _themes = new();
+
+    /// <summary>The folder hand-made routes are read from (a server's; <see cref="RouteFiles"/>), if any.</summary>
+    public string? RoutesDirectory { get; set; }
+
+    /// <summary>
+    /// Where hand-made routes come from when not a folder: a client playing online is sent them by the server. Takes
+    /// the place of <see cref="RoutesDirectory"/> while set.
+    /// </summary>
+    public Func<int, RouteFile?>? RouteSource { get; set; }
+
+    /// <summary>
+    /// Infinite Route zone <paramref name="zone"/> (<see cref="UnchartedRoutes"/>), built on first use: the hand-made
+    /// one saved for its number if there is one (and it can be built), else a generated one. Null for any other zone.
+    /// </summary>
+    public GeneratedRoute? Route(int zone) => UnchartedRoutes.IsRoute(zone) ? _routes.GetOrAdd(zone, BuildRoute) : null;
+
+    GeneratedRoute? BuildRoute(int zone)
+    {
+        var node = zone - UnchartedRoutes.ZoneBase;
+        var kit = _routeKit.Value;
+        var saved = RouteSource is { } source ? source(node) : RoutesDirectory is { } directory ? RouteFiles.Load(directory, node) : null;
+        if (saved is { } file && Theme(file.Area) is { } look
+            && UnchartedRoutes.FromFile(file, look, kit.Zones, kit.Tables) is { } made)
+            return made;
+        return UnchartedRoutes.Generate(node, kit.Areas, Theme, kit.Zones, kit.Tables);
+    }
+
+    /// <summary>A route built straight from an editor's design, without saving it.</summary>
+    public GeneratedRoute? PreviewRoute(RouteFile file) =>
+        Theme(file.Area) is { } look ? UnchartedRoutes.FromFile(file, look, _routeKit.Value.Zones, _routeKit.Value.Tables) : null;
+
+    /// <summary>Forgets the built routes, so saved changes are picked up the next time each is asked for.</summary>
+    public void ForgetRoutes() => _routes.Clear();
+
+    /// <summary>The Infinite Routes look drawn from texture set <paramref name="area"/>, built (from the models) on first use.</summary>
+    public TerrainTheme? Theme(int area) => _themes.GetOrAdd(area, a => new Lazy<TerrainTheme?>(() => TerrainTheme.Build(this, a))).Value;
+
+    /// <summary>The texture sets Infinite Routes can be drawn from.</summary>
+    public IReadOnlyList<int> ThemeAreas => _routeKit.Value.Areas;
 
     public static GameAssets? Open(string directory) =>
         ExtractionCache.ReadStamp(directory) is { } stamp ? new GameAssets(directory, stamp) : null;
@@ -73,6 +117,8 @@ public sealed class GameAssets
     /// <summary>An exported map by key (<see cref="Gen5WorldExtractor.OverworldKey"/> for Unova's overworld); null if missing.</summary>
     public WorldIndex? LoadMap(string key)
     {
+        if (UnchartedRoutes.TryParseKey(key, out var node))
+            return Route(UnchartedRoutes.ZoneOf(node))?.Map;
         var path = Path.Combine(Directory, "maps", key + ".json");
         return File.Exists(path) ? JsonSerializer.Deserialize<WorldIndex>(File.ReadAllText(path), Json.Indented) : null;
     }
@@ -108,9 +154,14 @@ public sealed class GameAssets
     public byte[] ChunkTiles(int chunk) => File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", $"{chunk:D3}.tiles"));
 
     /// <summary>A map cell's collision: its own grid when it has one (rail maps), else its chunk's.</summary>
-    public byte[] CellTiles(WorldCell cell) => cell.Tiles is { } name
+    public byte[] CellTiles(WorldCell cell) =>
+        UnchartedRoutes.TryParseCellKey(cell.Tiles, out var node, out var cx, out var cy)
+        ? Route(UnchartedRoutes.ZoneOf(node))?.CellTiles(cx, cy) ?? Solid
+        : cell.Tiles is { } name
         ? File.ReadAllBytes(Path.Combine(Directory, "maps", "chunks", name + ".tiles"))
         : ChunkTiles(cell.Chunk);
+
+    static readonly byte[] Solid = Enumerable.Repeat((byte)1, 32 * 32).ToArray();
 
     /// <summary>Cache key for <see cref="CellTiles"/>.</summary>
     public static string TilesKey(WorldCell cell) => cell.Tiles ?? cell.Chunk.ToString();

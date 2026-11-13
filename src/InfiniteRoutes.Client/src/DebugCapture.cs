@@ -357,6 +357,53 @@ public static class DebugCapture
                 }
                 else if (line.StartsWith("wait:", StringComparison.Ordinal))
                     await Wait(double.Parse(line["wait:".Length..], System.Globalization.CultureInfo.InvariantCulture));
+                else if (line == "editor")
+                {
+                    // F10: the route editor (or the chat line saying why not).
+                    world.ToggleRouteEditor();
+                    await Wait(2.5);
+                    GD.Print($"[capture] route editor open {world.RouteEditorOpen}");
+                }
+                else if (line.StartsWith("ed:", StringComparison.Ordinal) && world.RouteEditor is { } editor)
+                {
+                    var parts = line.Split(':');
+                    switch (parts[1])
+                    {
+                        case "open": editor.Open(int.Parse(parts[2])); break;
+                        case "gen": editor.Generate(int.Parse(parts[2])); break;
+                        case "pond":
+                            for (var y = 6; y < 12; y += 2)
+                                editor.PaintForTest(20, y, Extractor.Extraction.TileKind.Ground, 4);
+                            editor.PaintForTest(22, 8, Extractor.Extraction.TileKind.Water, 2);
+                            break;
+                        case "extras":
+                            // A person by the entrance, a boulder on the path, a fence-ish stamp and an exit to Nuvema Town.
+                            var file = editor.FileForTest;
+                            var ends = Extractor.Extraction.UnchartedRoutes.Ends(file);
+                            var (ex, ey) = (ends[0].X + 3, ends[0].Y);
+                            editor.AddForTest(npc: new Extractor.Extraction.RouteNpc(ex, ey, 12, Facing: 2, Text: "Welcome to my route!\n\nWatch out for the boulder."));
+                            editor.AddForTest(obstacle: new Extractor.Extraction.RouteObstacle(ex + 4, ey + 1, "strength"));
+                            editor.AddForTest(stamp: new Extractor.Extraction.RouteStamp(ex + 2, ey - 6, 6, 4, 40, 40));
+                            editor.AddForTest(wild: new Extractor.Extraction.RouteWild(509, 4, 6, 10));
+                            if (ends.Count > 1)
+                                editor.AddForTest(link: new Extractor.Extraction.RouteLink(ends[1].X, ends[1].Y, 389, 0));
+                            editor.LookAtForTest(ex + 2, ey, 1.3f);
+                            var f2 = editor.FileForTest;
+                            GD.Print($"[capture] editor parts: npcs {f2.Npcs?.Count}, obstacles {f2.Obstacles?.Count}, stamps {f2.Stamps?.Count}, links {f2.Links?.Count}, wild {f2.Wild?.Count}");
+                            break;
+                        case "source": editor.ShowSourceForTest(); break;
+                        case "save": GD.Print($"[capture] editor save sent {editor.Save()}"); break;
+                        case "walk": editor.TestWalk(); break;
+                    }
+                    await Wait(1.5);
+                    if (world.RouteEditor is { } still)
+                        GD.Print($"[capture] editor: route {still.RouteNumber}, area {still.AreaSize}, status: {still.StatusText.Replace('\n', ' ')}");
+                }
+                else if (line.StartsWith("zoom:", StringComparison.Ordinal))
+                {
+                    world.Zoom = float.Parse(line["zoom:".Length..], System.Globalization.CultureInfo.InvariantCulture);
+                    await Wait(1.5);
+                }
                 else if (line.StartsWith("face:", StringComparison.Ordinal))
                     world.FaceForTest(line[5] switch { 'U' => Vector2I.Up, 'D' => Vector2I.Down, 'L' => Vector2I.Left, _ => Vector2I.Right });
                 else if (line == "talk")

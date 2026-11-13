@@ -38,6 +38,22 @@ public sealed partial class WorldService
         if (action.Spotted && (npc.Sight <= 0 || p.Elevated))
             return;
 
+        if (Extractor.Extraction.UnchartedRoutes.IsObstacle(npc))
+        {
+            // A small tree or a boulder: with enough Gym Badges (or in Admin Mode) it's cleared out of this player's way.
+            var (badges, cleared, blocked) = Extractor.Extraction.UnchartedRoutes.ObstacleRule(npc.Script);
+            if (action.Spotted || p.Cleared.Contains((action.Zone, npc.Id)))
+                return;
+            if (!p.Elevated && state.Progress.Badges.Count < badges)
+            {
+                p.Link.Send(new NpcResult(action.Zone, action.Npc, (int)NpcDealKind.None, blocked));
+                return;
+            }
+            p.Cleared.Add((action.Zone, npc.Id));
+            p.Link.Send(new NpcResult(action.Zone, action.Npc, (int)NpcDealKind.Cleared, cleared));
+            return;
+        }
+
         if (npc.Script == NurseScript && !action.Spotted)
         {
             state.HealParty();

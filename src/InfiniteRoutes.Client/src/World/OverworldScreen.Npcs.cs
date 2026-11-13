@@ -158,12 +158,23 @@ public partial class OverworldScreen
     }
 
     /// <summary>The server's answer to <see cref="NpcAction"/> when it didn't start a battle.</summary>
+    /// <summary>Takes an NPC off the map (it comes back when its cell is loaded again).</summary>
+    void RemoveNpc(NpcActor npc)
+    {
+        foreach (var list in _npcs.Values)
+            list.Remove(npc);
+        npc.QueueFree();
+    }
+
     void OnNpcResult(NpcResult result)
     {
         if ((NpcDealKind)result.Kind != NpcDealKind.Battle)
             _battleNpc = null;
         if (result.Text.Length > 0)
             _ = Say(TrainerInfo.Pages(result.Text));
+        // An HM obstacle the server says is cleared: out of the way until the map is left.
+        if ((NpcDealKind)result.Kind == NpcDealKind.Cleared && Npcs.FirstOrDefault(n => n.Zone == result.Zone && n.Info.Id == result.Npc) is { } gone)
+            RemoveNpc(gone);
         RefreshQuestMarks();
     }
 

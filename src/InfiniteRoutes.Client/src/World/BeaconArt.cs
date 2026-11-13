@@ -102,7 +102,7 @@ public static partial class BeaconArt
             Billboard = BaseMaterial3D.BillboardModeEnum.Enabled;
             TextureFilter = BaseMaterial3D.TextureFilterEnum.Nearest;
             PixelSize = 0.04f;
-            NoDepthTest = true;
+            // Depth-tested, so it's hidden with its player under a bridge or behind a building.
             RenderPriority = 10;
             Position = new Vector3(0, height, 0);
             Visible = false;

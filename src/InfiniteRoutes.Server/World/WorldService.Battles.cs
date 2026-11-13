@@ -49,13 +49,30 @@ public sealed partial class WorldService
             p.Link.Send(new Notice("The Repel's effect wore off."));
         }
         // Staff in Admin Mode walk without being stopped by wild Pokémon.
-        if (p.Elevated || !world.TallGrass(p.Zone, p.X, p.Y) || world.EncounterTable(p.Zone) is not (>= 0 and var table)
-            || table >= rules.Encounters.Count || state.Lead is not { } lead)
+        if (p.Elevated || !world.TallGrass(p.Zone, p.X, p.Y) || state.Lead is not { } lead)
             return;
-        var set = rules.Encounters[table].ForSeason(Season);
-        if (set.GrassRate <= 0 || _dice.Next(100) >= set.GrassRate
-            || EncounterSet.Pick(set.Grass, EncounterSet.GrassWeights, _dice) is not { } slot || !rules.Data.HasSpecies(slot.Species))
-            return;
+        EncounterSlot slot;
+        if (world.CustomEncounters(p.Zone) is var (rate, wild))
+        {
+            // A hand-made route's own wild Pokémon, picked by weight.
+            if (_dice.Next(100) >= rate)
+                return;
+            var roll = _dice.Next(wild.Sum(s => s.Weight));
+            var picked = wild.First(s => (roll -= s.Weight) < 0);
+            if (!rules.Data.HasSpecies(picked.Species))
+                return;
+            slot = new EncounterSlot(picked.Species, 0, picked.MinLevel, picked.MaxLevel);
+        }
+        else
+        {
+            if (world.EncounterTable(p.Zone) is not (>= 0 and var table) || table >= rules.Encounters.Count)
+                return;
+            var set = rules.Encounters[table].ForSeason(Season);
+            if (set.GrassRate <= 0 || _dice.Next(100) >= set.GrassRate
+                || EncounterSet.Pick(set.Grass, EncounterSet.GrassWeights, _dice) is not { } found || !rules.Data.HasSpecies(found.Species))
+                return;
+            slot = found;
+        }
         var level = _dice.Next(slot.MinLevel, slot.MaxLevel + 1);
         // A Repel keeps away wild Pokémon below the lead's level.
         if (state.RepelSteps > 0 && level < lead.Level)

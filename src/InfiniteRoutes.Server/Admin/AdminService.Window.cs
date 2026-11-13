@@ -52,6 +52,7 @@ public sealed partial class AdminService
             "money" or "give-item" or "take-item" => Permissions.Inventory,
             "heal" or "pokemon-give" or "pokemon-save" or "pokemon-release" => Permissions.PokemonEdit,
             "revert" => Permissions.Revert,
+            "route-save" or "route-delete" => Permissions.RouteEdit,
             "audit" => Permissions.AuditRead,
             "roles" => null,
             "role-create" or "role-delete" or "role-perm" or "role-rank" or "role-beacon" => null,
@@ -117,6 +118,20 @@ public sealed partial class AdminService
             case "money" or "give-item" or "take-item" or "heal" or "pokemon-give" or "pokemon-save" or "pokemon-release":
                 await EditGame(p, a, reason);
                 return;
+            case "route-save":
+            {
+                var (node, error) = world.SaveRoute(Arg(a, "json"));
+                p.Link.Send(new AdminReply(error is null, [error ?? $"Saved route {node}."], "route"));
+                await Audit(p, "route-save", error is null ? $"route {node}" : a.Target, error ?? "");
+                return;
+            }
+            case "route-delete":
+            {
+                var ok = int.TryParse(a.Target, out var node) && world.DeleteRoute(node);
+                p.Link.Send(new AdminReply(ok, [ok ? $"Deleted route {node}; its number is a generated route again." : "There's no saved route with that number."], "route"));
+                await Audit(p, "route-delete", $"route {a.Target}", ok ? "" : "failed");
+                return;
+            }
             case "revert":
             {
                 var (ok, lines) = await Revert(p, long.TryParse(Arg(a, "change"), out var id) ? id : 0, Arg(a, "force") == "yes");

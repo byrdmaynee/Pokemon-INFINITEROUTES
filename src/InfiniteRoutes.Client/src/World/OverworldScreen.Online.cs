@@ -134,8 +134,14 @@ public partial class OverworldScreen
                 case ChatLine chat:
                     ShowChat(chat);
                     break;
+                case RouteSet routes:
+                    OnRoutes(routes);
+                    break;
+                case RouteChanged routeChanged:
+                    OnRouteChanged(routeChanged);
+                    break;
                 case AdminReply reply:
-                    if (!ShowAdminWindow(reply))
+                    if (!ShowRouteReply(reply) && !ShowAdminWindow(reply))
                         ShowAdminReply(reply);
                     break;
                 case AdminPlayers players:

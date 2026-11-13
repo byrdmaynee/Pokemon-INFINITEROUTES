@@ -33,7 +33,8 @@ public partial class OverworldScreen
     Core.Player.SaveGame? _onlineState;
 
     /// <summary>True while the chat line or an online panel has the keyboard (no walking then).</summary>
-    bool OnlineUiBusy => _chatInput?.HasFocus() == true || _elevatePrompt is not null || _onlineMenu is not null || _spectating != 0 || AdminPanelOpen;
+    bool OnlineUiBusy => _chatInput?.HasFocus() == true || _elevatePrompt is not null || _onlineMenu is not null || _spectating != 0 || AdminPanelOpen
+        || RouteEditorOpen;
 
     /// <summary>Chat lines shown so far, as plain text; for smoke tests.</summary>
     public List<string> ChatLines { get; } = [];
@@ -215,7 +216,7 @@ public partial class OverworldScreen
 
     /// <summary>The HUD line for Admin Mode, when it's on.</summary>
     string AdminHud => (_admin is { Elevated: true } a
-        ? $"\n⚑ ADMIN MODE ({a.Role}){(a.Invisible ? " · invisible" : "")}{(a.Noclip ? " · noclip" : "")} · F9 panel"
+        ? $"\n⚑ ADMIN MODE ({a.Role}){(a.Invisible ? " · invisible" : "")}{(a.Noclip ? " · noclip" : "")} · F9 panel{(MayEditRoutes ? " · F10 route editor" : "")}"
         : "") + SpectateHud + SocialHud;
 
     bool AdminNoclip => _admin is { Elevated: true, Noclip: true };
@@ -364,7 +365,7 @@ public partial class OverworldScreen
     {
         if (!_online || _chatInput is null)
             return false;
-        if (_chatInput.HasFocus() || _elevatePrompt is not null)
+        if (_chatInput.HasFocus() || _elevatePrompt is not null || RouteEditorOpen)
             return false;
         if (PlayerClick(e))
             return true;
@@ -383,6 +384,11 @@ public partial class OverworldScreen
             if (key.Keycode == Key.F9)
             {
                 ToggleAdminPanel();
+                return true;
+            }
+            if (key.Keycode == Key.F10)
+            {
+                ToggleRouteEditor();
                 return true;
             }
             if (key.Keycode == Key.X)

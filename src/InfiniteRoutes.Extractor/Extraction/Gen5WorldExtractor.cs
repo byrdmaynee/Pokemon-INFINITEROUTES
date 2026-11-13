@@ -17,6 +17,8 @@ namespace InfiniteRoutes.Extractor.Extraction;
 /// <see cref="Pattern"/> its frame-swap texture animation (<c>anims/pat{n}.json</c>), or -1.
 /// <see cref="Tiles"/> names the cell's own collision (<c>chunks/{Tiles}.tiles</c>) when it doesn't use its chunk's —
 /// rail maps, whose chunks have none, get a grid drawn from their rails.
+/// Infinite Routes' cells (<see cref="UnchartedRoutes"/>) have no chunk (-1) and name their route cell in
+/// <see cref="Tiles"/>.
 public sealed record WorldCell(int X, int Y, int Chunk, int Zone, string Location, int Area, int Seasons = 1, int Animation = -1,
     int Pattern = -1, string? Tiles = null)
 {

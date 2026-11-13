@@ -20,6 +20,8 @@ public sealed class WorldPlayer(int id, Character character, Account account, Ga
 {
     public int Id { get; } = id;
     public long CharacterId { get; } = character.Id;
+    /// <summary>The HM obstacles (zone, NPC id) this player has cleared on the map they're on.</summary>
+    public HashSet<(int Zone, int Npc)> Cleared { get; } = [];
     public string Name { get; } = character.Name;
     public int Appearance { get; } = character.Appearance;
     public long AccountId { get; } = account.Id;
@@ -288,7 +290,9 @@ public sealed partial class WorldService(IWorldData world, ServerConfig config, 
         int x = p.X + step.Dx, y = p.Y + step.Dy;
         // Admin Mode's noclip walks through anything, at any speed.
         var noclip = p.Elevated && p.Noclip;
-        if (!noclip && (p.StepBudget < cost || world.Blocked(p.Zone, x, y)))
+        // An HM obstacle is in the way until this player clears it (it's back when they leave the map).
+        var obstacle = world.ObstacleAt(p.Zone, x, y) is { } o && !p.Cleared.Contains((p.Zone, o.Id));
+        if (!noclip && (p.StepBudget < cost || world.Blocked(p.Zone, x, y) || obstacle))
         {
             p.Moved = true;
             return new StepResult(step.Seq, false, p.Location);
@@ -324,6 +328,8 @@ public sealed partial class WorldService(IWorldData world, ServerConfig config, 
 
     void MoveLocked(WorldPlayer p, int zone, int x, int y, int facing, string map)
     {
+        if (map != p.Map)
+            p.Cleared.Clear();
         (p.Zone, p.X, p.Y, p.Facing, p.Map) = (zone, x, y, facing, map);
         p.Moved = true;
         p.Ran = false;
@@ -615,6 +621,51 @@ public sealed partial class WorldService(IWorldData world, ServerConfig config, 
             return true;
         }
     }
+
+    /// <summary>The hand-made routes a joining player is sent.</summary>
+    public RouteSet Routes() => new(world.RouteFiles());
+
+    /// <summary>
+    /// Saves a route from the route editor and tells everyone online (their clients draw it at once). Returns its
+    /// number, or why it wasn't saved.
+    /// </summary>
+    public (int Node, string? Error) SaveRoute(string json)
+    {
+        lock (_gate)
+        {
+            var (node, stored, error) = world.SaveRoute(json);
+            if (stored is null)
+                return (-1, error);
+            foreach (var p in _players.Values)
+                p.Link.Send(new RouteChanged(node, stored));
+            return (node, null);
+        }
+    }
+
+    /// <summary>Deletes a hand-made route and tells everyone online; false if there was none.</summary>
+    public bool DeleteRoute(int node)
+    {
+        lock (_gate)
+        {
+            if (!world.DeleteRoute(node))
+                return false;
+            foreach (var p in _players.Values)
+                p.Link.Send(new RouteChanged(node, ""));
+            return true;
+        }
+    }
+
+    /// <summary>Reads hand-made Infinite Routes again (after the route editor saved changes).</summary>
+    public void ReloadRoutes()
+    {
+        lock (_gate)
+            world.ForgetRoutes();
+    }
+
+    /// <summary>Sends <paramref name="p"/> to the entrance of Infinite Route <paramref name="node"/>; false if it can't be built.</summary>
+    public bool TeleportToRoute(WorldPlayer p, int node) =>
+        node >= 0 && world.RouteEntrance(Extractor.Extraction.UnchartedRoutes.ZoneOf(node)) is var (x, y)
+        && Teleport(p, Extractor.Extraction.UnchartedRoutes.ZoneOf(node), x, y);
 
     /// <summary>Sends <paramref name="p"/> next to <paramref name="target"/> (or onto them when nothing's free), on their channel.</summary>
     public bool TeleportTo(WorldPlayer p, WorldPlayer target)

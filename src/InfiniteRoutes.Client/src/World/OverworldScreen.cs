@@ -22,7 +22,7 @@ public partial class OverworldScreen : Control
     const int StartZone = 389;   // Nuvema Town
 
     GameAssets _assets = null!;
-    readonly Dictionary<int, ZoneInfo> _zones = new();
+    readonly ZoneTable _zones = new();
     readonly Dictionary<string, byte[]> _tiles = new();
     readonly Dictionary<(int, int), WorldCell> _cellsByPos = new();
     readonly Dictionary<(int, int), Node3D> _loaded = new();
@@ -89,8 +89,10 @@ public partial class OverworldScreen : Control
         _assets = assets;
         // Online the game data (names) is still needed, but the offline save isn't played.
         _battles = OfflineSession.Ensure(assets) && !_online;
-        foreach (var z in assets.LoadZones())
-            _zones[z.Id] = z;
+        // Hand-made routes are the server's: offline there are none.
+        if (!_online)
+            OnlineRoutes.Clear(assets);
+        _zones.Load(assets);
 
         var container = new SubViewportContainer { Stretch = true };
         AddChild(container);
@@ -266,7 +268,7 @@ public partial class OverworldScreen : Control
         var perCell = map.Cells.Any(c => c.Zone >= 0);
         _mapNpcs.Clear();
         _npcZones.Clear();
-        foreach (var zone in _zones.Values.Where(z => perCell ? z.Map == map.Key : z.Id == _zone))
+        foreach (var zone in perCell ? _zones.Values.Where(z => z.Map == map.Key) : _zones.GetValueOrDefault(_zone) is { } own ? [own] : [])
         {
             foreach (var w in zone.Warps.Where(w => _zones.ContainsKey(w.TargetZone)))
             for (var y = w.Y; y < w.Y + Math.Max(1, w.Height); y++)
@@ -279,7 +281,8 @@ public partial class OverworldScreen : Control
             }
         }
 
-        _environment.BackgroundColor = map.Key == Gen5WorldExtractor.OverworldKey ? new Color(0.55f, 0.75f, 0.95f) : Colors.Black;
+        _environment.BackgroundColor = map.Key == Gen5WorldExtractor.OverworldKey || UnchartedRoutes.TryParseKey(map.Key, out _)
+            ? new Color(0.55f, 0.75f, 0.95f) : Colors.Black;
     }
 
     /// <summary>
@@ -1204,12 +1207,19 @@ public partial class OverworldScreen : Control
 
     Node3D? LoadChunk(WorldCell cell)
     {
-        // A rail map's collision-only cell: nothing to draw, but it can hold NPCs.
         if (cell.Chunk < 0)
         {
-            var empty = new Node3D();
-            _world.AddChild(empty);
-            return empty;
+            // An Infinite Route's cell is built from the real tiles it was quilted from; a rail map's collision-only
+            // cell has nothing to draw, but it can hold NPCs.
+            var built = RouteTerrain.Build(_assets, cell, _season) ?? new Node3D();
+            built.Position = new Vector3(cell.X * ChunkTiles + ChunkTiles / 2f, 0, cell.Y * ChunkTiles + ChunkTiles / 2f);
+            _world.AddChild(built);
+            foreach (var mesh in built.FindChildren("*", nameof(MeshInstance3D), owned: false).OfType<MeshInstance3D>())
+            {
+                ForcePixelArt(mesh);
+                AddGroundCollision(mesh);
+            }
+            return built;
         }
         var doc = new GltfDocument();
         var state = new GltfState();
@@ -1317,12 +1327,18 @@ public partial class OverworldScreen : Control
         mesh.AddChild(body);
     }
 
-    /// <summary>Ground height at a tile: highest surface under its centre, casting from a little above <paramref name="near"/>.</summary>
+    /// <summary>How far up a single step can climb; a surface higher than this over the next tile is overhead (a bridge).</summary>
+    const float StepUp = 2.5f;
+
+    /// <summary>
+    /// Ground height at a tile: the highest surface under its centre that's no more than a step above
+    /// <paramref name="near"/> (the height you come from), so you walk under a bridge rather than up onto it.
+    /// </summary>
     float GroundHeight(Vector2I t, float near = 0)
     {
         var space = _world.GetWorld3D().DirectSpaceState;
-        var from = new Vector3(t.X + 0.5f, near + 6, t.Y + 0.5f);
-        var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * (near + 46)));
+        var from = new Vector3(t.X + 0.5f, near + StepUp, t.Y + 0.5f);
+        var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, from + Vector3.Down * 80));
         return hit.Count > 0 ? ((Vector3)hit["position"]).Y : near;
     }
 

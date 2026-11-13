@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| Version | 0.3 — decisions resolved (§18), server config `.pkir` + deployment (§4.5) |
-| Date | 2026-10-30 |
+| Version | 0.4 — Infinite Routes, buddy field skills, trainer ghosts (§7.11–7.13) |
+| Date | 2026-11-12 |
 | Scope | The "base game": a working online MMO that gives players the full set of standard Pokémon-MMO features, built on assets each player supplies from their own Nintendo DS cartridges/dumps |
 | Status | Approved base design — decisions recorded in §18 |
 
@@ -182,6 +182,14 @@ region_unlock_badges = 8
 character_slots_free = 1
 day_length_minutes  = 60
 
+[routes]                         # Infinite Routes (§7.11–7.13)
+route_base_level  = 15           # level band at depth 1
+route_level_step  = 3            # added per depth, capped at 100
+route_claim_hours = 24           # how long the first finisher has to name a route
+route_rotation    = "daily"      # how often encounters/weather/items change on a route
+buddy_skill_steps = 500          # steps as buddy before field skills unlock
+ghost_days        = 7
+
 [admin]
 bootstrap_owner = ""             # account name granted Owner on first start, then ignored
 require_2fa     = true
@@ -224,6 +232,18 @@ history[] (trade/market/breed audit trail ids)
 **Storage:** party (6), PC boxes (30 slots each; start with N boxes, more bought with in-game currency), bag pockets (Items, Medicine, Poké Balls, TMs/HMs, Berries, Key Items, Battle Items, Cosmetics).
 
 Every Pokémon has a permanent UUID and an audit trail, so duplication or ownership exploits can be traced and rolled back.
+
+**Infinite Route (§7.11):**
+- id, region, depth, parent route + exit index (or the gateway it starts from), seed, biome, and the chunk list built from them.
+- Name (null = "An Uncharted Route"), charted-by character, and charted-at date.
+- Claim: character and expiry.
+- The route's day seed for what changes daily, plus its ghost spots.
+
+**Route progress:** (character, route) → required trainers beaten, and when the route was completed.
+
+**Ghost (§7.13):** character, route, spot, team snapshot, greeting, placed/expires, and daily counters.
+
+**Buddy bond (§7.12):** steps walked as the buddy, kept on the Pokémon instance.
 
 ---
 
@@ -366,6 +386,182 @@ Priority: **P0** = needed for the first closed test; **P1** = needed for open be
 | RMT/fraud detection: trade-graph analysis (one-way value flows, new accounts funnelling wealth) | P2 |
 | Account security: rate-limited login, Argon2id, 2FA, new-device email alert | P0/P1 |
 
+### 7.11 Infinite Routes (the frontier)
+
+The game is named after this feature, and it is the main endgame. Each region's edges lead out into **generated routes** that never run out. Every route ends in more exits, which lead to more routes. Nobody has walked a new route before, and the first player to complete one names it for good.
+
+**The map: a tree that grows forever**
+- **Gateways.** Each region has a few gateways at the edges of its real routes, set in data. Each gateway needs a number of that region's badges (`gateway_badges` per gateway), so new players can reach shallow routes early.
+- **Routes branch.** A gateway leads to a depth-1 route. Every route ends in **1–3 exits**, and each exit leads to its own route one level deeper. So the map is a tree with many unexplored edges at once, not a single line that the strongest player races down.
+- **Routes are created when first entered.** The first time any player steps into an exit that leads nowhere yet, the server creates that route. The server is the only authority: it picks a random **seed**, builds the route from it, and stores it. After that the route never changes and is the same for everyone.
+- **Storage is small.** A route is stored as its seed, depth, parent exit and biome, plus the chunk list built from them. The world can grow without limit cheaply.
+- **Routes are permanent.** Routes and their names are never reset or regenerated. The charted map is a record of the server's history.
+
+**How a route is built**
+- **From the region's own map pieces.** A route is assembled from whole map chunks of its region's real routes, grouped by **biome**: grassland, forest, desert, cave, coast, mountain, and Unova's seasonal variants.
+- **Edges must match.** Chunks are chosen so their edges line up: walkable tiles meet walkable tiles, at matching heights.
+- **Only IDs go over the wire (pillar 4).** The server sends chunk IDs, and each client draws them from its own ROM cache.
+- **Length and branching grow with depth.** A route is 3–8 chunks long (longer when deeper) and runs from the entrance to an **end marker** at the far exit.
+- **Side areas.** Short side branches hold items and are guarded by obstacles that a buddy field skill clears (§7.12). The main path never needs a field skill, so any player can complete any route.
+- **This is the biggest unknown.** Prototype stitching Unova's chunks first, before the rest of this section is built.
+
+**What's on a route**
+- **Difficulty by depth.** The level band is `route_base_level` + `route_level_step` × (depth − 1), capped at 100: by default 15 at depth 1, +3 per depth.
+- **Trainers.** Generated NPC trainers use the region's own trainer classes and sprites. A route has 3 + ⌊depth / 3⌋ of them, at most 10. Their teams come from the route's species pool at the route's level band, and they get stronger and more varied with depth. These are the route's **required trainers**.
+- **Wild Pokémon.** Encounters come from the biome's species pool for the region. Rare species become more likely with depth.
+- **Changes over time.** The layout and required trainers never change. Encounters, weather and item spots change every day on a daily seed (`route_rotation`), so charted routes stay worth visiting.
+- **Rematches.** Required trainers can be rebattled on a daily cooldown for money, like trainer rematches (§7.5).
+- **Trainer ghosts.** Charted routes also hold other players' trainer ghosts (§7.13). Ghosts are optional, never required.
+
+**Completing a route and naming it**
+- **Unnamed routes.** A route that nobody has completed is called **"An Uncharted Route"** everywhere: the location banner, the map, friends lists, and chat links.
+- **What counts as completing it.** Beat every required trainer on the route (losing doesn't count; rebattle), then reach the end marker.
+  - Each player's wins are saved per route, so leaving and coming back keeps them.
+- **Who names it.** The first player to complete the route gets a **naming claim** and a naming prompt.
+  - The server decides who is first with a single atomic database write, so two players finishing at the same moment can't both get it.
+- **The claim can expire.** If the player closes the prompt, they can still name the route later from X → **Your routes**. The claim lasts `route_claim_hours` (default 24).
+  - If it lapses unnamed, the claim goes to the next player who completes the route.
+  - Other players who complete the route while the claim is held see "Being charted by ‹name›".
+- **Once named.** The name is permanent: the person who named it can't change it.
+  - The route's sign shows the name and "Charted by ‹character› on ‹date›".
+  - The person who named it gets a one-time reward based on depth, and the route appears on their trainer card.
+- **Group play.** Parties and expeditions are later. Until then, completion and the claim belong to one player.
+
+**Route name rules** (checked by the server; the client checks the same rules first only to show errors early)
+- **Allowed characters.** Letters A–Z and a–z and digits 0–9 only, with single spaces between words: no leading, trailing or double spaces, and no punctuation, symbols, accents or emoji.
+- **Length.** 3–20 characters, at most 3 words, and at least one letter.
+- **Unique.** No two routes share a name, ignoring case and spaces.
+- **Reserved names are refused.**
+  - Place names from any supported game's text, such as "Route 4" or "Castelia City".
+  - Anything that looks like "Route" followed by a number.
+  - "Uncharted", plus staff and system words such as Admin, Moderator, Staff, Server, Official and Infinite Routes.
+- **Blocked words.** Names go through the name filter (§7.10). It checks the name both as written and normalised:
+  - lower case;
+  - digits read as the letters they look like (0→o, 1→i/l, 3→e, 4→a, 5→s, 7→t, 8→b);
+  - spaces removed;
+  - repeated letters collapsed.
+  A blocked word anywhere in the result refuses the name. An allowlist covers innocent words that happen to contain blocked ones.
+- **Refusal messages.** A refused name gets a short reason, such as "That name isn't allowed" or "Names use letters, numbers and single spaces". The claim is kept so the player can try again. Refusals are rate-limited.
+- **Reporting and staff action.** Players can report a route name.
+  - Staff with the right permission can **rename** a route or **reset** it to "An Uncharted Route", with a reason.
+  - Every rename and reset is kept in the audit log (§11).
+  - A reset can either give the claim back to the person who named it or open it to the next player who completes the route.
+- **Character names.** The same filter and normalisation also apply to character names.
+
+| Feature | Pri |
+|---|---|
+| Gateways, route creation on first entry, permanent seeded routes, branching exits | P1 |
+| Chunk stitching by biome with matching edges (prototype first) | P1 |
+| Depth level bands, generated required trainers, rotating encounters/weather/items | P1 |
+| Completion, naming claims, name rules and filter, "Charted by" signs, Your routes | P1 |
+| Staff rename/reset, route-name reports | P1 |
+| Charted-routes map (the frontier tree, coloured by depth, uncharted edges shown) | P2 |
+
+**Prototype status (M5b)**
+- **Routes are made by hand** (decision 18). Generated layouts weren't good enough to ship, so each route is built in the **route editor** (§10.1) and saved by number. A saved route takes the place of the generated one with that number; numbers with no saved route still get a generated layout as a placeholder.
+  - **Who can edit:** the route editor needs the `world.routes.edit` permission. No built-in role has it except Owner (who has everything); an Owner gives it to roles in F9 → Roles. The server checks it on every save and delete, and both are audited.
+  - **Where routes live:** on the server, as `route-NNNN.json` in the `routes` folder beside `server.pkir`: number, name, look (texture set), size, and one letter per tile (`T` forest, `.` ground, `p` path, `g` tall grass, `w` water).
+  - **How players get them:** the server sends every saved route when a player joins (`RouteSet`) and each change as it's saved (`RouteChanged`), so everyone walks the same routes. Offline play has none (generated placeholders only).
+  - **Ends:** every run of walkable tiles on the edge of the area. One is the entrance (the west one unless another is chosen); up to three others are exits. By default the entrance leads back along the route tree and exit k to route 3n+1+k; any end can instead lead to another route's entrance or exit, or to a warp of a real zone.
+  - **What a route holds besides its tiles:**
+    - **Scenery:** the cell round the playable area can be painted too. It's always solid, whatever it shows.
+    - **Stamps:** rectangles (up to 64×64) copied from the look's real maps, with their collision: signs, fences, ledges, cliffs, bridges, ponds, flowers and buildings.
+    - **People:** a ROM overworld sprite, facing, movement, pages of text, and optionally a ROM trainer (with a sight range) or a gift item.
+    - **HM obstacles:** a small tree (Cut, 1 badge) or a boulder (Strength, 3 badges), drawn with the ROM's sprites. Talking to one clears it for that player until they leave the map; the server blocks steps into it until then. Staff in Admin Mode can always clear them.
+    - **Wild Pokémon:** the look's own route's (the default), a real route's, or the route's own list (species, levels, weight) with a chance per step.
+  - The server checks everything on save: sizes, ends and links, sprites, text length (cleaned like chat), obstacle kinds, stamp bounds, species and levels.
+- **Layout first.** `RouteLayout` designs each route by rule on a grid of 2×2-tile blocks (trees are two tiles wide):
+  - one two-tile path through forest, in straight runs with right-angle bends, with a block of open ground either side;
+  - clearings at most turns;
+  - tall grass laid right across the path in a few places, and in the clearings;
+  - one or two dead-end side pockets, and sometimes a pond;
+  - 0–2 branches to the north and south edges as extra exits.
+- **Art second.** Each tile is drawn by a real tile of the theme that is the same kind, has the same position parity and sits in the same surroundings (`RouteKit`: its eight neighbours' kinds), or the nearest match.
+  - Tile kinds come from collision and Black/White's texture names (`TerrainTheme.Classify`): trees `ki…`, paths `michi…`, water `sea…`/`…mizu…`/`ike…`/`kawa…`.
+  - Only land at the theme's main ground level is used.
+  - In White, 94–97% of a route's tiles find an exact match.
+- **Collision** follows the design. A cell of forest surrounds the playable area and is solid.
+- **Drawing it:** the client cuts each source tile's triangles out of its chunk model for the current season (`ChunkGeometry.ClipToTiles`) and builds the cell's mesh with the model's own materials (`RouteTerrain`).
+- **Themes:** a texture set is used when it has enough forest, ground and path tiles of every parity. In White that's the sets of Routes 1, 3, 5, 6, 10 and 12.
+- **Routes:** node n's exits lead to 3n+1…3n+3. Each is built from a seed made from n alone, the same on the server and the client, so the layout isn't sent over the network.
+  - Each node is zone 1,000,000+n on map `ir{n}`, named "An Uncharted Route".
+  - It borrows the theme's route's wild Pokémon.
+  - The first route's entrance leads to Nuvema Town.
+- **Testing:** admin `/route [n]` goes to a route's entrance.
+- **Known gaps:**
+  - Routes are flat: no ledges, cliffs, bridges or fences yet.
+  - Water texture animation isn't attached.
+  - There are no trainers, items, naming or gateways yet (the side pockets are where items will go).
+- **What didn't work** (removed): stitching whole map cells (a patchwork of unrelated places), and quilting patches of tiles (plausible up close, no design overall).
+
+### 7.12 Buddy field skills
+
+The Active Buddy (M2) does more than follow you: its **types** give it field skills. Field skills **add to** the HM rules and never replace them (§6). HM field moves still need their badge.
+
+- **Passive and active skills.** Some skills work by themselves. Others are used by pressing the buddy key while facing a spot.
+- **Dual types.** A dual-type buddy has both types' skills.
+- **Bond.** Skills unlock after the buddy has walked **500 steps** with you as your buddy (`buddy_skill_steps`). This bond is kept per Pokémon and survives trades.
+- **Server checks.** The server checks the buddy's types and bond on every use.
+
+| Type | Skill | Effect |
+|---|---|---|
+| Fire | Light | Lights dark caves (as Flash); burns bramble obstacles |
+| Water | Ripple | Rippling-water and fishing spots show up more often nearby |
+| Grass | Forage | Picks berries from bushes on routes (daily per bush) |
+| Electric | Power | Powers dead generators that open side gates |
+| Ice | Freeze | Freezes small ponds into ice you can walk on |
+| Fighting | Smash | Breaks cracked boulders (small ones; Rock Smash still needs its badge for the real ones) |
+| Poison | Clear | Clears poison mist obstacles |
+| Ground | Dig | Digs up buried items at dig spots |
+| Flying | Scout | Shows the current route's layout and which of its exits are still uncharted |
+| Psychic | Sense | Marks hidden items within 8 tiles |
+| Bug | Lure | Bug-type wild Pokémon are more likely while walking |
+| Rock | Prospect | Sometimes finds evolution stones and shards at dig spots |
+| Ghost | Phase | Walks you through spectral walls into hidden side areas |
+| Dragon | Awe | Wild Pokémon 10+ levels below your buddy stay away (a free Repel) |
+| Dark | Sneak | Fewer wild encounters while walking |
+| Steel | Magnet | Pulls nearby items towards you (pick-up range +2) |
+| Normal | Fetch | Now and then brings you a common item it found (daily cap) |
+
+- **Obstacles on generated routes.** Each generated route places brambles, generators, ponds, boulders, mist, dig spots and spectral walls in its side areas. Every type matters somewhere, but the main path never needs a skill (§7.11).
+- **Obstacles on real maps.** Real story maps get only the skills that read naturally there: Light, Forage, Dig, Sense, Scout and the passives. Nothing on a story path needs one.
+
+| Feature | Pri |
+|---|---|
+| Bond steps, buddy key, server-checked skills | P1 |
+| All 17 type skills and their obstacles on generated routes | P1 |
+| Skill spots on the real regions' maps | P2 |
+
+### 7.13 Trainer ghosts
+
+A player can leave a **ghost** of their trainer on a charted Infinite Route. A ghost is a copy of their current team, played by the server's trainer AI. Other players can battle it like an NPC trainer, so routes fill with real players' teams.
+
+**Placing a ghost**
+- **Where.** Use X → **Your ghost** on a charted route. Each route has a few ghost spots, and the server places the ghost in a free one.
+- **Limits.** One ghost per character. It lasts **7 days** (`ghost_days`) or until you replace or recall it.
+- **What it is.** The ghost is a **snapshot**: species, moves, abilities, held items, IVs/EVs and nature as they were when you placed it. Your real Pokémon are never touched, lent or at risk.
+- **Levels.** You can only place a ghost on a route whose level band reaches your strongest Pokémon's level, at the band's highest level or below. If the team is above the band, it is scaled down to the band's highest level (never scaled up).
+- **What it looks like.** It uses your trainer sprite and name, with a ghostly tint. A short greeting (filtered, 40 characters) is optional.
+
+**Battling ghosts**
+- **Optional.** Ghosts are never required trainers, so they never block completing a route.
+- **How often.** Each player can beat a given ghost once per day for money and BP based on the route's depth. Losses can be retried.
+- **Not your own.** You can't battle your own ghost or the ghosts of characters on your account.
+- **Mail for the owner.** The owner gets a **daily mail digest**: battles fought, wins, losses, and who beat it.
+  - Each win earns a small reward, paid by the server (never by the player who lost), capped each day.
+  - These caps stop farming between your own characters or friends' accounts. Trade-graph checks (§7.10) also look at it.
+
+**Moderation**
+- Ghost greetings use the chat filter, and a ghost's trainer name is already a filtered character name.
+- Players can report a ghost. Staff can remove one with a reason, and the removal goes in the audit log.
+
+| Feature | Pri |
+|---|---|
+| Place/recall a ghost, snapshot teams, level cap by band | P1 |
+| Battling ghosts with the trainer AI, daily limits and rewards | P1 |
+| Owner mail digest and capped win rewards | P1 |
+| Reports and staff removal | P1 |
+
 ---
 
 ## 8. Battle engine spec
@@ -397,6 +593,7 @@ Studio is a **Godot editor plugin** (`addons/ir_studio/`) inside the client proj
 | Tool | What it does | Milestone |
 |---|---|---|
 | **Map & event editor** | Opens any extracted map in the 3D view, with a tile grid overlay showing collision, permissions, and encounter tiles. NPCs, warps, triggers, item pickups, signs, encounter zones, and horde spots are nodes with viewport gizmos, edited in the Inspector. The tile overlay checks placements for collisions and unreachable warps | M1 |
+| **Route editor** (in the game: F10 in Admin Mode, with the `world.routes.edit` permission) ✅ | Makes Infinite Routes by hand, drawn live with the chosen look's real tiles. Tabs: **Tiles** (path, ground, tall grass, forest, water on the 2×2 grid, inside the playable area or in the scenery round it), **Objects** (stamps picked by dragging a rectangle over the look's real maps; small trees and boulders for Cut and Strength), **People** (sprite, facing, movement, text, trainer, gift), **Wild** (a real route's Pokémon or the route's own list) and **Ends** (the entrance, and where each end leads). Undo, resize, a generated starting layout, checks; **Save** sends the route to the server, which stores it and sends it to every player; **Test walk** saves and takes you to its entrance | M5b |
 | **Play from here** | One button (F5 override) starts a local server and client, spawning the player on the selected tile with a chosen set of story flags, party, and time of day | M1 |
 | **Event command lists** | No-code scripting in the style of RPG Maker. Every NPC/trigger has an ordered list of commands (Show text, Choice, Branch on flag, Battle trainer, Give item/Pokémon, Set flag, Move NPC, Warp, Play cutscene, ...). Lists compile to the Lua API in §9. Raw Lua is available for anything the commands can't do; hand-written Lua blocks are kept when the list is recompiled | M3 |
 | **Dialogue browser** | Searchable view of every text line extracted from your ROMs, by (archive, line), with a preview of text-box rendering. Text is chosen by reference and never copied. Also edits MMO-only strings in `data/localization` | M3 |
@@ -521,6 +718,7 @@ Admins run the server from inside the normal game client. Once a user is authent
 | M3 | **Unova complete (PvE)** | Full Unova story via Lua, all encounter types incl. hordes, trainers, gyms, E4, marts, PC, Day Care (no breeding yet), Pokédex. **Studio:** event command lists, dialogue browser, cutscene timeline, data tables, battle sandbox |
 | M4 | **Social + trade + PvP** | ~~Friends~~ (M2 slice 6), parties, guilds, ~~P2P trade~~ (offers, M2 slice 6; a live trade window later), casual PvP. **Admin:** ~~full player/Pokémon/inventory editing, undo~~ (done in M2 slice 4), bulk grants, world panel, moderation panel → **closed alpha** |
 | M5 | **Economy + competitive** | Global Market, ranked PvP + tiers, battle facility, rematches, breeding, economy telemetry. **Admin:** economy panel & rollback, live data editing (test-on-channel → publish), competitive panel, web admin panel. **Studio:** data-pack inspector |
+| M5b | **Infinite Routes** 🟡 | ✅ Generated-terrain prototype (§7.11, *Prototype status*). To do: gateways, depth bands, required trainers, completion and naming with the name rules and filter, staff rename/reset; buddy field skills and their obstacles; trainer ghosts (§7.11–7.13). **Admin:** route panel (rename, reset, remove ghost) |
 | M6 | **Sinnoh + Johto/Kanto** | Platinum and HGSS extract profiles, both regions playable end to end, inter-region travel → **open beta** |
 | M7 | **Launch polish** | Live-ops event framework + first seasonal event, followers, tournaments, replays, berry farming, Linux/macOS builds → **launch** |
 
@@ -562,5 +760,11 @@ All decisions made 2026-10-30. Each one can be changed in `server.pkir` where no
 | 10 | Name fallback | "Infinite Routes" | §17 |
 | 11 | Admin creating Pokémon that couldn't be obtained legitimately | Blocked below Admin; Admin/Owner allowed with warning + required reason | §11.3 |
 | 12 | `adminOrigin` visibility | Staff only | §11.4 |
+| 13 | Infinite Routes when everything nearby is named | Never reset: routes branch forever (1–3 exits each), are created on first entry, and are permanent. Difficulty rises with depth; charted routes stay fresh through daily rotation and ghosts | §7.11 |
+| 14 | Who names a route | The first player to beat all its required trainers and reach the end; "An Uncharted Route" until then; 24 h claim, then it passes on; permanent once named (staff can rename/reset) | §7.11, `route_claim_hours` |
+| 15 | Route name characters | Letters, digits and single spaces only; 3–20 chars; unique; reserved names and the normalised word filter | §7.11 |
+| 16 | Buddy field skills vs HMs | Field skills add to HMs, never replace them; the main path of any route never needs one | §7.12 |
+| 17 | Trainer ghosts | Snapshot copies (real Pokémon never at risk), on charted routes only, never required, rewards paid by the server and capped | §7.13 |
+| 18 | How Infinite Routes are made | By hand in the route editor, saved by number. Stitching cells, quilting tiles and rule-based generation were all tried and rejected on quality; generation stays only as a starting layout in the editor and a placeholder for numbers with no saved route | §7.11, §10.1 |
 
 No open decisions block M0/M1.

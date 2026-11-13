@@ -45,6 +45,8 @@ public static class Permissions
     public const string Roles = "roles.grant";
     public const string AuditRead = "audit.view";
     public const string Revert = "audit.revert";
+    /// <summary>The route editor. No built-in role has it but Owner (who has everything); Owners grant it to roles.</summary>
+    public const string RouteEdit = "world.routes.edit";
 
     /// <summary>Every permission and what it allows (the Roles tab shows these).</summary>
     public static readonly IReadOnlyList<(string Key, string Description)> Catalog =
@@ -66,6 +68,7 @@ public static class Permissions
         (PokemonIllegal, "Save Pokémon that couldn't be obtained normally (with a reason)"),
         (Roles, "Give accounts a role below your own"),
         (Revert, "Undo player changes from the audit log"),
+        (RouteEdit, "Make and change Infinite Routes in the route editor"),
     ];
 
     public static bool Known(string permission) => Catalog.Any(p => p.Key == permission);

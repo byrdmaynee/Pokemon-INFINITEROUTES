@@ -82,6 +82,8 @@ if (dataPack is null || GameAssets.Open(dataPack) is not { } assets)
     Console.Error.WriteLine("`ir-extract extract <rom>` and point data_pack at the folder it reports.");
     return 2;
 }
+// Hand-made routes (the route editor's) live beside the config.
+assets.RoutesDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(configPath))!, "routes");
 var world = new AssetWorldData(assets);
 Console.WriteLine($"Data pack {assets.Stamp.GameId} (extractor {assets.Stamp.ExtractorVersion}); new characters start in zone {world.Start.Zone} at ({world.Start.X}, {world.Start.Y}).");
 if (command == "check")

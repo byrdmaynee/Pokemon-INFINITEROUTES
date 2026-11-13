@@ -70,7 +70,27 @@ sealed class FakeWorld : IWorldData
         new(4, 1, 1, 1, 0, Facing.Down, 0, 0, 0, 2100, 0),
     ];
 
-    public NpcInfo? Npc(int zone, int id) => zone == 1 ? Npcs.FirstOrDefault(n => n.Id == id) : null;
+    public NpcInfo? Npc(int zone, int id) => zone == 1 ? Obstacle is { } o && o.Id == id ? o : Npcs.FirstOrDefault(n => n.Id == id) : null;
+
+    /// <summary>An HM obstacle in zone 1, if the test puts one there.</summary>
+    public NpcInfo? Obstacle { get; init; }
+
+    public NpcInfo? ObstacleAt(int zone, int x, int y) => zone == 1 && Obstacle is { } o && (o.X, o.Y) == (x, y) ? o : null;
+
+    /// <summary>Hand-made routes, kept in memory (the real world keeps them in a folder and checks them against the map data).</summary>
+    readonly Dictionary<int, string> _routes = new();
+
+    public IReadOnlyList<string> RouteFiles() => [.. _routes.Values];
+
+    public (int Node, string? Json, string? Error) SaveRoute(string json)
+    {
+        if (InfiniteRoutes.Extractor.Extraction.RouteFiles.FromJson(json) is not { } file)
+            return (-1, null, "That isn't a route.");
+        _routes[file.Node] = json;
+        return (file.Node, json, null);
+    }
+
+    public bool DeleteRoute(int node) => _routes.Remove(node);
 }
 
 /// <summary>The server running in-process on free ports, with its own temporary folder and SQLite database.</summary>
@@ -88,7 +108,8 @@ sealed class TestServer : IAsyncDisposable
         Http = http;
     }
 
-    public static async Task<TestServer> Start(int idleMinutes = 25, int channels = 2, int saveSeconds = 45, string extra = "", InfiniteRoutes.Server.Game.GameRules? rules = null)
+    public static async Task<TestServer> Start(int idleMinutes = 25, int channels = 2, int saveSeconds = 45, string extra = "", InfiniteRoutes.Server.Game.GameRules? rules = null,
+        IWorldData? world = null)
     {
         var dir = Directory.CreateTempSubdirectory("ir-server").FullName;
         var config = ServerConfig.FromTable(Pkir.Parse($"""
@@ -103,7 +124,7 @@ sealed class TestServer : IAsyncDisposable
             save_interval_seconds = {saveSeconds}
             {extra}
             """), dir);
-        var app = ServerHost.Build(config, new FakeWorld(), l => l.SetMinimumLevel(LogLevel.Warning), rules);
+        var app = ServerHost.Build(config, world ?? new FakeWorld(), l => l.SetMinimumLevel(LogLevel.Warning), rules);
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
         var http = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true })

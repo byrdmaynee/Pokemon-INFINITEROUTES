@@ -89,6 +89,7 @@ public sealed class GameListener(ServerConfig config, X509Certificate2 certifica
                 }
                 player = joined;
                 connection.Send(new Welcome(player.Id, player.Name, player.Channel, config.Channels, player.Location, config.Name));
+                connection.Send(world.Routes());
                 world.SendState(player);
                 if (player.Beacon.Length > 0)
                     connection.Send(new BeaconChanged(player.Id, player.Beacon));

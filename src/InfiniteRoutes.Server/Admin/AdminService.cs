@@ -32,6 +32,7 @@ public sealed partial class AdminService(WorldService world, AccountService acco
         new("kick", Permissions.Kick, "kick <player> <reason>", "disconnect a player (the reason is required and audited)"),
         new("announce", Permissions.Announce, "announce <text>", "a banner and chat line to everyone"),
         new("tp", Permissions.Teleport, "tp <player>  |  tp <zone> <x> <y>", "go to a player or a place"),
+        new("route", Permissions.Teleport, "route [number]  |  route reload", "go to an Infinite Route's entrance (0 is the first), or read edited routes again"),
         new("summon", Permissions.Summon, "summon <player>", "bring a player to you"),
         new("invisible", Permissions.Invisible, "invisible [on|off]", "hidden from players (not from staff in Admin Mode)"),
         new("noclip", Permissions.Noclip, "noclip [on|off]", "walk through walls at any speed"),
@@ -309,6 +310,26 @@ public sealed partial class AdminService(WorldService world, AccountService acco
                 world.TeleportTo(p, t);
                 await Audit(p, "teleport", t.Name, "");
                 Reply(true, $"Went to {t.Name}.");
+                return;
+            }
+            case "route":
+            {
+                if (args is ["reload"])
+                {
+                    world.ReloadRoutes();
+                    Reply(true, "Routes will be read again from the routes folder.");
+                    await Audit(p, "routes", "reload", "");
+                    return;
+                }
+                var node = 0;
+                if (args.Length > 1 || args.Length == 1 && (!int.TryParse(args[0], out node) || node < 0))
+                {
+                    Reply(false, $"Usage: {command.Usage}");
+                    return;
+                }
+                var ok = world.TeleportToRoute(p, node);
+                Reply(ok, ok ? $"Went to Infinite Route {node}." : $"Infinite Route {node} couldn't be built (are the Unova route maps in the data pack?).");
+                await Audit(p, "teleport", $"route {node}", ok ? "" : "failed");
                 return;
             }
             case "summon":

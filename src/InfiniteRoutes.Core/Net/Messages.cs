@@ -9,7 +9,7 @@ namespace InfiniteRoutes.Core.Net;
 /// </summary>
 public static class Protocol
 {
-    public const int Version = 7;   // 2: admin window; 3: battles; 4: market, trades, friends, mail, DMs; 5: Active Buddy; 6: NPCs, trainers, quests; 7: role beacons
+    public const int Version = 8;   // 2: admin window; 3: battles; 4: market, trades, friends, mail, DMs; 5: Active Buddy; 6: NPCs, trainers, quests; 7: role beacons; 8: hand-made routes
 
     /// <summary>The largest frame either side accepts.</summary>
     public const int MaxFrame = 256 * 1024;
@@ -88,6 +88,8 @@ public sealed record NetMove(
 [Union(45, typeof(NpcAction))]
 [Union(46, typeof(NpcResult))]
 [Union(47, typeof(BeaconChanged))]
+[Union(48, typeof(RouteSet))]
+[Union(49, typeof(RouteChanged))]
 public abstract record Message;
 
 /// <summary>Chat channels: near you (same map and channel), the whole server, one player, or the server itself.</summary>
@@ -491,6 +493,20 @@ public sealed record NpcResult([property: Key(0)] int Zone, [property: Key(1)] i
 public sealed record BeaconChanged([property: Key(0)] int Player, [property: Key(1)] string Beacon) : Message;
 
 /// <summary>A player in view has a new Active Buddy (<see cref="Species"/> 0: none following).</summary>
+/// <summary>
+/// Every hand-made Infinite Route the server has, each as its route file's JSON (the route editor's format). Sent on
+/// joining: the client draws these in place of generated routes, so everyone walks the same ones.
+/// </summary>
+[MessagePackObject]
+public sealed record RouteSet([property: Key(0)] IReadOnlyList<string> Files) : Message;
+
+/// <summary>
+/// Route <see cref="Node"/> was saved in the route editor (<see cref="File"/> is its new JSON) or deleted (empty).
+/// Sent to everyone online.
+/// </summary>
+[MessagePackObject]
+public sealed record RouteChanged([property: Key(0)] int Node, [property: Key(1)] string File) : Message;
+
 [MessagePackObject]
 public sealed record BuddyChanged([property: Key(0)] int Player, [property: Key(1)] int Species, [property: Key(2)] bool Shiny,
     [property: Key(3)] bool Female = false) : Message;

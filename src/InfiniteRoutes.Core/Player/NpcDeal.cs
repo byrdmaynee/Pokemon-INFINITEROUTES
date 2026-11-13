@@ -13,7 +13,9 @@ public sealed record NpcDeal(int Zone, int Npc, int Trainer = -1, int GiftItem =
     public static string KeyOf(int zone, int npc) => $"{zone}:{npc}";
 }
 
-public enum NpcDealKind { None, Battle, Refused, Gift, Quest }
+public enum NpcDealKind { None, Battle, Refused, Gift, Quest,
+    /// <summary>An HM obstacle (a small tree, a boulder) was cleared out of the way: it's gone until the player leaves the map.</summary>
+    Cleared }
 
 /// <summary>What talking to an NPC came to: a battle with <see cref="Trainer"/>, a refusal, a gift or a new quest, with a line to show.</summary>
 public sealed record NpcOutcome(NpcDealKind Kind, string Text = "", Data.TrainerInfo? Trainer = null, QuestInfo? Quest = null);
