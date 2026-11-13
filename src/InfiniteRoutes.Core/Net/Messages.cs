@@ -9,7 +9,7 @@ namespace InfiniteRoutes.Core.Net;
 /// </summary>
 public static class Protocol
 {
-    public const int Version = 9;   // 2: admin window; 3: battles; 4: market, trades, friends, mail, DMs; 5: Active Buddy; 6: NPCs, trainers, quests; 7: role beacons; 8: hand-made routes; 9: items from the Bag
+    public const int Version = 10;   // 2: admin window; 3: battles; 4: market, trades, friends, mail, DMs; 5: Active Buddy; 6: NPCs, trainers, quests; 7: role beacons; 8: hand-made routes; 9: items from the Bag; 10: HMs taught, Cut and Strength asked
 
     /// <summary>The largest frame either side accepts.</summary>
     public const int MaxFrame = 256 * 1024;
@@ -482,7 +482,8 @@ public sealed record SetBuddy([property: Key(0)] int Index) : Message;
 /// gift, a quest, or a refusal, answered with <see cref="NpcResult"/>.
 /// </summary>
 [MessagePackObject]
-public sealed record NpcAction([property: Key(0)] int Zone, [property: Key(1)] int Npc, [property: Key(2)] bool Spotted = false) : Message;
+public sealed record NpcAction([property: Key(0)] int Zone, [property: Key(1)] int Npc, [property: Key(2)] bool Spotted = false,
+    [property: Key(3)] bool Confirm = false) : Message;
 
 /// <summary>What talking to an NPC came to (<see cref="Kind"/>: <c>Core.Player.NpcDealKind</c>) and a line to show.</summary>
 [MessagePackObject]
@@ -499,7 +500,9 @@ public sealed record BeaconChanged([property: Key(0)] int Player, [property: Key
 /// <see cref="Hold"/>) gives it to that Pokémon to hold. Answered with a <see cref="Notice"/> and the new game state.
 /// </summary>
 [MessagePackObject]
-public sealed record UseItem([property: Key(0)] int Item, [property: Key(1)] int Party = -1, [property: Key(2)] bool Hold = false) : Message;
+/// An HM is taught to that Pokémon (in place of move <see cref="Forget"/> when it already knows four).
+public sealed record UseItem([property: Key(0)] int Item, [property: Key(1)] int Party = -1, [property: Key(2)] bool Hold = false,
+    [property: Key(3)] int Forget = -1) : Message;
 
 /// <summary>
 /// Every hand-made Infinite Route the server has, each as its route file's JSON (the route editor's format). Sent on

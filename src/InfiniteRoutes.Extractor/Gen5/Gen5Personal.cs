@@ -50,6 +50,17 @@ public static class Gen5Personal
             AbilityIds: abilityIds,
             HiddenAbilityId: r[0x1A],
             WildItems: [BinaryPrimitives.ReadUInt16LittleEndian(r[0x0C..]), BinaryPrimitives.ReadUInt16LittleEndian(r[0x0E..]),
-                BinaryPrimitives.ReadUInt16LittleEndian(r[0x10..])]);
+                BinaryPrimitives.ReadUInt16LittleEndian(r[0x10..])],
+            // TM/HM compatibility: a bit per machine from 0x28 — TM01–TM95, then HM01–HM06.
+            Machines: Machines(r));
+    }
+
+    static List<int> Machines(ReadOnlySpan<byte> r)
+    {
+        var machines = new List<int>();
+        for (var bit = 0; bit < SpeciesInfo.FirstHm + 6; bit++)
+            if ((r[0x28 + bit / 8] >> (bit % 8) & 1) != 0)
+                machines.Add(bit);
+        return machines;
     }
 }

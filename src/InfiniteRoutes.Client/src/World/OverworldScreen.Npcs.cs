@@ -90,6 +90,12 @@ public partial class OverworldScreen
         var game = NpcGame;
         try
         {
+            // A small tree or a boulder: the server says what it is, and offers a Pokémon's Cut or Strength.
+            if (UnchartedRoutes.IsObstacle(npc.Info) && _online)
+            {
+                OnlineSession.Game?.Send(new NpcAction(npc.Zone, npc.Info.Id));
+                return;
+            }
             if (TrainerFor(npc) is { } trainer)
             {
                 var intro = Pages(talk?.Lines);
@@ -157,6 +163,22 @@ public partial class OverworldScreen
     }
 
     /// <summary>The server's answer to <see cref="NpcAction"/> when it didn't start a battle.</summary>
+    /// <summary>
+    /// The server asks something (use Cut on this tree?): its pages, the last one a yes/no question; yes sends the
+    /// action again, confirmed.
+    /// </summary>
+    async Task AskNpc(NpcResult result)
+    {
+        var pages = TrainerInfo.Pages(result.Text);
+        if (pages.Count == 0)
+            return;
+        await Say(pages.Take(pages.Count - 1).ToList());
+        if (!IsInstanceValid(this))
+            return;
+        if (await AskYesNo(pages[^1]) && IsInstanceValid(this))
+            OnlineSession.Game?.Send(new NpcAction(result.Zone, result.Npc, Confirm: true));
+    }
+
     /// <summary>Takes an NPC off the map (it comes back when its cell is loaded again).</summary>
     void RemoveNpc(NpcActor npc)
     {
@@ -169,7 +191,9 @@ public partial class OverworldScreen
     {
         if ((NpcDealKind)result.Kind != NpcDealKind.Battle)
             _battleNpc = null;
-        if (result.Text.Length > 0)
+        if ((NpcDealKind)result.Kind == NpcDealKind.Ask)
+            _ = AskNpc(result);
+        else if (result.Text.Length > 0)
             _ = Say(TrainerInfo.Pages(result.Text));
         // An HM obstacle the server says is cleared: out of the way until the map is left.
         if ((NpcDealKind)result.Kind == NpcDealKind.Cleared && Npcs.FirstOrDefault(n => n.Zone == result.Zone && n.Info.Id == result.Npc) is { } gone)

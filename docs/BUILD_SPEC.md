@@ -256,7 +256,7 @@ Every Pokémon has a permanent UUID and an audit trail, so duplication or owners
 | Stats | IVs 0–31, EVs 510/252, 25 natures, hidden abilities from defined sources |
 | Shiny odds | 1/8,192 base (Gen 5 rate), set by `shiny_rate` in `server.pkir`. Modifiers: Shiny Charm, event boosts. Each horde Pokémon rolls separately |
 | TMs | Reusable (Gen 5 rule) in all regions |
-| HMs | No move slot needed. Field moves (Cut, Surf, Strength, Fly, Waterfall, Rock Smash/Climb, Dive, Whirlpool, Defog, Flash) unlock with the matching badge and are used from a key-item **field menu**, as long as any party Pokémon *could* learn the move. HM moves can still be taught/forgotten freely for battle |
+| HMs | As in the games: an HM item teaches its move (Cut, Fly, Surf, Strength, Waterfall, Dive) to a Pokémon that can learn it (the ROM's TM/HM compatibility), in place of a forgotten move when it knows four; the HM isn't used up. Outside battle the move is used from the party: talking to a small tree or boulder offers "Use (Pokémon) to cut the tree / smash the boulder?" when a party Pokémon knows Cut / Strength and the player has the badges (Cut 1, Strength 3). Staff in Admin Mode can always clear them |
 | Levelling | Gen 5 scaled exp formula. Exp Share is a toggle that gives party-wide shared exp |
 | Day/night | Server clock with a faster cycle (default: 1 real hour = 1 game day). Unova seasons rotate monthly on real time |
 | Story | Each region has its own story progress. A new character picks a starting region and that region's starter. The other regions unlock after earning **all 8 badges in the starting region** (`region_unlock_badges`). Each region's starter is offered on first arrival there |
@@ -756,7 +756,7 @@ All decisions made 2026-10-30. Each one can be changed in `server.pkir` where no
 | 1 | Black vs White exclusive areas | Phased per player: each player sees the area from the version they supplied; encounters merged | §2.1 |
 | 2 | Breeding mode | `economy` (parents consumed, fee, instant egg); `classic` available | §7.4, `breeding_mode` |
 | 3 | IV/EV visibility | Exact numbers shown; market filters on them | §7.4, `iv_ev_visible` |
-| 4 | HM rules | Badge + field menu, no move slot used | §6 |
+| 4 | HM rules | Changed 2026-11-13: HMs teach their move (no longer a slot-free field menu); field moves are used by a party Pokémon that knows them, with the badge | §6 |
 | 5 | Nature/ability changers | Yes, expensive (BP / large Pokédollar sinks) | §7.4 |
 | 6 | Region unlock | Start region, then all 8 badges unlock the others | §6, `region_unlock_badges` |
 | 7 | Character slots | 1 free; +1 at first Champion, +1 at all three Champions (max 3) | §7.1, `character_slots_free` |

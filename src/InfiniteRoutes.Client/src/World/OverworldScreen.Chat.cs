@@ -281,7 +281,6 @@ public partial class OverworldScreen
             zone => _zones.TryGetValue(zone, out var z) && z.Location.Length > 0 ? z.Location : $"zone {zone}", OnlineSession.Character?.Name ?? "")
         {
             Game = () => OnlineGame,
-            FieldMove = UseFieldMove,
         };
         menu.TreeExited += () =>
         {

@@ -456,6 +456,34 @@ public sealed partial class WorldService(IWorldData world, ServerConfig config, 
                 ? $"{mon.Name} was given the {name} to hold; the {rules.Data.ItemName(swapped)} went back to the Bag."
                 : $"{mon.Name} was given the {name} to hold.";
         }
+        else if (Core.Battle.ItemEffect.HmMove(use.Item) is var moveId and > 0)
+        {
+            // An HM teaches its move (and isn't used up), to a Pokémon that can learn it.
+            if (mon is null || rules.Data.Move(moveId) is not { } move)
+                return;
+            if (!mon.Species.CanLearnHm(use.Item - Core.Battle.ItemEffect.HmCut + 1))
+            {
+                Say($"{mon.Name} can't learn {move.Name}.");
+                return;
+            }
+            if (mon.Moves.Any(m => m.Move.Id == moveId))
+            {
+                Say($"{mon.Name} already knows {move.Name}.");
+                return;
+            }
+            if (mon.Moves.Count < Core.Battle.Pokemon.MaxMoves)
+            {
+                mon.Moves.Add(new Core.Battle.MoveSlot(move));
+                done = $"{mon.Name} learned {move.Name}!";
+            }
+            else if (use.Forget is >= 0 and < Core.Battle.Pokemon.MaxMoves && mon.LearnMove(move, use.Forget) is { } forgot)
+                done = $"1, 2, and… Poof! {mon.Name} forgot {forgot.Name} and learned {move.Name}!";
+            else
+            {
+                Say($"{mon.Name} already knows four moves: choose one to forget.");
+                return;
+            }
+        }
         else if (Core.Battle.ItemEffect.RepelSteps(use.Item) > 0)
         {
             var (ok, message) = state.UseRepel(use.Item, name);

@@ -128,11 +128,11 @@ public class ObstacleTests
         await using var pia = await Join("Pia", Role.Player, elevate: false);
         await using var olga = await Join("Olga", Role.Owner, elevate: true);
 
-        // Without a Gym Badge: told why, and still in the way.
+        // No Pokémon that knows Cut: just what it looks like, and still in the way.
         await pia.Send(new NpcAction(1, tree.Id));
-        var refused = await pia.Expect<NpcResult>();
-        Assert.Equal((int)InfiniteRoutes.Core.Player.NpcDealKind.None, refused.Kind);
-        Assert.Contains("Gym Badge", refused.Text);
+        var looked = await pia.Expect<NpcResult>();
+        Assert.Equal((int)InfiniteRoutes.Core.Player.NpcDealKind.None, looked.Kind);
+        Assert.Contains("can be cut down", looked.Text);
         await pia.Send(new Step(1, 1, 0, false));
         Assert.False((await pia.Expect<StepResult>(r => r.Seq == 1)).Accepted);
 
@@ -140,6 +140,8 @@ public class ObstacleTests
         await olga.Send(new Step(1, 1, 0, false));
         Assert.False((await olga.Expect<StepResult>(r => r.Seq == 1)).Accepted);
         await olga.Send(new NpcAction(1, tree.Id));
+        Assert.Equal((int)InfiniteRoutes.Core.Player.NpcDealKind.Ask, (await olga.Expect<NpcResult>()).Kind);
+        await olga.Send(new NpcAction(1, tree.Id, Confirm: true));
         Assert.Equal((int)InfiniteRoutes.Core.Player.NpcDealKind.Cleared, (await olga.Expect<NpcResult>()).Kind);
         await Task.Delay(300);
         await olga.Send(new Step(2, 1, 0, false));
@@ -231,5 +233,61 @@ public class SpottedAndBagTests
         // Something it doesn't have.
         await pia.Send(new UseItem(InfiniteRoutes.Core.Battle.ItemEffect.Repel));
         Assert.Contains("You have no", (await pia.Expect<Notice>()).Text);
+    }
+}
+
+/// <summary>HMs teach their move from the Bag; a Pokémon that knows Cut is offered for the tree.</summary>
+public class HmTests
+{
+    /// <summary>The test rules, with Cut, and Snivy able to learn HM01.</summary>
+    static InfiniteRoutes.Server.Game.GameRules Rules()
+    {
+        var types = new[] { InfiniteRoutes.Core.Battle.TypeChart.Grass };
+        var snivy = new InfiniteRoutes.Core.Data.SpeciesInfo(InfiniteRoutes.Core.Player.StarterKit.Species, "Snivy", new(45, 45, 55, 63, 45, 55), ["Grass"],
+            45, new(0, 0, 0, 0, 0, 0), 31, 20, 70, 3, [1], ["Overgrow"], null, 28, 6, 81, 1, types, Machines: [InfiniteRoutes.Core.Data.SpeciesInfo.FirstHm]);
+        InfiniteRoutes.Core.Data.MoveInfo Move(int id, string name) => new(id, name, InfiniteRoutes.Core.Battle.TypeChart.Normal,
+            InfiniteRoutes.Core.Data.MoveKind.Damage, InfiniteRoutes.Core.Data.MoveCategory.Physical, 50, 100, 30, 0, 1, 1,
+            InfiniteRoutes.Core.Data.Ailment.None, 0, 0, 0, 0, 0, 0, 0, [], 0);
+        // Snivy knows four moves at level 5 (so teaching Cut means forgetting one).
+        var learnsets = Enumerable.Range(0, InfiniteRoutes.Core.Player.StarterKit.Species + 1)
+            .Select(i => (IReadOnlyList<InfiniteRoutes.Core.Data.LevelMove>)(i == InfiniteRoutes.Core.Player.StarterKit.Species
+                ? [new(1, 33), new(1, 43), new(1, 22), new(1, 35)] : [])).ToList();
+        return new InfiniteRoutes.Server.Game.GameRules(new InfiniteRoutes.Core.Battle.BattleData([snivy],
+            [Move(33, "Tackle"), Move(43, "Leer"), Move(22, "Vine Whip"), Move(35, "Wrap"), Move(15, "Cut")], learnsets), [], "white");
+    }
+
+    [Fact]
+    public async Task An_HM_teaches_its_move_in_place_of_one_forgotten_and_then_Cut_is_offered_for_the_tree()
+    {
+        var tree = new NpcInfo(UnchartedRoutes.ObstacleIdBase, UnchartedRoutes.CutSprite, 3, 2, 0, Facing.Down, 0, 0, 0, UnchartedRoutes.CutScript, 0);
+        await using var server = await TestServer.Start(channels: 1, extra: "[admin]\nrequire_2fa = false", rules: Rules(), world: new FakeWorld { Obstacle = tree });
+        var accounts = server.App.Services.GetRequiredService<AccountService>();
+        var (token, character) = await server.NewPlayer("Olga");
+        await accounts.SetRole("Olga", Role.Owner);
+        await using var olga = await TestClient.Connect(server.GamePort);
+        await olga.Send(new Hello(Protocol.Version, token, character));
+        await olga.Expect<Welcome>();
+        await olga.Send(new Elevate("password123", ""));
+        Assert.True((await olga.Expect<AdminReply>()).Ok);
+        await olga.Send(new AdminAction("give-item", "Olga", new Dictionary<string, string> { ["item"] = "420", ["count"] = "1" }, "test"));
+        await olga.Expect<AdminReply>(r => r.Ok);
+        // Out of Admin Mode: a player like any other.
+        await olga.Send(new AdminCommand("exit"));
+        await olga.Expect<AdminReply>(r => r.Ok);
+
+        // Four moves known: it asks for one to forget, then teaches Cut in its place; the HM stays in the Bag.
+        await olga.Send(new UseItem(InfiniteRoutes.Core.Battle.ItemEffect.HmCut, 0));
+        Assert.Contains("choose one to forget", (await olga.Expect<Notice>()).Text);
+        olga.Drain<StateSnapshot>();
+        await olga.Send(new UseItem(InfiniteRoutes.Core.Battle.ItemEffect.HmCut, 0, Forget: 1));
+        var state = InfiniteRoutes.Core.Player.SaveGame.FromJson((await olga.Expect<StateSnapshot>()).Json)!;
+        Assert.Contains("learned Cut", (await olga.Expect<Notice>(n => n.Text.Contains("Poof"))).Text);
+        Assert.Contains(state.Bag, b => b.Item == InfiniteRoutes.Core.Battle.ItemEffect.HmCut);
+
+        // Now the tree asks whether to use Snivy — but without a Gym Badge, it says so instead.
+        await olga.Send(new NpcAction(1, tree.Id));
+        var answer = await olga.Expect<NpcResult>();
+        Assert.Equal((int)InfiniteRoutes.Core.Player.NpcDealKind.None, answer.Kind);
+        Assert.Contains("knows Cut, but you need 1 Gym Badge", answer.Text);
     }
 }

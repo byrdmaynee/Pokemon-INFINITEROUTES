@@ -392,6 +392,14 @@ public static class DebugCapture
                             GD.Print($"[capture] editor parts: npcs {f2.Npcs?.Count}, obstacles {f2.Obstacles?.Count}, stamps {f2.Stamps?.Count}, links {f2.Links?.Count}, wild {f2.Wild?.Count}");
                             break;
                         case "source": editor.ShowSourceForTest(); break;
+                        case "tree":
+                        {
+                            // A small tree right in front of where the player arrives.
+                            var start = Extractor.Extraction.UnchartedRoutes.Ends(editor.FileForTest)[0];
+                            var (px, py) = (start.X, start.Y + (start.Along - 1) / 2);
+                            editor.AddForTest(obstacle: new Extractor.Extraction.RouteObstacle(px + 1, py, "cut"));
+                            break;
+                        }
                         case "people":
                         {
                             // A trainer two tiles in from the entrance (facing it), a gift-giver beside them, and a route gate
@@ -457,6 +465,12 @@ public static class DebugCapture
                             break;
                         }
                     }
+                }
+                else if (line.StartsWith("ask:", StringComparison.Ordinal))
+                {
+                    GD.Print($"[capture] asked: {world.Question ?? "(nothing)"}");
+                    world.AnswerForTest(line == "ask:yes");
+                    await Wait(1.5);
                 }
                 else if (line == "battle?")
                     GD.Print($"[capture] in battle: {main.CurrentScreen is not World.OverworldScreen || world.InBattle}");

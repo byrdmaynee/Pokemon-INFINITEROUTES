@@ -369,6 +369,11 @@ public partial class OverworldScreen : Control
 
     public override void _UnhandledInput(InputEvent e)
     {
+        if (AskInput(e))
+        {
+            GetViewport().SetInputAsHandled();
+            return;
+        }
         if (_world is null || _battle is not null)
             return;
         if (OnlineInput(e))

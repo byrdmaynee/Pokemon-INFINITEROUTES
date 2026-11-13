@@ -99,10 +99,13 @@ public static class UnchartedRoutes
             Prize: Math.Max(0, battle.Prize));
     }
 
-    /// <summary>The Gym Badges an obstacle's HM needs, and what clearing it and being stopped by it say.</summary>
-    public static (int Badges, string Cleared, string Blocked) ObstacleRule(int script) => script == CutScript
-        ? (1, "You cut down the small tree!", "A small tree is in the way. With 1 Gym Badge you could cut it down.")
-        : (3, "You pushed the boulder out of the way!", "A boulder is in the way. With 3 Gym Badges you could move it.");
+    /// <summary>
+    /// An obstacle's field move (Cut, Strength), the Gym Badges it needs outside battle, what the obstacle looks like
+    /// and what using the move on it does.
+    /// </summary>
+    public static (int Move, string MoveName, int Badges, string Looks, string Verb) ObstacleRule(int script) => script == CutScript
+        ? (Core.Battle.ItemEffect.CutMove, "Cut", 1, "This tree looks like it can be cut down!", "cut the tree")
+        : (Core.Battle.ItemEffect.StrengthMove, "Strength", 3, "It's a big boulder, but a Pokémon may be able to smash it.", "smash the boulder");
 
     public static bool IsRoute(int zone) => zone >= ZoneBase;
 

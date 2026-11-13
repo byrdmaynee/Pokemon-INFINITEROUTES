@@ -49,14 +49,15 @@ public sealed partial class PlayerMenu : PanelContainer
     public PlayerMenu() : this(_ => { }, () => null, _ => "", "") { }
 
     /// <summary>
-    /// Uses an HM outside battle (Cut, Strength) on what's in front of the player; returns why not, or null when it was
-    /// used (the menu closes).
+    /// An item picked in the Bag that's waiting for a Pokémon: to use on it, to teach it (an HM), or
+    /// (<see cref="_pendingHold"/>) to give it to hold. <see cref="_forgetFor"/> is the Pokémon (with four moves) that
+    /// an HM is being taught to, while the player picks the move to forget.
     /// </summary>
-    public Func<int, string?>? FieldMove { get; init; }
-
-    /// <summary>An item picked in the Bag that's waiting for a Pokémon: to use on it, or (<see cref="_pendingHold"/>) to give it to hold.</summary>
     int _pendingItem;
     bool _pendingHold;
+    int _forgetFor = -1;
+
+    bool Teaching => Core.Battle.ItemEffect.IsHm(_pendingItem);
 
     public PlayerMenu(Action<Message> send, Func<SaveGame?> state, Func<int, string> zoneName, string me)
     {
@@ -303,8 +304,9 @@ public sealed partial class PlayerMenu : PanelContainer
         var assets = ClientServices.UnovaAssets;
         if (_pendingItem != 0)
             _game.AddChild(Ui.Ui.HBox(10,
-                Ui.Ui.Text(_pendingHold ? $"Give the {ItemName(_pendingItem)} to which Pokémon?" : $"Use the {ItemName(_pendingItem)} on which Pokémon?", 16, Ui.Ui.Accent),
-                Small("Cancel", () => { _pendingItem = 0; ShowGame(); })));
+                Ui.Ui.Text(Teaching ? $"Teach {MoveName(_pendingItem)} ({ItemName(_pendingItem)}) to which Pokémon?"
+                    : _pendingHold ? $"Give the {ItemName(_pendingItem)} to which Pokémon?" : $"Use the {ItemName(_pendingItem)} on which Pokémon?", 16, Ui.Ui.Accent),
+                Small("Cancel", () => { _pendingItem = 0; _forgetFor = -1; ShowGame(); })));
         for (var i = 0; i < state.Party.Count; i++)
         {
             var p = state.Party[i];
@@ -331,7 +333,9 @@ public sealed partial class PlayerMenu : PanelContainer
             card.AddChild(shown);
             var row = Ui.Ui.HBox(10, card);
             row.SizeFlagsHorizontal = SizeFlags.ExpandFill;
-            if (_pendingItem != 0)
+            if (_pendingItem != 0 && Teaching)
+                AddTeach(row, game is not null && i < game.Party.Count ? game.Party[i] : null, index);
+            else if (_pendingItem != 0)
             {
                 var (item, hold) = (_pendingItem, _pendingHold);
                 row.AddChild(Small(hold ? "Give" : "Use here", () =>
@@ -369,13 +373,66 @@ public sealed partial class PlayerMenu : PanelContainer
         _game.AddChild(Ui.Ui.Text($"Money ₽{state.Progress.Money:N0} · badges {state.Progress.Badges.Count} · caught {state.Progress.Caught} · wild wins {state.Progress.WildWins}", 15));
     }
 
+    static string MoveName(int hm) => Data?.Move(Core.Battle.ItemEffect.HmMove(hm))?.Name ?? "its move";
+
+    /// <summary>
+    /// Teaching an HM: "Teach" on a Pokémon that can learn it; one that knows four moves then shows them, to pick
+    /// the one to forget.
+    /// </summary>
+    void AddTeach(HBoxContainer row, Core.Battle.Pokemon? mon, int index)
+    {
+        var item = _pendingItem;
+        var move = Core.Battle.ItemEffect.HmMove(item);
+        if (mon is null)
+            return;
+        if (mon.Moves.Any(m => m.Move.Id == move))
+        {
+            row.AddChild(Small("Knows it", () => { }, enabled: false));
+            return;
+        }
+        if (!mon.Species.CanLearnHm(item - Core.Battle.ItemEffect.HmCut + 1))
+        {
+            row.AddChild(Small("Can't learn", () => { }, enabled: false));
+            return;
+        }
+        if (_forgetFor == index)
+        {
+            var forget = Ui.Ui.VBox(4, Ui.Ui.Text("Forget which move?", 13, Ui.Ui.Accent));
+            for (var k = 0; k < mon.Moves.Count; k++)
+            {
+                var slot = k;
+                forget.AddChild(Small(mon.Moves[k].Move.Name, () =>
+                {
+                    _pendingItem = 0;
+                    _forgetFor = -1;
+                    _send(new UseItem(item, index, Forget: slot));
+                    ShowGame();
+                }));
+            }
+            row.AddChild(forget);
+            return;
+        }
+        row.AddChild(Small("Teach", () =>
+        {
+            if (mon.Moves.Count >= Core.Battle.Pokemon.MaxMoves)
+            {
+                _forgetFor = index;
+                ShowGame();
+                return;
+            }
+            _pendingItem = 0;
+            _send(new UseItem(item, index));
+            ShowGame();
+        }));
+    }
+
     /// <summary>What clicking an item in the Bag does, for its tooltip.</summary>
     static string ItemHint(int item) => item switch
     {
         _ when Core.Battle.ItemEffect.For(item) is Core.Battle.ItemEffect.Heal or Core.Battle.ItemEffect.Cure or Core.Battle.ItemEffect.Revive => "Use on a Pokémon",
         _ when Core.Battle.ItemEffect.RepelSteps(item) > 0 => "Use now",
-        Core.Battle.ItemEffect.HmCut or Core.Battle.ItemEffect.HmStrength => "Use on what's in front of you",
-        _ when Core.Battle.ItemEffect.IsHm(item) || Core.Battle.ItemEffect.IsTm(item) => "Can't be used here yet",
+        _ when Core.Battle.ItemEffect.IsHm(item) => "Teach its move to a Pokémon (it isn't used up)",
+        _ when Core.Battle.ItemEffect.IsTm(item) => "Can't be taught yet",
         _ when Core.Battle.ItemEffect.For(item) is Core.Battle.ItemEffect.Ball => "Thrown in battle",
         _ => "Give to a Pokémon to hold",
     };
@@ -387,17 +444,12 @@ public sealed partial class PlayerMenu : PanelContainer
         string? why = null;
         switch (item)
         {
-            case Core.Battle.ItemEffect.HmCut or Core.Battle.ItemEffect.HmStrength:
-                why = FieldMove?.Invoke(item);
-                break;
-            case Core.Battle.ItemEffect.HmSurf:
-                why = "Surf can't be used online yet.";
+            case var _ when Core.Battle.ItemEffect.IsHm(item):
+                (_pendingItem, _pendingHold, _forgetFor) = (item, false, -1);
+                ShowGame();
                 break;
             case Core.Battle.ItemEffect.EscapeRope or OverworldScreen.SuperRod:
                 why = $"The {ItemName(item)} can't be used online yet.";
-                break;
-            case var _ when Core.Battle.ItemEffect.IsHm(item):
-                why = $"{ItemName(item)} can't be used outside battle yet.";
                 break;
             case var _ when Core.Battle.ItemEffect.IsTm(item):
                 why = "TMs can't be taught yet.";
@@ -422,14 +474,14 @@ public sealed partial class PlayerMenu : PanelContainer
     }
 
     /// <summary>Clicks an item in the Bag, then (if it asks for one) party Pokémon <paramref name="party"/>; for smoke tests.</summary>
-    public void UseItemForTest(int item, int party = -1)
+    public void UseItemForTest(int item, int party = -1, int forget = -1)
     {
         ChooseItem(item);
         if (_pendingItem != 0 && party >= 0)
         {
             var hold = _pendingHold;
             _pendingItem = 0;
-            _send(new UseItem(item, party, hold));
+            _send(new UseItem(item, party, hold, forget));
         }
     }
 

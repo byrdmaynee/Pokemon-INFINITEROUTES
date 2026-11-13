@@ -140,19 +140,72 @@ public partial class OverworldScreen
         UpdateHud();
     }
 
+    TaskCompletionSource<bool>? _asking;
+    Control? _askPanel;
+
+    /// <summary>The yes/no question on screen, if any; for smoke tests.</summary>
+    public string? Question => _askPanel is not null && IsInstanceValid(_askPanel) ? _askPanel.GetMeta("question").AsString() : null;
+
+    /// <summary>Answers the yes/no question on screen; for smoke tests.</summary>
+    public void AnswerForTest(bool yes) => Answer(yes);
+
     /// <summary>
-    /// Cut or Strength from the Bag: on the small tree or boulder the player faces (the server checks the badges, as
-    /// when talking to it). Returns why it can't be used, or null when it was (the menu closes).
+    /// Asks a yes/no question over the world (Yes is focused: Enter or Z says yes, Esc or X no). The player can't move
+    /// until it's answered.
     /// </summary>
-    string? UseFieldMove(int item)
+    Task<bool> AskYesNo(string question)
     {
-        var cut = item == Core.Battle.ItemEffect.HmCut;
-        var script = cut ? UnchartedRoutes.CutScript : UnchartedRoutes.StrengthScript;
-        if (NpcAt(_tile + _dir) is not { } obstacle || obstacle.Info.Script != script)
-            return cut ? "There's no small tree in front of you to cut." : "There's no boulder in front of you to move.";
-        ToggleOnlineMenu();
-        OnlineSession.Game?.Send(new NpcAction(obstacle.Zone, obstacle.Info.Id));
-        return null;
+        Answer(false);
+        _asking = new TaskCompletionSource<bool>();
+        _moving = true;
+        var yes = Ui.Ui.Button("Yes", () => Answer(true), 18);
+        var no = Ui.Ui.Button("No", () => Answer(false), 18);
+        foreach (var b in new[] { yes, no })
+            b.CustomMinimumSize = new Vector2(110, 40);
+        var panel = new PanelContainer();
+        panel.SetMeta("question", question);
+        panel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
+        {
+            BgColor = new Color(0.1f, 0.12f, 0.16f, 0.96f), BorderColor = Ui.Ui.Accent,
+            BorderWidthLeft = 2, BorderWidthTop = 2, BorderWidthRight = 2, BorderWidthBottom = 2,
+            CornerRadiusTopLeft = 8, CornerRadiusTopRight = 8, CornerRadiusBottomLeft = 8, CornerRadiusBottomRight = 8,
+            ContentMarginLeft = 18, ContentMarginRight = 18, ContentMarginTop = 14, ContentMarginBottom = 14,
+        });
+        panel.AddChild(Ui.Ui.VBox(12, Ui.Ui.Text(question, 20), Ui.Ui.HBox(12, Ui.Ui.Spacer(), yes, no)));
+        AddChild(panel);
+        panel.SetAnchorsAndOffsetsPreset(LayoutPreset.CenterBottom);
+        panel.GrowHorizontal = GrowDirection.Both;
+        panel.GrowVertical = GrowDirection.Begin;
+        panel.OffsetBottom = -40;
+        _askPanel = panel;
+        yes.CallDeferred(Control.MethodName.GrabFocus);
+        return _asking.Task;
+    }
+
+    void Answer(bool yes)
+    {
+        if (_asking is not { } asking)
+            return;
+        _asking = null;
+        if (_askPanel is not null && IsInstanceValid(_askPanel))
+            _askPanel.QueueFree();
+        _askPanel = null;
+        _moving = false;
+        asking.TrySetResult(yes);
+    }
+
+    /// <summary>Esc or X answers no; Z answers yes (Enter presses the focused button).</summary>
+    bool AskInput(InputEvent e)
+    {
+        if (_asking is null || e is not InputEventKey { Pressed: true, Echo: false } key)
+            return false;
+        if (key.Keycode is Key.Escape or Key.X)
+            Answer(false);
+        else if (key.Keycode == Key.Z)
+            Answer(true);
+        else
+            return false;
+        return true;
     }
 
     /// <summary>The route editor's answers from the server (saved, or why not).</summary>

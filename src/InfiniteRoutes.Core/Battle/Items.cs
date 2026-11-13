@@ -30,6 +30,14 @@ public abstract record ItemEffect
 
     public static bool IsHm(int item) => item is >= HmCut and <= HmDive;
 
+    /// <summary>The move an HM teaches (Cut, Fly, Surf, Strength, Waterfall, Dive), or 0.</summary>
+    public static int HmMove(int item) => item switch
+    {
+        HmCut => CutMove, HmFly => 19, HmSurf => 57, HmStrength => StrengthMove, HmWaterfall => 127, HmDive => 291, _ => 0,
+    };
+
+    public const int CutMove = 15, StrengthMove = 70;
+
     public static bool IsTm(int item) => item is >= 328 and <= 419 or >= 618 and <= 620;
 
     public static int RepelSteps(int item) => item switch { Repel => 100, SuperRepel => 200, MaxRepel => 250, _ => 0 };

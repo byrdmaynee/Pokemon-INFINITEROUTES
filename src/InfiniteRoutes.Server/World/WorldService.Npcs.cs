@@ -41,17 +41,30 @@ public sealed partial class WorldService
 
         if (Extractor.Extraction.UnchartedRoutes.IsObstacle(npc))
         {
-            // A small tree or a boulder: with enough Gym Badges (or in Admin Mode) it's cleared out of this player's way.
-            var (badges, cleared, blocked) = Extractor.Extraction.UnchartedRoutes.ObstacleRule(npc.Script);
+            // A small tree or a boulder. A party Pokémon that knows Cut (Strength) can clear it — with enough Gym
+            // Badges — once the player says yes; staff in Admin Mode can always. It's cleared for this player only.
+            var (move, moveName, badges, looks, verb) = Extractor.Extraction.UnchartedRoutes.ObstacleRule(npc.Script);
             if (action.Spotted || p.Cleared.Contains((action.Zone, npc.Id)))
                 return;
+            var user = state.Party.FirstOrDefault(m => m.Moves.Any(s => s.Move.Id == move));
+            void Answer(NpcDealKind kind, string text) => p.Link.Send(new NpcResult(action.Zone, action.Npc, (int)kind, text));
+            if (user is null && !p.Elevated)
+            {
+                Answer(NpcDealKind.None, looks);
+                return;
+            }
             if (!p.Elevated && state.Progress.Badges.Count < badges)
             {
-                p.Link.Send(new NpcResult(action.Zone, action.Npc, (int)NpcDealKind.None, blocked));
+                Answer(NpcDealKind.None, $"{looks}\f{user!.Name} knows {moveName}, but you need {badges} Gym Badge{(badges == 1 ? "" : "s")} to use it outside battle.");
+                return;
+            }
+            if (!action.Confirm)
+            {
+                Answer(NpcDealKind.Ask, user is not null ? $"{looks}\fUse {user.Name} to {verb}?" : $"{looks}\fClear it away? (Admin Mode)");
                 return;
             }
             p.Cleared.Add((action.Zone, npc.Id));
-            p.Link.Send(new NpcResult(action.Zone, action.Npc, (int)NpcDealKind.Cleared, cleared));
+            Answer(NpcDealKind.Cleared, user is not null ? $"{user.Name} used {moveName}!" : "Cleared away.");
             return;
         }
 
