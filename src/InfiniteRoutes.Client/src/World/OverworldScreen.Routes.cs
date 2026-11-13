@@ -75,6 +75,9 @@ public partial class OverworldScreen
     /// <summary>The open route editor; for smoke tests.</summary>
     public RouteEditorScreen? RouteEditor => RouteEditorOpen ? _routeEditor : null;
 
+    /// <summary>Whether a battle is on screen; for smoke tests.</summary>
+    public bool InBattle => _battle is not null;
+
     bool MayEditRoutes => _admin?.Permissions.Contains(RouteEditPermission) == true;
 
     /// <summary>A trainer by id: the ROM's, or one made for a hand-made route.</summary>
@@ -135,6 +138,21 @@ public partial class OverworldScreen
         EnterMap(map);
         StreamChunks();
         UpdateHud();
+    }
+
+    /// <summary>
+    /// Cut or Strength from the Bag: on the small tree or boulder the player faces (the server checks the badges, as
+    /// when talking to it). Returns why it can't be used, or null when it was (the menu closes).
+    /// </summary>
+    string? UseFieldMove(int item)
+    {
+        var cut = item == Core.Battle.ItemEffect.HmCut;
+        var script = cut ? UnchartedRoutes.CutScript : UnchartedRoutes.StrengthScript;
+        if (NpcAt(_tile + _dir) is not { } obstacle || obstacle.Info.Script != script)
+            return cut ? "There's no small tree in front of you to cut." : "There's no boulder in front of you to move.";
+        ToggleOnlineMenu();
+        OnlineSession.Game?.Send(new NpcAction(obstacle.Zone, obstacle.Info.Id));
+        return null;
     }
 
     /// <summary>The route editor's answers from the server (saved, or why not).</summary>

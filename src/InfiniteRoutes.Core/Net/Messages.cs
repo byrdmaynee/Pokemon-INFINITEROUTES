@@ -9,7 +9,7 @@ namespace InfiniteRoutes.Core.Net;
 /// </summary>
 public static class Protocol
 {
-    public const int Version = 8;   // 2: admin window; 3: battles; 4: market, trades, friends, mail, DMs; 5: Active Buddy; 6: NPCs, trainers, quests; 7: role beacons; 8: hand-made routes
+    public const int Version = 9;   // 2: admin window; 3: battles; 4: market, trades, friends, mail, DMs; 5: Active Buddy; 6: NPCs, trainers, quests; 7: role beacons; 8: hand-made routes; 9: items from the Bag
 
     /// <summary>The largest frame either side accepts.</summary>
     public const int MaxFrame = 256 * 1024;
@@ -90,6 +90,7 @@ public sealed record NetMove(
 [Union(47, typeof(BeaconChanged))]
 [Union(48, typeof(RouteSet))]
 [Union(49, typeof(RouteChanged))]
+[Union(50, typeof(UseItem))]
 public abstract record Message;
 
 /// <summary>Chat channels: near you (same map and channel), the whole server, one player, or the server itself.</summary>
@@ -493,6 +494,13 @@ public sealed record NpcResult([property: Key(0)] int Zone, [property: Key(1)] i
 public sealed record BeaconChanged([property: Key(0)] int Player, [property: Key(1)] string Beacon) : Message;
 
 /// <summary>A player in view has a new Active Buddy (<see cref="Species"/> 0: none following).</summary>
+/// <summary>
+/// Uses an item from the Bag outside battle: medicine on party Pokémon <see cref="Party"/>, a Repel, or (with
+/// <see cref="Hold"/>) gives it to that Pokémon to hold. Answered with a <see cref="Notice"/> and the new game state.
+/// </summary>
+[MessagePackObject]
+public sealed record UseItem([property: Key(0)] int Item, [property: Key(1)] int Party = -1, [property: Key(2)] bool Hold = false) : Message;
+
 /// <summary>
 /// Every hand-made Infinite Route the server has, each as its route file's JSON (the route editor's format). Sent on
 /// joining: the client draws these in place of generated routes, so everyone walks the same ones.

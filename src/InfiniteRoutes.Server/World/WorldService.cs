@@ -264,6 +264,9 @@ public sealed partial class WorldService(IWorldData world, ServerConfig config, 
                 case SetBuddy buddy:
                     ChooseBuddy(player, buddy.Index);
                     break;
+                case UseItem use:
+                    UseItemLocked(player, use);
+                    break;
                 case NpcAction npc:
                     NpcActionLocked(player, npc);
                     break;
@@ -425,6 +428,63 @@ public sealed partial class WorldService(IWorldData world, ServerConfig config, 
         state.Party.Insert(0, mon);
         p.StateDirty = true;
         SendState(p);
+    }
+
+    /// <summary>An item from the Bag outside battle: medicine on a party Pokémon, a Repel, or an item to hold.</summary>
+    void UseItemLocked(WorldPlayer p, UseItem use)
+    {
+        if (rules is null || p.State is not { } state || p.Battle is not null)
+            return;
+        void Say(string text) => p.Link.Send(new Notice(text));
+        var name = rules.Data.ItemName(use.Item);
+        if (state.Bag.Count(use.Item) <= 0)
+        {
+            Say($"You have no {name}.");
+            return;
+        }
+        var mon = use.Party >= 0 && use.Party < state.Party.Count ? state.Party[use.Party] : null;
+        string done;
+        if (use.Hold)
+        {
+            if (mon is null || !state.Bag.Take(use.Item))
+                return;
+            var swapped = mon.HeldItem;
+            if (swapped != 0)
+                state.Bag.Add(swapped);
+            mon.HeldItem = use.Item;
+            done = swapped != 0
+                ? $"{mon.Name} was given the {name} to hold; the {rules.Data.ItemName(swapped)} went back to the Bag."
+                : $"{mon.Name} was given the {name} to hold.";
+        }
+        else if (Core.Battle.ItemEffect.RepelSteps(use.Item) > 0)
+        {
+            var (ok, message) = state.UseRepel(use.Item, name);
+            Say(message);
+            if (!ok)
+                return;
+            done = "";
+        }
+        else if (Core.Battle.ItemEffect.For(use.Item) is Core.Battle.ItemEffect.Heal or Core.Battle.ItemEffect.Cure or Core.Battle.ItemEffect.Revive)
+        {
+            if (mon is null)
+                return;
+            if (Core.Battle.ItemUse.Apply(Core.Battle.ItemEffect.For(use.Item)!, mon) is not { } message)
+            {
+                Say("It won't have any effect.");
+                return;
+            }
+            state.Bag.Take(use.Item);
+            done = message;
+        }
+        else
+        {
+            Say($"The {name} can't be used here.");
+            return;
+        }
+        p.StateDirty = true;
+        SendState(p);
+        if (done.Length > 0)
+            Say(done);
     }
 
     void ChooseBuddy(WorldPlayer p, int index)

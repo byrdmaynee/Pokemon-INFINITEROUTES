@@ -25,6 +25,13 @@ public abstract record ItemEffect
     public const int SuperRepel = 76, MaxRepel = 77, EscapeRope = 78, Repel = 79;
 
     /// <summary>Steps a repel keeps weaker wild Pokémon away; 0 for other items.</summary>
+    /// <summary>The HMs (Cut, Fly, Surf, Strength, Waterfall, Dive) as items.</summary>
+    public const int HmCut = 420, HmFly = 421, HmSurf = 422, HmStrength = 423, HmWaterfall = 424, HmDive = 425;
+
+    public static bool IsHm(int item) => item is >= HmCut and <= HmDive;
+
+    public static bool IsTm(int item) => item is >= 328 and <= 419 or >= 618 and <= 620;
+
     public static int RepelSteps(int item) => item switch { Repel => 100, SuperRepel => 200, MaxRepel => 250, _ => 0 };
 
     /// <summary>The effect of a known item, or null for items the battle engine can't use yet.</summary>

@@ -48,6 +48,16 @@ public sealed partial class PlayerMenu : PanelContainer
 
     public PlayerMenu() : this(_ => { }, () => null, _ => "", "") { }
 
+    /// <summary>
+    /// Uses an HM outside battle (Cut, Strength) on what's in front of the player; returns why not, or null when it was
+    /// used (the menu closes).
+    /// </summary>
+    public Func<int, string?>? FieldMove { get; init; }
+
+    /// <summary>An item picked in the Bag that's waiting for a Pokémon: to use on it, or (<see cref="_pendingHold"/>) to give it to hold.</summary>
+    int _pendingItem;
+    bool _pendingHold;
+
     public PlayerMenu(Action<Message> send, Func<SaveGame?> state, Func<int, string> zoneName, string me)
     {
         _send = send;
@@ -291,6 +301,10 @@ public sealed partial class PlayerMenu : PanelContainer
             : $"Catch {GameState.BuddyCatches} Pokémon to unlock Active Buddy ({state.Progress.Caught}/{GameState.BuddyCatches}).", 14, Ui.Ui.Muted)));
         var game = Game();
         var assets = ClientServices.UnovaAssets;
+        if (_pendingItem != 0)
+            _game.AddChild(Ui.Ui.HBox(10,
+                Ui.Ui.Text(_pendingHold ? $"Give the {ItemName(_pendingItem)} to which Pokémon?" : $"Use the {ItemName(_pendingItem)} on which Pokémon?", 16, Ui.Ui.Accent),
+                Small("Cancel", () => { _pendingItem = 0; ShowGame(); })));
         for (var i = 0; i < state.Party.Count; i++)
         {
             var p = state.Party[i];
@@ -317,6 +331,16 @@ public sealed partial class PlayerMenu : PanelContainer
             card.AddChild(shown);
             var row = Ui.Ui.HBox(10, card);
             row.SizeFlagsHorizontal = SizeFlags.ExpandFill;
+            if (_pendingItem != 0)
+            {
+                var (item, hold) = (_pendingItem, _pendingHold);
+                row.AddChild(Small(hold ? "Give" : "Use here", () =>
+                {
+                    _pendingItem = 0;
+                    _send(new UseItem(item, index, hold));
+                    ShowGame();
+                }));
+            }
             if (i > 0)
                 row.AddChild(Small("Make lead", () => _send(new SetLead(index))));
             row.AddChild(buddy
@@ -331,10 +355,82 @@ public sealed partial class PlayerMenu : PanelContainer
         var grid = new GridContainer { Columns = 3 };
         grid.AddThemeConstantOverride("h_separation", 18);
         foreach (var b in state.Bag)
-            grid.AddChild(Ui.Ui.HBox(6, MonUi.ItemIcon(assets, b.Item, 32), Ui.Ui.Text($"{ItemName(b.Item)}  ×{b.Count}", 15)));
+        {
+            var item = b.Item;
+            var button = Ui.Ui.Button($"{ItemName(item)}  ×{b.Count}", () => ChooseItem(item), 15);
+            button.Icon = MonUi.ItemIcon(assets, item, 32) is TextureRect { Texture: { } icon } ? icon : null;
+            button.Alignment = HorizontalAlignment.Left;
+            button.TooltipText = ItemHint(item);
+            grid.AddChild(button);
+        }
         _game.AddChild(grid);
+        _game.AddChild(Wrapped("Click an item to use it: medicine on a Pokémon, a Repel, Cut or Strength on what's in front of you, or anything else to give a Pokémon to hold."));
         _game.AddChild(Ui.Ui.Text("Trainer card", 17, Ui.Ui.Muted));
         _game.AddChild(Ui.Ui.Text($"Money ₽{state.Progress.Money:N0} · badges {state.Progress.Badges.Count} · caught {state.Progress.Caught} · wild wins {state.Progress.WildWins}", 15));
+    }
+
+    /// <summary>What clicking an item in the Bag does, for its tooltip.</summary>
+    static string ItemHint(int item) => item switch
+    {
+        _ when Core.Battle.ItemEffect.For(item) is Core.Battle.ItemEffect.Heal or Core.Battle.ItemEffect.Cure or Core.Battle.ItemEffect.Revive => "Use on a Pokémon",
+        _ when Core.Battle.ItemEffect.RepelSteps(item) > 0 => "Use now",
+        Core.Battle.ItemEffect.HmCut or Core.Battle.ItemEffect.HmStrength => "Use on what's in front of you",
+        _ when Core.Battle.ItemEffect.IsHm(item) || Core.Battle.ItemEffect.IsTm(item) => "Can't be used here yet",
+        _ when Core.Battle.ItemEffect.For(item) is Core.Battle.ItemEffect.Ball => "Thrown in battle",
+        _ => "Give to a Pokémon to hold",
+    };
+
+    /// <summary>An item was clicked in the Bag.</summary>
+    void ChooseItem(int item)
+    {
+        var effect = Core.Battle.ItemEffect.For(item);
+        string? why = null;
+        switch (item)
+        {
+            case Core.Battle.ItemEffect.HmCut or Core.Battle.ItemEffect.HmStrength:
+                why = FieldMove?.Invoke(item);
+                break;
+            case Core.Battle.ItemEffect.HmSurf:
+                why = "Surf can't be used online yet.";
+                break;
+            case Core.Battle.ItemEffect.EscapeRope or OverworldScreen.SuperRod:
+                why = $"The {ItemName(item)} can't be used online yet.";
+                break;
+            case var _ when Core.Battle.ItemEffect.IsHm(item):
+                why = $"{ItemName(item)} can't be used outside battle yet.";
+                break;
+            case var _ when Core.Battle.ItemEffect.IsTm(item):
+                why = "TMs can't be taught yet.";
+                break;
+            case var _ when effect is Core.Battle.ItemEffect.Ball:
+                why = "Poké Balls are thrown in battle.";
+                break;
+            case var _ when Core.Battle.ItemEffect.RepelSteps(item) > 0:
+                _send(new UseItem(item));
+                break;
+            case var _ when effect is Core.Battle.ItemEffect.Heal or Core.Battle.ItemEffect.Cure or Core.Battle.ItemEffect.Revive:
+                (_pendingItem, _pendingHold) = (item, false);
+                ShowGame();
+                break;
+            default:
+                (_pendingItem, _pendingHold) = (item, true);
+                ShowGame();
+                break;
+        }
+        if (why is not null)
+            _status.Text = why;
+    }
+
+    /// <summary>Clicks an item in the Bag, then (if it asks for one) party Pokémon <paramref name="party"/>; for smoke tests.</summary>
+    public void UseItemForTest(int item, int party = -1)
+    {
+        ChooseItem(item);
+        if (_pendingItem != 0 && party >= 0)
+        {
+            var hold = _pendingHold;
+            _pendingItem = 0;
+            _send(new UseItem(item, party, hold));
+        }
     }
 
     // ---- Smoke-test hooks: drive the window the way a person would ------------------------------------------------

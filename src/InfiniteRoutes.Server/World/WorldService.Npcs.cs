@@ -35,7 +35,8 @@ public sealed partial class WorldService
             Refuse("You're too far away.");
             return;
         }
-        if (action.Spotted && (npc.Sight <= 0 || p.Elevated))
+        // Staff walking invisibly aren't seen; anyone else a trainer spots is challenged (the client walked them over).
+        if (action.Spotted && (npc.Sight <= 0 || p.Elevated && p.Invisible))
             return;
 
         if (Extractor.Extraction.UnchartedRoutes.IsObstacle(npc))

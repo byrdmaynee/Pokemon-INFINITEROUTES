@@ -400,7 +400,7 @@ public static class DebugCapture
                             // Where the player arrives: the middle of the entrance.
                             var (px, py) = (start.X, start.Y + (start.Along - 1) / 2);
                             editor.AddForTest(npc: new Extractor.Extraction.RouteNpc(px + 3, py, 20, Facing: 2,
-                                Text: "Hold it! You're on my route.\n\nLet's battle!", Sight: 0,
+                                Text: "Hold it! You're on my route.\n\nLet's battle!", Sight: 3,
                                 Battle: new Extractor.Extraction.RouteTrainer("Ava", 4, [new(504, 3), new(506, 4)], Prize: 1200,
                                     Defeat: "You got me!", After: "Good luck out there.")));
                             editor.AddForTest(npc: new Extractor.Extraction.RouteNpc(px, py + 1, 40, Facing: 1, Text: "Here, take this!", GiftItem: 17, GiftCount: 3));
@@ -420,6 +420,46 @@ public static class DebugCapture
                     if (world.RouteEditor is { } still)
                         GD.Print($"[capture] editor: route {still.RouteNumber}, area {still.AreaSize}, status: {still.StatusText.Replace('\n', ' ')}");
                 }
+                else if (line.StartsWith("bag:", StringComparison.Ordinal))
+                {
+                    // bag:item:party — opens X, clicks the item in the Bag (and the Pokémon it asks for).
+                    var parts = line.Split(':');
+                    if (world.PlayerMenuOpen is null)
+                        world.OpenOnlineMenuForTest();
+                    await Wait(0.8);
+                    world.PlayerMenuOpen?.UseItemForTest(int.Parse(parts[1]), parts.Length > 2 ? int.Parse(parts[2]) : -1);
+                    await Wait(1.2);
+                    GD.Print($"[capture] bag {parts[1]}: menu says \"{world.PlayerMenuOpen?.StatusText}\"");
+                }
+                else if (line == "close-menu")
+                {
+                    if (world.PlayerMenuOpen is not null)
+                        world.OpenOnlineMenuForTest();
+                    await Wait(0.5);
+                }
+                else if (line == "pages")
+                {
+                    // Reads and closes whatever dialogue comes up (a trainer who spotted the player), until a battle or quiet.
+                    for (var quiet = 0; quiet < 12;)
+                    {
+                        await Wait(0.4);
+                        if (world.DialogText is { Length: > 0 } text)
+                        {
+                            GD.Print($"[capture] says: {text.Replace('\n', ' ')}");
+                            world.CloseDialog();
+                            quiet = 0;
+                        }
+                        else
+                            quiet++;
+                        if (world.BattleOpen is not null)
+                        {
+                            GD.Print("[capture] a battle started");
+                            break;
+                        }
+                    }
+                }
+                else if (line == "battle?")
+                    GD.Print($"[capture] in battle: {main.CurrentScreen is not World.OverworldScreen || world.InBattle}");
                 else if (line.StartsWith("zoom:", StringComparison.Ordinal))
                 {
                     world.Zoom = float.Parse(line["zoom:".Length..], System.Globalization.CultureInfo.InvariantCulture);

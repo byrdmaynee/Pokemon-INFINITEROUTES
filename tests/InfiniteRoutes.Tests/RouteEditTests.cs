@@ -171,3 +171,65 @@ public class RouteTrainerTests
         Assert.Equal(id, start.Trainer);
     }
 }
+
+/// <summary>Trainers who spot you challenge staff in Admin Mode too (unless they're invisible); items work from the Bag.</summary>
+public class SpottedAndBagTests
+{
+    static async Task<(TestServer Server, TestClient Client)> Join(Role role, bool elevate, InfiniteRoutes.Server.World.IWorldData? world = null)
+    {
+        var server = await TestServer.Start(channels: 1, extra: "[admin]\nrequire_2fa = false", rules: AdminChatTests.Rules(), world: world);
+        var accounts = server.App.Services.GetRequiredService<AccountService>();
+        var (token, character) = await server.NewPlayer("Olga");
+        await accounts.SetRole("Olga", role);
+        var client = await TestClient.Connect(server.GamePort);
+        await client.Send(new Hello(Protocol.Version, token, character));
+        await client.Expect<Welcome>();
+        if (elevate)
+        {
+            await client.Send(new Elevate("password123", ""));
+            Assert.True((await client.Expect<AdminReply>()).Ok);
+        }
+        return (server, client);
+    }
+
+    [Fact]
+    public async Task A_trainer_who_spots_staff_in_Admin_Mode_starts_the_battle()
+    {
+        var id = UnchartedRoutes.TrainerId(7, 0);
+        var made = new InfiniteRoutes.Core.Data.TrainerInfo(id, "Ava", 4, "Lass", 0, [], 0, 0,
+            [new InfiniteRoutes.Core.Data.TrainerPokemon(InfiniteRoutes.Core.Player.StarterKit.Species, 0, 3, 10, 0, 0, null)], Prize: 1200);
+        // Two tiles right of the start (2, 2), facing left, seeing 3 tiles.
+        var person = new NpcInfo(50, 12, 4, 2, 0, Facing.Left, 0, 0, 0, 0, 0, 3, new InfiniteRoutes.Extractor.Gen5.NpcTalk(["Let's battle!"], id));
+        var (server, olga) = await Join(Role.Owner, elevate: true, new FakeWorld { Made = made, MadePerson = person });
+        await using var _s = server;
+        await using var _o = olga;
+
+        await olga.Send(new NpcAction(1, person.Id, Spotted: true));
+        Assert.Equal(id, (await olga.Expect<BattleStart>()).Trainer);
+    }
+
+    [Fact]
+    public async Task Items_from_the_Bag_are_given_to_hold_and_medicine_with_no_effect_is_kept()
+    {
+        var (server, pia) = await Join(Role.Player, elevate: false);
+        await using var _s = server;
+        await using var _p = pia;
+        var start = InfiniteRoutes.Core.Player.SaveGame.FromJson((await pia.Expect<StateSnapshot>()).Json)!;
+        var potions = start.Bag.Single(b => b.Item == InfiniteRoutes.Core.Battle.ItemEffect.Potion).Count;
+
+        // A Potion on a Pokémon at full health does nothing and isn't used up.
+        await pia.Send(new UseItem(InfiniteRoutes.Core.Battle.ItemEffect.Potion, 0));
+        Assert.Contains("won't have any effect", (await pia.Expect<Notice>()).Text);
+
+        // Given to hold: it leaves the Bag and the lead holds it.
+        await pia.Send(new UseItem(InfiniteRoutes.Core.Battle.ItemEffect.Potion, 0, Hold: true));
+        Assert.Contains("to hold", (await pia.Expect<Notice>()).Text);
+        var after = InfiniteRoutes.Core.Player.SaveGame.FromJson((await pia.Expect<StateSnapshot>()).Json)!;
+        Assert.Equal(potions - 1, after.Bag.Single(b => b.Item == InfiniteRoutes.Core.Battle.ItemEffect.Potion).Count);
+        Assert.Equal(InfiniteRoutes.Core.Battle.ItemEffect.Potion, after.Party[0].HeldItem);
+
+        // Something it doesn't have.
+        await pia.Send(new UseItem(InfiniteRoutes.Core.Battle.ItemEffect.Repel));
+        Assert.Contains("You have no", (await pia.Expect<Notice>()).Text);
+    }
+}

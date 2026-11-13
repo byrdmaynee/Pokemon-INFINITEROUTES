@@ -538,7 +538,8 @@ public partial class OverworldScreen : Control
     /// <summary>An undefeated trainer whose line of sight (straight ahead, up to its sight range, until something blocks it) reaches the player.</summary>
     NpcActor? SpottedBy()
     {
-        if (!TrainerBattles || NpcGame?.Lead is null || (_online && OfflineSession.Data is null))
+        // Staff walking invisibly aren't seen (the server agrees).
+        if (!TrainerBattles || NpcGame?.Lead is null || (_online && OfflineSession.Data is null) || _online && _admin is { Elevated: true, Invisible: true })
             return null;
         foreach (var npc in Npcs)
         {
